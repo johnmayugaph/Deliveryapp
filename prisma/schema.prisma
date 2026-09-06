@@ -258,10 +258,11 @@ model Service {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  orders          Order[]
-  supportTickets  SupportTicket[]
-  faqCategories   FaqCategory[]
-  fleetApprovals  FleetPartnerServiceVerification[]
+  orders           Order[]
+  supportTickets   SupportTicket[]
+  faqCategories    FaqCategory[]
+  fleetApprovals   FleetPartnerServiceVerification[]
+  deliveryFeeRules DeliveryFeeRule[]
 
   @@index([isActive, sortOrder])
   @@index([intentGroup, sortOrder])
@@ -279,8 +280,9 @@ model City {
   centroidLat Float?
   centroidLng Float?
 
-  addresses Address[]
-  stores    Store[]
+  addresses        Address[]
+  stores           Store[]
+  deliveryFeeRules DeliveryFeeRule[]
 
   @@index([isActive, name])
 }
@@ -441,6 +443,60 @@ model MenuItem {
   updatedAt DateTime @updatedAt
 
   @@index([storeId, isAvailable, sortOrder])
+}
+
+// -----------------------------------------------------------------------------
+// Delivery pricing — rates as data
+// -----------------------------------------------------------------------------
+
+/// Distance-based delivery pricing, per service and per city.
+///
+/// These are rates ops will want to tune weekly. Putting them in code would
+/// mean a deploy to change a fee, so they live here: `quoteDeliveryFee()` reads
+/// this table and contains no numbers of its own. A city with no rule for a
+/// service simply cannot be quoted, which is the correct failure — better than
+/// silently applying a Manila rate in Cebu.
+model DeliveryFeeRule {
+  id String @id @default(cuid())
+
+  serviceType ServiceKey
+  service     Service    @relation(fields: [serviceType], references: [key])
+
+  /// Null means "every city where the service is live" — a fallback rule.
+  /// A city-specific rule always wins over the fallback.
+  cityId String?
+  city   City?   @relation(fields: [cityId], references: [id])
+
+  /// Charged before any distance.
+  baseFeeCentavos Int
+  /// Distance included in the base fee, metres.
+  includedMeters  Int @default(0)
+  /// Per kilometre beyond `includedMeters`, charged pro rata.
+  perKilometreCentavos Int
+  /// Floor and ceiling on the computed fee.
+  minimumFeeCentavos Int @default(0)
+  maximumFeeCentavos Int?
+
+  /// Subtotal at or above which delivery is free regardless of distance. Null
+  /// disables the threshold. Distinct from the subscription FREE_DELIVERY
+  /// benefit: this one applies to everybody.
+  freeAboveSubtotalCentavos Int?
+
+  /// Charged when the subtotal is below `smallOrderThresholdCentavos`.
+  smallOrderThresholdCentavos Int?
+  smallOrderFeeCentavos       Int @default(0)
+
+  /// Flat platform fee for this service/city.
+  serviceFeeCentavos Int @default(0)
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// One rule per service per city, plus one fallback per service.
+  @@unique([serviceType, cityId])
+  @@index([serviceType, isActive])
 }
 
 // -----------------------------------------------------------------------------

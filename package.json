@@ -19,7 +19,8 @@
     "prisma:guards": "node --env-file-if-exists=.env scripts/apply-sql-guards.mjs",
     "db:setup": "prisma migrate deploy && npm run prisma:guards && npm run db:seed",
     "db:seed": "tsx prisma/seed.ts",
-    "verify": "npm run typecheck && npm run test"
+    "verify": "npm run typecheck && npm run test",
+    "jobs:orders": "tsx scripts/run-order-maintenance.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

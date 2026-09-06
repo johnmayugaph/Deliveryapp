@@ -300,6 +300,73 @@ async function seedSubscriptionPlan() {
 }
 
 /** A couple of demo stores so the food flow and the home screen have content. */
+/**
+ * Delivery rates. In the database rather than in code because ops will want to
+ * tune these without waiting for a deploy.
+ *
+ * A fallback row (cityId: null) plus a Manila-specific row, so the
+ * city-beats-fallback resolution has something real to resolve.
+ */
+async function seedDeliveryFeeRules() {
+  const rules: {
+    serviceType: ServiceKey;
+    cityId: string | null;
+    baseFeeCentavos: number;
+    includedMeters: number;
+    perKilometreCentavos: number;
+    minimumFeeCentavos: number;
+    maximumFeeCentavos: number | null;
+    freeAboveSubtotalCentavos: number | null;
+    smallOrderThresholdCentavos: number | null;
+    smallOrderFeeCentavos: number;
+    serviceFeeCentavos: number;
+  }[] = [
+    {
+      serviceType: ServiceKey.FOOD,
+      cityId: null, // fallback for every city where FOOD is live
+      baseFeeCentavos: 4900, // ₱49 up to 2km
+      includedMeters: 2000,
+      perKilometreCentavos: 1200, // ₱12/km beyond that, pro rata
+      minimumFeeCentavos: 4900,
+      maximumFeeCentavos: 25000, // ₱250 ceiling
+      freeAboveSubtotalCentavos: null,
+      smallOrderThresholdCentavos: 15000, // below ₱150
+      smallOrderFeeCentavos: 2000, // ₱20
+      serviceFeeCentavos: 1000, // ₱10
+    },
+    {
+      serviceType: ServiceKey.FOOD,
+      cityId: 'city_manila', // denser, shorter trips
+      baseFeeCentavos: 3900,
+      includedMeters: 2000,
+      perKilometreCentavos: 1000,
+      minimumFeeCentavos: 3900,
+      maximumFeeCentavos: 20000,
+      freeAboveSubtotalCentavos: 100000, // free over ₱1,000, for everybody
+      smallOrderThresholdCentavos: 15000,
+      smallOrderFeeCentavos: 2000,
+      serviceFeeCentavos: 1000,
+    },
+  ];
+
+  for (const rule of rules) {
+    // `upsert` cannot target the fallback row: Postgres treats NULL cityIds as
+    // distinct, so the compound unique key does not match one. Uniqueness of
+    // the fallback is enforced by a partial index in
+    // prisma/sql/delivery_fee_rules.sql.
+    const existing = await prisma.deliveryFeeRule.findFirst({
+      where: { serviceType: rule.serviceType, cityId: rule.cityId },
+      select: { id: true },
+    });
+    if (existing) {
+      await prisma.deliveryFeeRule.update({ where: { id: existing.id }, data: rule });
+    } else {
+      await prisma.deliveryFeeRule.create({ data: rule });
+    }
+  }
+  console.log(`  delivery fee rules: ${rules.length}`);
+}
+
 async function seedStores() {
   const stores = [
     {
@@ -538,6 +605,7 @@ async function main() {
   console.log('Seeding Deliveryapp...');
   await seedCities();
   await seedServices();
+  await seedDeliveryFeeRules();
   await seedStores();
   await seedFaq();
   await seedSubscriptionPlan();

@@ -1,0 +1,468 @@
+'use client';
+
+import { useEffect, useState, useTransition } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { PaymentMethod } from '@prisma/client';
+import { useCart } from '@/components/cart/CartProvider';
+import {
+  placeOrderAction,
+  quoteCheckoutAction,
+  type CheckoutFormInput,
+} from '@/lib/actions/checkout-actions';
+import type { CheckoutQuote } from '@/lib/orders/place-order';
+import { formatCentavos } from '@/lib/money';
+
+export interface CheckoutAddressOption {
+  id: string;
+  label: string;
+  line1: string;
+  barangay: string | null;
+  cityName: string | null;
+  isDefault: boolean;
+}
+
+const PAYMENT_LABELS: Record<PaymentMethod, string> = {
+  [PaymentMethod.CASH_ON_DELIVERY]: 'Cash on delivery',
+  [PaymentMethod.WALLET_CREDIT]: 'Credits',
+};
+
+const TIP_OPTIONS = [0, 2_000, 5_000, 10_000];
+
+/**
+ * The checkout form.
+ *
+ * It never computes money. Every amount rendered comes from the server quote,
+ * which is re-requested whenever an input that affects price changes. That
+ * costs a round trip per change and buys the guarantee that the displayed
+ * breakdown is the one placement will charge.
+ */
+export function CheckoutForm({
+  addresses,
+  spendableCreditsCentavos,
+  paymentMethods,
+}: {
+  addresses: CheckoutAddressOption[];
+  spendableCreditsCentavos: number;
+  paymentMethods: PaymentMethod[];
+}) {
+  const router = useRouter();
+  const { cart, isLoaded, clear } = useCart();
+
+  const [dropoffAddressId, setDropoffAddressId] = useState(
+    () => addresses.find((address) => address.isDefault)?.id ?? addresses[0]?.id ?? '',
+  );
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(
+    PaymentMethod.CASH_ON_DELIVERY,
+  );
+  const [useCredits, setUseCredits] = useState(false);
+  const [tipCentavos, setTipCentavos] = useState(0);
+  const [includeCutlery, setIncludeCutlery] = useState(false);
+  const [merchantNotes, setMerchantNotes] = useState('');
+
+  const [quote, setQuote] = useState<CheckoutQuote | null>(null);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [isQuoting, setIsQuoting] = useState(false);
+  const [placeError, setPlaceError] = useState<string | null>(null);
+  const [isPlacing, startPlacing] = useTransition();
+
+  const formInput: CheckoutFormInput | null =
+    cart.storeId && dropoffAddressId
+      ? {
+          storeId: cart.storeId,
+          lines: cart.lines.map((line) => ({
+            menuItemId: line.menuItemId,
+            quantity: line.quantity,
+            ...(line.notes ? { notes: line.notes } : {}),
+          })),
+          dropoffAddressId,
+          paymentMethod,
+          // Paying with credits implies spending them.
+          useCredits: useCredits || paymentMethod === PaymentMethod.WALLET_CREDIT,
+          tipCentavos,
+          includeCutlery,
+          merchantNotes,
+        }
+      : null;
+
+  // Re-quote whenever anything price-bearing changes. `merchantNotes` and
+  // `includeCutlery` deliberately are not in the dependency list — they do not
+  // affect price, and re-quoting on every keystroke would be wasteful.
+  const quoteKey = JSON.stringify({
+    storeId: cart.storeId,
+    lines: cart.lines.map((line) => [line.menuItemId, line.quantity]),
+    dropoffAddressId,
+    paymentMethod,
+    useCredits,
+    tipCentavos,
+  });
+
+  useEffect(() => {
+    if (!isLoaded || !formInput) {
+      setQuote(null);
+      return;
+    }
+
+    let cancelled = false;
+    setIsQuoting(true);
+
+    quoteCheckoutAction(formInput)
+      .then((result) => {
+        if (cancelled) return;
+        if (result.ok) {
+          setQuote(result.quote);
+          setQuoteError(null);
+        } else {
+          setQuote(null);
+          setQuoteError(result.message);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsQuoting(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quoteKey, isLoaded]);
+
+  if (!isLoaded) {
+    return <p className="px-4 py-8 text-sm text-ink-muted">Loading…</p>;
+  }
+
+  if (cart.lines.length === 0) {
+    return (
+      <p className="px-4 py-8 text-sm text-ink-muted">
+        Walang laman ang cart mo.{' '}
+        <Link href="/" className="font-semibold text-brand-700 underline">
+          Maghanap ng makakain
+        </Link>
+        .
+      </p>
+    );
+  }
+
+  const creditsShort = (quote?.creditShortfallCentavos ?? 0) > 0;
+  const canPlace = quote !== null && !isQuoting && !creditsShort && !isPlacing;
+
+  function onPlace() {
+    if (!formInput) return;
+    setPlaceError(null);
+
+    startPlacing(async () => {
+      const result = await placeOrderAction(formInput);
+      if (result.ok) {
+        clear();
+        router.push(`/orders/${result.orderId}?placed=1`);
+      } else {
+        setPlaceError(result.message);
+      }
+    });
+  }
+
+  return (
+    <div className="space-y-4 px-4 py-4 pb-8">
+      {/* --- Items ------------------------------------------------------ */}
+      <section
+        aria-labelledby="items-heading"
+        className="rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5"
+      >
+        <div className="flex items-baseline justify-between">
+          <h2 id="items-heading" className="text-[13px] font-semibold">
+            {cart.storeName}
+          </h2>
+          {cart.storeSlug ? (
+            <Link
+              href={`/stores/${cart.storeSlug}`}
+              className="text-xs font-semibold text-brand-700"
+            >
+              Edit
+            </Link>
+          ) : null}
+        </div>
+
+        <ul className="mt-2 space-y-1.5">
+          {(quote?.items ?? []).map((item) => (
+            <li key={item.menuItemId} className="flex justify-between gap-3 text-xs">
+              <span className="min-w-0">
+                <span className="font-medium tabular-nums">{item.quantity}×</span>{' '}
+                <span className="text-ink-muted">{item.name}</span>
+              </span>
+              <span className="shrink-0 tabular-nums">
+                {formatCentavos(item.lineTotalCentavos)}
+              </span>
+            </li>
+          ))}
+          {!quote
+            ? cart.lines.map((line) => (
+                <li key={line.menuItemId} className="text-xs text-ink-faint">
+                  {line.quantity}× …
+                </li>
+              ))
+            : null}
+        </ul>
+      </section>
+
+      {/* --- Address ---------------------------------------------------- */}
+      <section
+        aria-labelledby="address-heading"
+        className="rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5"
+      >
+        <h2 id="address-heading" className="text-[13px] font-semibold">
+          Deliver to
+        </h2>
+        <div className="mt-2 space-y-1.5">
+          {addresses.map((address) => (
+            <label
+              key={address.id}
+              className="flex cursor-pointer items-start gap-2.5 rounded-lg p-2 transition-colors hover:bg-surface-sunken"
+            >
+              <input
+                type="radio"
+                name="dropoffAddressId"
+                value={address.id}
+                checked={dropoffAddressId === address.id}
+                onChange={() => setDropoffAddressId(address.id)}
+                className="mt-0.5 accent-brand-600"
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block text-xs font-semibold">{address.label}</span>
+                <span className="block text-[11px] text-ink-muted">
+                  {[address.line1, address.barangay, address.cityName]
+                    .filter(Boolean)
+                    .join(', ')}
+                </span>
+              </span>
+            </label>
+          ))}
+        </div>
+      </section>
+
+      {/* --- Tip -------------------------------------------------------- */}
+      <section
+        aria-labelledby="tip-heading"
+        className="rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5"
+      >
+        <h2 id="tip-heading" className="text-[13px] font-semibold">
+          Tip para sa rider
+        </h2>
+        <div className="mt-2 flex gap-2">
+          {TIP_OPTIONS.map((option) => (
+            <button
+              key={option}
+              type="button"
+              onClick={() => setTipCentavos(option)}
+              aria-pressed={tipCentavos === option}
+              className={`flex-1 rounded-lg px-2 py-2 text-xs font-semibold transition-colors ${
+                tipCentavos === option
+                  ? 'bg-brand-600 text-white'
+                  : 'bg-surface-sunken text-ink-muted hover:bg-brand-50'
+              }`}
+            >
+              {option === 0 ? 'Wala' : formatCentavos(option)}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      {/* --- Payment ---------------------------------------------------- */}
+      <section
+        aria-labelledby="payment-heading"
+        className="rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5"
+      >
+        <h2 id="payment-heading" className="text-[13px] font-semibold">
+          Bayad
+        </h2>
+        <div className="mt-2 space-y-1.5">
+          {paymentMethods.map((method) => (
+            <label
+              key={method}
+              className="flex cursor-pointer items-center gap-2.5 rounded-lg p-2 transition-colors hover:bg-surface-sunken"
+            >
+              <input
+                type="radio"
+                name="paymentMethod"
+                value={method}
+                checked={paymentMethod === method}
+                onChange={() => setPaymentMethod(method)}
+                className="accent-brand-600"
+              />
+              <span className="text-xs font-medium">{PAYMENT_LABELS[method]}</span>
+              {method === PaymentMethod.WALLET_CREDIT ? (
+                <span className="ml-auto text-[11px] text-ink-muted tabular-nums">
+                  {formatCentavos(spendableCreditsCentavos)} available
+                </span>
+              ) : null}
+            </label>
+          ))}
+        </div>
+
+        {/* Offer credits as a partial offset only when cash is the rail —
+            choosing Credits already means spending them. */}
+        {paymentMethod === PaymentMethod.CASH_ON_DELIVERY && spendableCreditsCentavos > 0 ? (
+          <label className="mt-2 flex cursor-pointer items-center gap-2.5 border-t border-black/5 pt-2.5">
+            <input
+              type="checkbox"
+              checked={useCredits}
+              onChange={(event) => setUseCredits(event.target.checked)}
+              className="accent-brand-600"
+            />
+            <span className="text-xs">
+              Gamitin ang credits ko
+              <span className="ml-1 text-ink-muted tabular-nums">
+                ({formatCentavos(spendableCreditsCentavos)})
+              </span>
+            </span>
+          </label>
+        ) : null}
+
+        {creditsShort ? (
+          <p role="alert" className="mt-2 text-[11px] leading-relaxed text-rose-700">
+            Kulang ang credits mo ng {formatCentavos(quote!.creditShortfallCentavos)}. Wala
+            kang maila-load na pera — piliin ang cash on delivery.
+          </p>
+        ) : null}
+      </section>
+
+      {/* --- Notes ------------------------------------------------------ */}
+      <section
+        aria-labelledby="notes-heading"
+        className="rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5"
+      >
+        <h2 id="notes-heading" className="text-[13px] font-semibold">
+          Para sa store
+        </h2>
+        <label className="mt-2 flex cursor-pointer items-center gap-2.5">
+          <input
+            type="checkbox"
+            checked={includeCutlery}
+            onChange={(event) => setIncludeCutlery(event.target.checked)}
+            className="accent-brand-600"
+          />
+          <span className="text-xs">Isama ang kubyertos</span>
+        </label>
+        <label className="mt-2 block">
+          <span className="sr-only">Note para sa store</span>
+          <textarea
+            value={merchantNotes}
+            onChange={(event) => setMerchantNotes(event.target.value)}
+            maxLength={500}
+            rows={2}
+            placeholder="Halimbawa: walang sibuyas"
+            className="mt-1 w-full rounded-lg bg-surface-sunken px-2.5 py-2 text-xs ring-1 ring-black/5 focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+        </label>
+      </section>
+
+      {/* --- Breakdown -------------------------------------------------- */}
+      <section
+        aria-labelledby="total-heading"
+        aria-busy={isQuoting}
+        className="rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5"
+      >
+        <h2 id="total-heading" className="text-[13px] font-semibold">
+          Kabuuan
+        </h2>
+
+        {quoteError ? (
+          <p role="alert" className="mt-2 text-xs leading-relaxed text-rose-700">
+            {quoteError}
+          </p>
+        ) : quote ? (
+          <dl className="mt-2 space-y-1">
+            <Line label="Subtotal" centavos={quote.price.subtotalCentavos} />
+            <Line
+              label={`Delivery (${(quote.delivery.distanceMeters / 1000).toFixed(1)} km)`}
+              centavos={quote.price.deliveryFeeCentavos}
+              free={quote.delivery.freeDeliveryFromThreshold}
+            />
+            {quote.price.serviceFeeCentavos > 0 ? (
+              <Line label="Service fee" centavos={quote.price.serviceFeeCentavos} />
+            ) : null}
+            {quote.price.smallOrderFeeCentavos > 0 ? (
+              <Line label="Small order fee" centavos={quote.price.smallOrderFeeCentavos} />
+            ) : null}
+            {quote.price.tipCentavos > 0 ? (
+              <Line label="Tip" centavos={quote.price.tipCentavos} />
+            ) : null}
+            {quote.price.appliedBenefits
+              .filter((benefit) => benefit.amountCentavos > 0)
+              .map((benefit) => (
+                <Line
+                  key={benefit.benefitId}
+                  label={benefit.displayLabel}
+                  centavos={-benefit.amountCentavos}
+                />
+              ))}
+            {quote.price.walletCreditAppliedCentavos > 0 ? (
+              <Line
+                label="Credits"
+                centavos={-quote.price.walletCreditAppliedCentavos}
+              />
+            ) : null}
+
+            <div className="mt-2 flex justify-between border-t border-black/5 pt-2 text-sm font-bold">
+              <dt>Total</dt>
+              <dd className="tabular-nums">{formatCentavos(quote.price.totalCentavos)}</dd>
+            </div>
+
+            {quote.price.creditBackCentavos > 0 ? (
+              <p className="mt-1.5 text-[11px] text-emerald-700">
+                Makakakuha ka ng {formatCentavos(quote.price.creditBackCentavos)} credits
+                pagkatapos ng order.
+              </p>
+            ) : null}
+          </dl>
+        ) : (
+          <p className="mt-2 text-xs text-ink-faint">Kinakalkula…</p>
+        )}
+      </section>
+
+      {placeError ? (
+        <p role="alert" className="text-xs leading-relaxed text-rose-700">
+          {placeError}
+        </p>
+      ) : null}
+
+      <button
+        type="button"
+        onClick={onPlace}
+        disabled={!canPlace}
+        className="w-full rounded-xl bg-brand-700 px-4 py-3.5 text-sm font-bold text-white transition-colors hover:bg-brand-800 disabled:cursor-not-allowed disabled:bg-ink-faint"
+      >
+        {isPlacing
+          ? 'Ipinapadala…'
+          : quote
+            ? `Mag-order · ${formatCentavos(quote.price.totalCentavos)}`
+            : 'Mag-order'}
+      </button>
+    </div>
+  );
+}
+
+function Line({
+  label,
+  centavos,
+  free,
+}: {
+  label: string;
+  centavos: number;
+  free?: boolean;
+}) {
+  return (
+    <div className="flex justify-between gap-3 text-xs">
+      <dt className="min-w-0 text-ink-muted">{label}</dt>
+      <dd className="shrink-0 tabular-nums">
+        {free && centavos === 0 ? (
+          <span className="text-emerald-700">Libre</span>
+        ) : (
+          <>
+            {centavos < 0 ? '−' : ''}
+            {formatCentavos(Math.abs(centavos))}
+          </>
+        )}
+      </dd>
+    </div>
+  );
+}

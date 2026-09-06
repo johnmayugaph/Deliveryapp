@@ -341,7 +341,8 @@ export async function spendOnOrder(
   },
   client?: PrismaTransactionClient,
 ): Promise<LedgerResult> {
-  const wallet = await prisma.wallet.findUnique({ where: { userId: input.userId } });
+  const db = client ?? prisma;
+  const wallet = await db.wallet.findUnique({ where: { userId: input.userId } });
   if (!wallet) {
     throw new WalletNotFoundError(input.userId);
   }

@@ -27,6 +27,7 @@ engineering time.
 | App | Next.js App Router, React server components, TypeScript |
 | Styling | Tailwind |
 | Tests | Vitest (`src/tests/`), database-free |
+| Jobs | `npm run jobs:orders` — the order-timeout sweep, for cron |
 | Money | Integer **centavos**, never floats |
 
 The web app and the schema live in one repository because every screen here is a
@@ -133,6 +134,100 @@ time. A merchant raising a price must not rewrite last month's receipt.
 active-order strip **without** branching on the vertical, which is why a parcel
 in progress will render in those lists the day PARCEL launches.
 
+### Placement
+
+`placeOrder()` in `src/lib/orders/place-order.ts` creates an order. One rule
+governs it:
+
+> **Prices are re-read from the database, never taken from the client.**
+
+A request says "two of menu item X"; it does not get to say what X costs.
+Everything a client sends is an identifier, a quantity, or a note.
+`quoteCheckout()` resolves the cart against the live catalogue, prices it, and
+`placeOrder()` calls that same function again to get the number it charges — so
+the total displayed at checkout is the total charged by construction rather
+than by careful maintenance. The rejections are tested: an unknown item, an
+item belonging to a different store, quantity zero or 99999, and an address
+belonging to someone else.
+
+Placement is ONE `Serializable` transaction covering:
+
+1. `Order` row plus both `OrderAddress` snapshots,
+2. `submitOrder()` — the state machine decides where a FOOD order goes next,
+   so placement names no status,
+3. `commitBenefitUsage()` — subscription allowances consumed,
+4. `spendOnOrder()` — credits debited through the ledger,
+5. `bumpAddressUsage()`.
+
+Serializable because step 4 touches the ledger, and the ledger's correctness
+depends on nobody reading a stale balance. The failure mode this buys off is
+credits taken with no order, or an order whose benefit usage was never
+recorded. The ledger write is keyed `order-payment:<id>`, so a retried
+placement cannot double-charge.
+
+Order numbers (`DA-20260906-K3M9Q`) come from `src/lib/reference-numbers.ts`:
+a date plus five random characters from an alphabet with no I, L, O, U, 0 or 1.
+Deliberately **not** `count() + 1` — two orders placed in the same millisecond
+would read the same count and the unique constraint would then fail one of them
+at random, losing an order for cosmetic tidiness. The same generator now backs
+support ticket numbers, which had that flaw.
+
+### Delivery pricing
+
+Rates live in `DeliveryFeeRule`, keyed by `(serviceType, cityId)`. A row with a
+null `cityId` is the service's fallback; a city-specific row always wins.
+`src/lib/pricing/delivery-fee.ts` contains **no numbers of its own** — tuning a
+fee is a database edit, not a deploy, which matters for a rate ops will want to
+change weekly.
+
+Each rule carries a base fee, an included distance, a per-kilometre rate
+charged **pro rata** (a 2.1km trip must not cost what a 3km trip costs), a
+floor and ceiling, a small-order threshold, a flat service fee, and an
+everybody-gets-it free-delivery threshold — distinct from the subscription
+`FREE_DELIVERY` benefit, which is per-subscriber.
+
+A city with no rule for a service cannot be quoted at all: `quoteDeliveryFee()`
+throws rather than silently applying a Manila rate in Cebu.
+
+Postgres treats NULLs as distinct, so `@@unique([serviceType, cityId])` would
+not stop two fallback rows for one service — and two fallbacks make which rate
+applies a coin flip. A partial unique index in
+`prisma/sql/delivery_fee_rules.sql` closes that; Prisma's schema language
+cannot express one.
+
+### Timeouts
+
+Each `ServiceLifecycle` declares `timeouts`: states an order must not occupy
+forever, how long it may, and where it goes. FOOD gives a merchant 8 minutes to
+answer and dispatch 20 minutes to find a partner; PABILI adds a 10-minute
+budget-approval gate, because a partner cannot stand in a shop indefinitely
+waiting for a reply.
+
+`expireStaleOrders()` reads the flattened `ALL_STATUS_TIMEOUTS` and does not
+know that FOOD waits on a merchant or that PABILI waits on a customer — those
+are entries in the map. It moves each order in its own transaction, so one
+failure does not block the sweep, and refunds any credits the order consumed.
+An order the merchant accepted just in time fails the transition guard and is
+skipped, which is the guard working.
+
+Tests assert that every timeout is a **legal transition** for its vertical and
+passes `assertTransition` as SYSTEM — otherwise the failure would surface at 3am
+in a cron job rather than in CI.
+
+### Completion and refunds
+
+`completeOrder()` moves a delivered order to `COMPLETED` and grants any
+`CREDIT_BACK_PERCENT` its benefits accrued, through the ledger, keyed
+`credit-back:<id>`. Credit-back is not a discount: the customer paid full price
+at checkout and the credits arrive here.
+
+`refundOrderCredits()` returns credits spent on an order that will never be
+delivered. It reads the actual `ORDER_PAYMENT` rows rather than trusting
+`Order.walletCreditAppliedCentavos`, because the ledger is the truth about what
+was taken, and it nets off any refund already issued — so running it twice
+refunds once. Credits go back to **credits**, never to cash: there is no rail
+out, by design.
+
 ### Status handling
 
 One `OrderStatus` enum holds a **superset** of every state any vertical can
@@ -233,6 +328,12 @@ never leak into another.
 `findDispatchCandidates()` reads `enabledServices` and `Service.requiresRider`.
 **Everything else about the ranking logic stays as it is**: proximity dominates
 (60 points), then rating (25), then acceptance rate (15).
+
+`RIDER_ASSIGNED` permits `FLEET_PARTNER` as well as `SYSTEM`, because a partner
+*accepting* an offer is the normal path — that is what
+`FleetPartner.acceptanceRate` measures. The lifecycle originally allowed only
+SYSTEM, which contradicted that field; a test now asserts both actors are
+permitted wherever the state is reachable.
 
 ---
 
@@ -419,6 +520,48 @@ rather than several, and it is one query with no per-service branches only
 because there is one `Order` table. A vertical launched next year appears there
 automatically.
 
+### Cart and checkout
+
+The cart lives in the browser (`localStorage`, via `CartProvider`), not as a
+DRAFT `Order` row — a quantity stepper should not write to Postgres on every
+tap. The lifecycle's `DRAFT` state exists for the single placement transaction
+rather than for the minutes someone spends browsing. A food cart holds one
+store; adding from another replaces it and says so, because silently discarding
+a basket is worse than an extra tap.
+
+The cart bar shows an item **count, not a total**. A total there would have to
+be computed client-side from cached prices and would then disagree with the
+server at the worst possible moment. It is hidden on `/checkout` and `/orders`,
+where it is redundant or in the way.
+
+`CheckoutForm` never computes money either: every amount comes from
+`quoteCheckoutAction`, re-requested whenever a price-bearing input changes. That
+costs a round trip per change and buys the guarantee above. Notes and the
+cutlery flag are excluded from the re-quote trigger — they do not affect price.
+
+Every server action resolves the customer from the session rather than its
+arguments: a client cannot name whose order it is placing, whose credits it is
+spending, or whose order it is cancelling. Domain errors written to be read
+(`"This store delivers within Manila"`) pass through to the customer; anything
+unnamed is logged and replaced, because an internal message is not a customer's
+problem.
+
+Credits are the only non-cash rail, so paying **with** credits is all or
+nothing: a shortfall is refused with an explanation rather than a partial
+charge. With cash on delivery, credits may partially offset the bill.
+
+### Tracking
+
+`/orders/[orderId]` polls itself while the order is live (`OrderLiveRefresh`),
+pauses while the tab is hidden, and stops on its own at a terminal state so it
+is not burning requests on a finished order. A websocket is the right answer
+eventually.
+
+Whether the customer may cancel is the **transition map's** decision, checked
+server-side: a food order can be cancelled while the store is deciding or
+cooking, but not once a partner is carrying it. The button only renders when
+the map says so.
+
 Per-service styling is resolved from `Service.accentToken` through a static map
 keyed by *token*, not by service key (`src/lib/services/presentation.ts`) —
 Tailwind cannot build a class name from a runtime string, but a new vertical can
@@ -456,14 +599,24 @@ Database-free, in CI (`npm run verify`) — **62 tests**:
 | `order-transitions.test.ts` | Per-service lifecycles, reachability, no dead ends, actor permissions |
 | `wallet-ledger.test.ts` | The four hard constraints, sign derivation, ledger replay, SQL-guard agreement |
 | `pricing-benefits.test.ts` | Benefit caps, ceilings, scoping, basis-point rounding, discount floors |
+| `delivery-fee.test.ts` | Pro-rata distance, floors and ceilings, both thresholds, haversine |
+| `session-guard.test.ts` | The placeholder session refuses production without a deliberate override |
 
-Verified separately against a live PostgreSQL 16 with the SQL guards applied —
-**42 end-to-end checks**, all passing: registry gating by city, the FOOD
-lifecycle and its rejections, dispatch including a partner for FOOD and
-excluding the same partner from RIDE, ledger idempotency and overspend
-rejection, ledger replay reproducing every `balanceAfterCentavos`, all four
-database guards rejecting raw writes, subscription benefits firing only once the
-plan is active, and support tickets inheriting the order's vertical.
+Verified separately against a live PostgreSQL 16 with the SQL guards applied:
 
-`npm run build` and `npm run lint` are clean; every route returns 200 against
-seeded data.
+- **42 end-to-end checks** on the foundation: registry gating by city, the FOOD
+  lifecycle and its rejections, dispatch including a partner for FOOD and
+  excluding the same partner from RIDE, ledger idempotency and overspend
+  rejection, ledger replay reproducing every `balanceAfterCentavos`, all four
+  database guards rejecting raw writes, subscription benefits firing only once
+  the plan is active, and support tickets inheriting the order's vertical.
+- **53 end-to-end checks** on checkout: rate resolution and refusal, six
+  hostile-input rejections, single-transaction placement with both address
+  snapshots, credits applied and capped, cancellation refunding exactly what
+  was spent and being idempotent, the merchant timeout firing only after its
+  window with a customer-readable reason, credit-back granted on completion, and
+  an eleven-step lifecycle audit trail that is contiguous end to end.
+
+And driven through a real browser: cart → checkout → placement → tracking →
+cancellation, against seeded data. `npm run build` and `npm run lint` are
+clean; every route returns 200.

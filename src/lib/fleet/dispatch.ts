@@ -6,6 +6,7 @@ import {
 } from '@prisma/client';
 import { prisma, type PrismaTransactionClient } from '@/lib/prisma';
 import { getService } from '@/lib/services/registry';
+import { boundingBox, haversineMeters } from '@/lib/geo';
 
 /**
  * Dispatch candidate selection.
@@ -36,24 +37,6 @@ export interface RankedCandidate {
 
 const DEFAULT_RADIUS_METERS = 5_000;
 const DEFAULT_LIMIT = 20;
-const EARTH_RADIUS_METERS = 6_371_000;
-
-/** Great-circle distance. Good enough for a candidate shortlist. */
-export function haversineMeters(
-  fromLat: number,
-  fromLng: number,
-  toLat: number,
-  toLng: number,
-): number {
-  const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
-  const dLat = toRadians(toLat - fromLat);
-  const dLng = toRadians(toLng - fromLng);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRadians(fromLat)) * Math.cos(toRadians(toLat)) * Math.sin(dLng / 2) ** 2;
-  return 2 * EARTH_RADIUS_METERS * Math.asin(Math.min(1, Math.sqrt(a)));
-}
-
 /**
  * Ranking. Unchanged from the rider-only version: proximity dominates, rating
  * and reliability break ties.
@@ -83,11 +66,12 @@ export async function findDispatchCandidates(
   const db = client ?? prisma;
   const radius = query.radiusMeters ?? DEFAULT_RADIUS_METERS;
 
-  // Coarse bounding box in SQL, exact distance in memory. A degree of latitude
-  // is ~111km; longitude shrinks with latitude, and Philippine latitudes are
-  // low enough that the correction is small but worth applying.
-  const latDelta = radius / 111_000;
-  const lngDelta = radius / (111_000 * Math.max(0.1, Math.cos((query.pickupLatitude * Math.PI) / 180)));
+  // Coarse bounding box in SQL, exact distance in memory.
+  const { latDelta, lngDelta } = boundingBox(
+    query.pickupLatitude,
+    query.pickupLongitude,
+    radius,
+  );
 
   const where: Prisma.FleetPartnerWhereInput = {
     isOnline: true,

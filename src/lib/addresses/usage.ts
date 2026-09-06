@@ -16,11 +16,17 @@ export interface AddressBookQuery {
   limit?: number;
 }
 
+/** An address with its city resolved — what every picker actually wants. */
+export type AddressWithCity = Address & { city: { id: string; name: string } };
+
 /**
  * The address book, ordered by real behaviour: most-recently-used first, then
  * most-used. Creation date is a poor proxy for what someone wants to pick.
+ *
+ * Includes the city, because every caller renders it and a second query per
+ * address is the classic N+1 waiting to happen.
  */
-export async function listAddressBook(query: AddressBookQuery): Promise<Address[]> {
+export async function listAddressBook(query: AddressBookQuery): Promise<AddressWithCity[]> {
   return prisma.address.findMany({
     where: {
       userId: query.userId,
@@ -33,6 +39,7 @@ export async function listAddressBook(query: AddressBookQuery): Promise<Address[
       { usageCount: 'desc' },
       { createdAt: 'desc' },
     ],
+    include: { city: { select: { id: true, name: true } } },
     ...(query.limit ? { take: query.limit } : {}),
   });
 }

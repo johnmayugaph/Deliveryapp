@@ -1,5 +1,5 @@
 import { SubscriptionStatus, type ServiceKey } from '@prisma/client';
-import { prisma } from '@/lib/prisma';
+import { prisma, type PrismaTransactionClient } from '@/lib/prisma';
 import { assertNonNegativeInteger, CURRENCY } from '@/lib/money';
 import { assertServiceOrderable } from '@/lib/services/registry';
 import { getSpendableCentavos } from '@/lib/wallet/ledger';
@@ -174,14 +174,14 @@ export async function commitBenefitUsage(
     orderId: string;
     appliedBenefits: readonly AppliedBenefitLine[];
   },
-  now: Date = new Date(),
+  options: { now?: Date; client?: PrismaTransactionClient } = {},
 ): Promise<void> {
   if (input.appliedBenefits.length === 0) {
     return;
   }
-  const periodStart = currentPeriodStart(now);
+  const periodStart = currentPeriodStart(options.now ?? new Date());
 
-  await prisma.$transaction(async (tx) => {
+  const run = async (tx: PrismaTransactionClient) => {
     for (const line of input.appliedBenefits) {
       await tx.subscriptionBenefitUsage.upsert({
         where: {
@@ -217,5 +217,13 @@ export async function commitBenefitUsage(
         },
       });
     }
-  });
+  };
+
+  // Compose into the caller's transaction when given one, so placing an order
+  // and consuming its benefits cannot half-succeed.
+  if (options.client) {
+    await run(options.client);
+    return;
+  }
+  await prisma.$transaction(run);
 }

@@ -19,6 +19,24 @@ import { OrderActor, OrderStatus, ServiceKey } from '@prisma/client';
 /** Statuses reachable from a given status. Absent key == unreachable state. */
 export type StatusTransitionMap = Partial<Record<OrderStatus, readonly OrderStatus[]>>;
 
+/**
+ * A state an order must not sit in forever, and where it goes if it does.
+ *
+ * Expressed per service so the sweeper job that acts on these needs no
+ * knowledge of any vertical: a FOOD order waiting on a merchant and a PABILI
+ * order waiting on a customer's budget approval are the same shape of problem.
+ */
+export interface StatusTimeout {
+  /** The state that must not be occupied indefinitely. */
+  status: OrderStatus;
+  /** How long an order may remain there. */
+  afterSeconds: number;
+  /** Where it goes when the clock runs out. Must be a legal transition. */
+  to: OrderStatus;
+  /** Recorded as the cancellation reason, so the customer gets an explanation. */
+  reason: string;
+}
+
 export interface ServiceLifecycle {
   /** State a freshly created order starts in. */
   initialStatus: OrderStatus;
@@ -34,7 +52,22 @@ export interface ServiceLifecycle {
   transitions: StatusTransitionMap;
   /** Who may perform a given transition. Absent == SYSTEM and SUPPORT_AGENT only. */
   permittedActors: Partial<Record<OrderStatus, readonly OrderActor[]>>;
+  /** States that time out. Swept by `expireStaleOrders()`. */
+  timeouts: readonly StatusTimeout[];
 }
+
+/**
+ * Who may move an order to RIDER_ASSIGNED.
+ *
+ * FLEET_PARTNER is here because a partner ACCEPTING an offer is the normal path
+ * — that is what `FleetPartner.acceptanceRate` measures. SYSTEM covers
+ * auto-assignment, and support covers reassignment by hand.
+ */
+const ASSIGNMENT_ACTORS: readonly OrderActor[] = [
+  OrderActor.FLEET_PARTNER,
+  OrderActor.SYSTEM,
+  OrderActor.SUPPORT_AGENT,
+];
 
 /** Cancellation states, and who is allowed to put an order into each. */
 const CANCELLATION_ACTORS: Partial<Record<OrderStatus, readonly OrderActor[]>> = {
@@ -140,11 +173,29 @@ const FOOD_LIFECYCLE: ServiceLifecycle = {
     [OrderStatus.ARRIVED_AT_DROPOFF]: [OrderStatus.DELIVERED, OrderStatus.FAILED_DELIVERY, ...IN_TRANSIT_CANCELLATIONS],
     [OrderStatus.DELIVERED]: [OrderStatus.COMPLETED],
   },
+  timeouts: [
+    {
+      // The one that matters most: without it a placed order can sit unanswered
+      // forever while the customer waits for food that is never being cooked.
+      status: OrderStatus.PENDING_MERCHANT_ACCEPTANCE,
+      afterSeconds: 8 * 60,
+      to: OrderStatus.CANCELLED_BY_SYSTEM,
+      reason: 'Hindi nakasagot ang store sa loob ng 8 minuto.',
+    },
+    {
+      // Dispatch searched and found nobody.
+      status: OrderStatus.AWAITING_RIDER_ASSIGNMENT,
+      afterSeconds: 20 * 60,
+      to: OrderStatus.CANCELLED_BY_SYSTEM,
+      reason: 'Wala kaming nakitang available na rider.',
+    },
+  ],
   permittedActors: {
     [OrderStatus.PENDING_MERCHANT_ACCEPTANCE]: [OrderActor.CUSTOMER, OrderActor.SYSTEM],
     [OrderStatus.MERCHANT_ACCEPTED]: [OrderActor.MERCHANT, OrderActor.SUPPORT_AGENT],
     [OrderStatus.PREPARING]: [OrderActor.MERCHANT, OrderActor.SUPPORT_AGENT],
     [OrderStatus.READY_FOR_PICKUP]: [OrderActor.MERCHANT, OrderActor.SUPPORT_AGENT],
+    [OrderStatus.RIDER_ASSIGNED]: ASSIGNMENT_ACTORS,
     [OrderStatus.RIDER_AT_PICKUP]: [OrderActor.FLEET_PARTNER],
     [OrderStatus.PICKED_UP]: [OrderActor.FLEET_PARTNER],
     [OrderStatus.IN_TRANSIT]: [OrderActor.FLEET_PARTNER],
@@ -184,8 +235,17 @@ const MART_LIFECYCLE: ServiceLifecycle = {
     [OrderStatus.ARRIVED_AT_DROPOFF]: [OrderStatus.DELIVERED, OrderStatus.FAILED_DELIVERY, ...IN_TRANSIT_CANCELLATIONS],
     [OrderStatus.DELIVERED]: [OrderStatus.COMPLETED],
   },
+  timeouts: [
+    {
+      status: OrderStatus.AWAITING_RIDER_ASSIGNMENT,
+      afterSeconds: 20 * 60,
+      to: OrderStatus.CANCELLED_BY_SYSTEM,
+      reason: 'Wala kaming nakitang available na rider.',
+    },
+  ],
   permittedActors: {
     [OrderStatus.AWAITING_RIDER_ASSIGNMENT]: [OrderActor.CUSTOMER, OrderActor.SYSTEM],
+    [OrderStatus.RIDER_ASSIGNED]: ASSIGNMENT_ACTORS,
     [OrderStatus.RIDER_AT_PICKUP]: [OrderActor.FLEET_PARTNER],
     [OrderStatus.SHOPPING_IN_PROGRESS]: [OrderActor.FLEET_PARTNER],
     [OrderStatus.PICKED_UP]: [OrderActor.FLEET_PARTNER],
@@ -224,8 +284,17 @@ const PARCEL_LIFECYCLE: ServiceLifecycle = {
     [OrderStatus.ARRIVED_AT_DROPOFF]: [OrderStatus.DELIVERED, OrderStatus.FAILED_DELIVERY, ...IN_TRANSIT_CANCELLATIONS],
     [OrderStatus.DELIVERED]: [OrderStatus.COMPLETED],
   },
+  timeouts: [
+    {
+      status: OrderStatus.AWAITING_RIDER_ASSIGNMENT,
+      afterSeconds: 20 * 60,
+      to: OrderStatus.CANCELLED_BY_SYSTEM,
+      reason: 'Wala kaming nakitang available na rider.',
+    },
+  ],
   permittedActors: {
     [OrderStatus.AWAITING_RIDER_ASSIGNMENT]: [OrderActor.CUSTOMER, OrderActor.SYSTEM],
+    [OrderStatus.RIDER_ASSIGNED]: ASSIGNMENT_ACTORS,
     [OrderStatus.RIDER_AT_PICKUP]: [OrderActor.FLEET_PARTNER],
     [OrderStatus.PICKED_UP]: [OrderActor.FLEET_PARTNER],
     [OrderStatus.IN_TRANSIT]: [OrderActor.FLEET_PARTNER],
@@ -266,8 +335,24 @@ const PABILI_LIFECYCLE: ServiceLifecycle = {
     [OrderStatus.ARRIVED_AT_DROPOFF]: [OrderStatus.DELIVERED, OrderStatus.FAILED_DELIVERY, ...IN_TRANSIT_CANCELLATIONS],
     [OrderStatus.DELIVERED]: [OrderStatus.COMPLETED],
   },
+  timeouts: [
+    {
+      status: OrderStatus.AWAITING_RIDER_ASSIGNMENT,
+      afterSeconds: 20 * 60,
+      to: OrderStatus.CANCELLED_BY_SYSTEM,
+      reason: 'Wala kaming nakitang available na rider.',
+    },
+    {
+      // A partner cannot stand in a shop indefinitely waiting for a reply.
+      status: OrderStatus.AWAITING_BUDGET_APPROVAL,
+      afterSeconds: 10 * 60,
+      to: OrderStatus.CANCELLED_BY_SYSTEM,
+      reason: 'Hindi na-approve ang budget sa loob ng 10 minuto.',
+    },
+  ],
   permittedActors: {
     [OrderStatus.AWAITING_RIDER_ASSIGNMENT]: [OrderActor.CUSTOMER, OrderActor.SYSTEM],
+    [OrderStatus.RIDER_ASSIGNED]: ASSIGNMENT_ACTORS,
     [OrderStatus.SHOPPING_IN_PROGRESS]: [OrderActor.FLEET_PARTNER],
     [OrderStatus.AWAITING_BUDGET_APPROVAL]: [OrderActor.FLEET_PARTNER],
     // Only the customer releases the budget gate.
@@ -306,8 +391,17 @@ const RIDE_LIFECYCLE: ServiceLifecycle = {
     [OrderStatus.ARRIVED_AT_DROPOFF]: [OrderStatus.DROPPED_OFF, ...IN_TRANSIT_CANCELLATIONS],
     [OrderStatus.DROPPED_OFF]: [OrderStatus.COMPLETED],
   },
+  timeouts: [
+    {
+      status: OrderStatus.AWAITING_RIDER_ASSIGNMENT,
+      afterSeconds: 20 * 60,
+      to: OrderStatus.CANCELLED_BY_SYSTEM,
+      reason: 'Wala kaming nakitang available na rider.',
+    },
+  ],
   permittedActors: {
     [OrderStatus.AWAITING_RIDER_ASSIGNMENT]: [OrderActor.CUSTOMER, OrderActor.SYSTEM],
+    [OrderStatus.RIDER_ASSIGNED]: ASSIGNMENT_ACTORS,
     [OrderStatus.RIDER_AT_PICKUP]: [OrderActor.FLEET_PARTNER],
     [OrderStatus.PASSENGER_ONBOARD]: [OrderActor.FLEET_PARTNER],
     [OrderStatus.IN_TRANSIT]: [OrderActor.FLEET_PARTNER],
@@ -343,3 +437,13 @@ export const ALL_IN_PROGRESS_STATUSES: readonly OrderStatus[] = Array.from(
     Object.values(ORDER_LIFECYCLES).flatMap((lifecycle) => [...lifecycle.inProgressStatuses]),
   ),
 );
+
+/**
+ * Every timeout across every vertical, flattened for the sweeper. Derived from
+ * the map, so registering a lifecycle registers its timeouts too.
+ */
+export const ALL_STATUS_TIMEOUTS: readonly (StatusTimeout & { serviceType: ServiceKey })[] =
+  (Object.entries(ORDER_LIFECYCLES) as [ServiceKey, ServiceLifecycle][]).flatMap(
+    ([serviceType, lifecycle]) =>
+      lifecycle.timeouts.map((timeout) => ({ ...timeout, serviceType })),
+  );

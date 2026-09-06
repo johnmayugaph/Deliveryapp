@@ -40,8 +40,8 @@ brief's changes already folded in.
 | 2 | Schema, initial migration, SQL guards, seed | ✅ Done |
 | 3 | Core backend: state machine, credits ledger, pricing, dispatch, support | ✅ Done |
 | 4 | Customer app shell: home, unified orders, credits, profile, help | ✅ Done |
-| 5 | FOOD checkout end to end | ⬜ Next |
-| 6 | Real authentication (OTP) | ⬜ Planned |
+| 5 | FOOD checkout end to end | ✅ Done |
+| 6 | Real authentication (OTP) | ⬜ Next |
 | 7 | Fleet partner app | ⬜ Planned |
 | 8 | Merchant tools | ⬜ Planned |
 | 9 | Subscription launch decision | ⬜ Gated on data |
@@ -113,7 +113,7 @@ choices:
 
 ## Phase 2 — Schema and data ✅
 
-- `prisma/schema.prisma`: 23 models, 16 enums.
+- `prisma/schema.prisma`: 24 models, 16 enums.
 - Initial migration `20260906134534_unified_multi_service_schema`.
 - `prisma/sql/wallet_append_only.sql`: append-only triggers on the credits
   ledger plus five CHECK constraints. Applied by `npm run prisma:guards`.
@@ -164,30 +164,93 @@ approvals per service), `/help`, `/search`, `/addresses`, `/services/[key]`,
 
 ---
 
-## Phase 5 — FOOD checkout end to end ⬜ Next
+## Phase 5 — FOOD checkout end to end ✅
 
-The first real order. Everything it needs exists; this is wiring, not design.
+The first real order. An order now goes cart → checkout → placement → tracking
+→ completion or cancellation, verified through a browser as well as in tests.
 
-- Cart state and a store/menu ordering screen.
-- Address selection from the shared book, snapshotted onto the order via
-  `toOrderAddressSnapshot()`; `bumpAddressUsage()` on placement.
-- Delivery-fee calculation by distance, feeding `quoteOrderPrice()`.
-- Order creation → `parseOrderDetails(FOOD, …)` → `submitOrder()` →
-  `commitBenefitUsage()` → `spendOnOrder()`, all in one transaction.
-- Merchant-acceptance timeout moving orders to `CANCELLED_BY_SYSTEM` with a
-  `refundToCredits()` entry.
-- Grant `CREDIT_BACK_PERCENT` accruals on `COMPLETED`.
-- Live tracking on `/orders/[orderId]`.
+### What was built
 
-## Phase 6 — Authentication ⬜
+| Area | Detail |
+| --- | --- |
+| Delivery pricing | `DeliveryFeeRule` table keyed by `(serviceType, cityId)`; pro-rata per-km beyond an included distance; floors, ceilings, small-order and free-delivery thresholds. No rates in code. |
+| Cart | `localStorage` via `CartProvider`; quantity steppers on the store menu; a cart bar showing a count, never a total. |
+| Checkout | `/checkout` with address selection, tip, payment method, credits toggle and a server-computed breakdown. |
+| Placement | `placeOrder()` — one `Serializable` transaction: order + address snapshots + `submitOrder()` + benefit usage + credits debit + address usage. |
+| Timeouts | Per-service `timeouts` in the lifecycle config; `expireStaleOrders()` sweeps them and refunds credits. `npm run jobs:orders`. |
+| Completion | `completeOrder()` grants accrued credit-back through the ledger. |
+| Cancellation | Customer cancel, permitted only where the transition map allows, refunding credits to credits. |
+| Tracking | Self-polling while live, pausing on a hidden tab, stopping at a terminal state. |
+| Reference numbers | `DA-20260906-K3M9Q` — collision-resistant, replacing a `count()`-based generator. |
+
+### Decisions worth remembering
+
+- **Prices are re-read from the database, never taken from the client.** A
+  request carries identifiers, quantities and notes — never a price.
+  `quoteCheckout()` is the only thing that prices a cart, and `placeOrder()`
+  calls it again for the number it charges, so displayed and charged totals
+  cannot drift.
+- **Rates are data.** `DeliveryFeeRule` exists so ops can change a fee without a
+  deploy. `delivery-fee.ts` holds no numbers.
+- **A city with no rule cannot be quoted.** Throwing beats silently applying a
+  Manila rate in Cebu.
+- **The cart is not a DRAFT order.** A quantity stepper should not write to
+  Postgres. `DRAFT` exists for the placement transaction only.
+- **Timeouts are lifecycle config, not job code.** The sweeper reads the map and
+  knows nothing about merchants or budgets. A test asserts every timeout is a
+  legal transition, so a bad policy fails in CI rather than at 3am.
+- **Credit refunds read the ledger, not the order column.** The ledger is the
+  truth about what was taken, and netting off prior refunds makes the operation
+  idempotent.
+- **Paying with credits is all or nothing.** Credits are the only non-cash rail,
+  so a shortfall is refused with an explanation rather than part-charged.
+- **The placeholder session now fails closed.** It returned the same seeded user
+  to every visitor with no request state involved, so on a public URL every
+  visitor would have been Juan Dela Cruz — including on `/orders` and
+  `/credits`, where the ownership check would have passed for all of them. It
+  refuses in production unless `ALLOW_INSECURE_DEMO_SESSION=1`. Note the
+  consequence: `npm run build && npm start` locally needs that flag.
+
+### Things fixed along the way
+
+- **`RIDER_ASSIGNED` allowed only SYSTEM**, which contradicted
+  `FleetPartner.acceptanceRate` — that field only means something if partners
+  *accept* offers. Now permits `FLEET_PARTNER` too, with a test.
+- **`count()`-based ticket numbers** would collide under concurrency and fail an
+  insert at random. Replaced.
+- **`commitBenefitUsage` and `spendOnOrder`** opened or used their own client,
+  so their work sat outside the caller's transaction. Both now compose.
+- **Two copies of `haversineMeters`** — factored into `src/lib/geo.ts`.
+- **The tracking screen's "Susunod" hint** listed every cancellation state,
+  reading as a menu of ways the order might fail. Forward path only.
+- **The cart bar rendered on `/checkout`**, where it is redundant and covered
+  the total. Hidden there and on `/orders`.
+
+### Verification
+
+- `npm run verify` — **91 tests** (up from 62), no database needed.
+- **53 end-to-end checks** against live PostgreSQL 16, on top of the
+  foundation's 42. Idempotent: the ledger is reset with a compensating
+  `ADJUSTMENT` rather than a delete, since it is append-only.
+- Driven through a real browser end to end: three items added, a ₱449 quote
+  (₱400 subtotal + ₱39 delivery over 0.7km + ₱10 service fee), a tip re-quoting
+  to ₱499, placement, tracking with ETA and timeline, cart cleared, the order
+  appearing in the unified history, then cancellation.
+- `npm run jobs:orders` swept six orders left waiting past the merchant window.
+
+## Phase 6 — Authentication ⬜ Next
 
 `src/lib/auth/session.ts` is a **placeholder** resolving the seeded demo
-customer. Replace with OTP over SMS against `User.phone`. Keep the two
-properties that matter: it returns **one** `User`, and roles are read from
-`user.roles` — nothing may assume a session belongs to a customer.
+customer, and it now refuses to run in production without an explicit override.
+Replace it with OTP over SMS against `User.phone`.
 
-Order tracking is already scoped to the signed-in customer; an order id is not
-an access token.
+Keep the properties that matter: it returns **one** `User`; roles are read from
+`user.roles`, so nothing assumes a session belongs to a customer; and
+`requireCurrentUser()` throws rather than letting a mutation act as nobody.
+Delete the `ALLOW_INSECURE_DEMO_SESSION` escape hatch when this lands.
+
+Order tracking and every checkout action are already scoped to the signed-in
+customer; an order id is not an access token.
 
 ## Phase 7 — Fleet partner app ⬜
 
@@ -239,14 +302,21 @@ is the return on this phase's design, and the thing to protect in review.
 
 ## Known gaps
 
-- **No authentication.** `getCurrentUser()` returns the seeded demo customer.
-- **No checkout.** Order creation is exercised by tests and the end-to-end
-  verification, not by a UI.
+- **No authentication.** `getCurrentUser()` returns the seeded demo customer and
+  refuses production without `ALLOW_INSECURE_DEMO_SESSION=1`. Phase 6.
+- **No merchant or fleet UI.** An order placed today sits in
+  `PENDING_MERCHANT_ACCEPTANCE` until the timeout sweep cancels it, because
+  nothing can accept it yet. Phases 7 and 8.
+- **No realtime.** Tracking polls every 15 seconds; there is no push.
+- **Menu categories sort alphabetically**, so "Add-ons" leads the menu ahead of
+  "Rice meals". Needs a sort field on the category, or categories as rows.
 - **Icons are emoji.** `serviceGlyph()` is a lookup, so swapping in a real icon
   set touches one map.
-- **No realtime.** Tracking renders the `OrderStatusEvent` trail on load; there
-  is no push yet.
-- **Fee calculation is a caller input.** `quoteOrderPrice()` takes
-  `baseDeliveryFeeCentavos`; distance-based pricing is Phase 5.
+- **Item options are modelled but not offered.** `FoodItemSnapshot.options`
+  carries priced add-ons and placement stores them; no UI collects them yet.
+- **Surge is a column, not a calculation.** `Order.surgeCentavos` exists and
+  pricing passes it through; nothing sets it.
+- **ETA is an estimate from a straight line.** `estimateEta()` uses prep time
+  plus haversine distance at a fixed average speed, not routing.
 - **`prisma/sql` guards need `psql`** on the deploy host, and must be applied
   after every `migrate deploy` (`npm run db:setup` does both).

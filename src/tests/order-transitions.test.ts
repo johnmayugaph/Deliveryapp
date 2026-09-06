@@ -1,12 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { OrderActor, OrderStatus, ServiceKey } from '@prisma/client';
-import { ORDER_LIFECYCLES, ALL_IN_PROGRESS_STATUSES } from '@/lib/orders/transitions';
+import {
+  ORDER_LIFECYCLES,
+  ALL_IN_PROGRESS_STATUSES,
+  ALL_STATUS_TIMEOUTS,
+  STATUSES_REQUIRING_REASON,
+} from '@/lib/orders/transitions';
 import {
   allowedTransitions,
   assertTransition,
   canTransition,
   cancellationStatusForActor,
   IllegalTransitionError,
+  isActorPermitted,
   isTerminal,
   MissingTransitionReasonError,
   UnauthorizedTransitionError,
@@ -242,5 +248,98 @@ describe('cross-service in-progress set', () => {
   it('contains no terminal statuses', () => {
     expect(ALL_IN_PROGRESS_STATUSES).not.toContain(OrderStatus.COMPLETED);
     expect(ALL_IN_PROGRESS_STATUSES).not.toContain(OrderStatus.CANCELLED_BY_CUSTOMER);
+  });
+});
+
+describe('timeout policies', () => {
+  it('declares a timeout for every state where an order waits on someone else', () => {
+    // The states that stall: a merchant deciding, dispatch searching, a
+    // customer approving a budget. Each must have a way out.
+    const waitingStates = [
+      OrderStatus.PENDING_MERCHANT_ACCEPTANCE,
+      OrderStatus.AWAITING_RIDER_ASSIGNMENT,
+      OrderStatus.AWAITING_BUDGET_APPROVAL,
+    ];
+
+    for (const key of Object.values(ServiceKey)) {
+      const lifecycle = ORDER_LIFECYCLES[key];
+      const reachable = new Set(Object.values(lifecycle.transitions).flat());
+      const covered = new Set(lifecycle.timeouts.map((timeout) => timeout.status));
+
+      for (const state of waitingStates) {
+        if (!reachable.has(state)) continue;
+        expect(
+          covered.has(state),
+          `${key} can reach ${state} but declares no timeout for it — an order could wait forever`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it('only times out into a status the map actually permits', () => {
+    // A timeout that is not a legal transition would throw at 3am in a cron job
+    // rather than here.
+    for (const timeout of ALL_STATUS_TIMEOUTS) {
+      expect(
+        canTransition(timeout.serviceType, timeout.status, timeout.to),
+        `${timeout.serviceType}: ${timeout.status} -> ${timeout.to} is not a legal transition`,
+      ).toBe(true);
+    }
+  });
+
+  it('carries a reason for every timeout, since the target demands one', () => {
+    for (const timeout of ALL_STATUS_TIMEOUTS) {
+      if (STATUSES_REQUIRING_REASON.includes(timeout.to)) {
+        expect(timeout.reason.trim().length, `${timeout.serviceType} ${timeout.status}`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('passes its own assertTransition as SYSTEM, which is what the sweeper uses', () => {
+    for (const timeout of ALL_STATUS_TIMEOUTS) {
+      expect(() =>
+        assertTransition({
+          serviceType: timeout.serviceType,
+          from: timeout.status,
+          to: timeout.to,
+          actor: OrderActor.SYSTEM,
+          reason: timeout.reason,
+        }),
+      ).not.toThrow();
+    }
+  });
+
+  it('gives merchants less time than dispatch', () => {
+    // A customer staring at "contacting the store" should not wait as long as
+    // one whose food is cooked and waiting for a rider.
+    const food = ORDER_LIFECYCLES[ServiceKey.FOOD];
+    const merchant = food.timeouts.find((t) => t.status === OrderStatus.PENDING_MERCHANT_ACCEPTANCE);
+    const dispatch = food.timeouts.find((t) => t.status === OrderStatus.AWAITING_RIDER_ASSIGNMENT);
+    expect(merchant).toBeDefined();
+    expect(dispatch).toBeDefined();
+    expect(merchant!.afterSeconds).toBeLessThan(dispatch!.afterSeconds);
+  });
+});
+
+describe('assignment', () => {
+  it('lets a fleet partner accept an offer, which is what acceptanceRate measures', () => {
+    for (const key of Object.values(ServiceKey)) {
+      const lifecycle = ORDER_LIFECYCLES[key];
+      const reachable = new Set(Object.values(lifecycle.transitions).flat());
+      if (!reachable.has(OrderStatus.RIDER_ASSIGNED)) continue;
+
+      expect(
+        isActorPermitted(key, OrderStatus.RIDER_ASSIGNED, OrderActor.FLEET_PARTNER),
+        `${key}: a partner cannot accept an offer`,
+      ).toBe(true);
+      // Auto-assignment must stay possible too.
+      expect(isActorPermitted(key, OrderStatus.RIDER_ASSIGNED, OrderActor.SYSTEM)).toBe(true);
+    }
+  });
+
+  it('does not let a merchant or a customer assign a partner', () => {
+    for (const actor of [OrderActor.MERCHANT, OrderActor.CUSTOMER]) {
+      expect(isActorPermitted(ServiceKey.FOOD, OrderStatus.RIDER_ASSIGNED, actor)).toBe(false);
+    }
   });
 });

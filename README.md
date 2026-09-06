@@ -43,6 +43,18 @@ The seeded demo customer is Juan Dela Cruz (`+639171234567`). Authentication is
 not built yet: `src/lib/auth/session.ts` resolves that user directly, and is
 the one file to replace in Phase 6.
 
+Because that placeholder returns the same person to **every** visitor, it
+refuses to run in production. `npm run dev` is unaffected; a production start
+needs `ALLOW_INSECURE_DEMO_SESSION=1`, and only for a throwaway demo:
+
+```bash
+ALLOW_INSECURE_DEMO_SESSION=1 npm start
+```
+
+Order timeouts are swept by a job, not a background thread — put
+`npm run jobs:orders` on a cron every minute or two, or orders will sit
+waiting on a merchant forever.
+
 ## Scripts
 
 | Command | Does |
@@ -54,25 +66,26 @@ the one file to replace in Phase 6.
 | `npm run lint` | ESLint, including the no-service-branch rule |
 | `npm run prisma:guards` | Apply `prisma/sql/*.sql` |
 | `npm run db:seed` | Seed |
+| `npm run jobs:orders` | Sweep orders that waited past their vertical's timeout (cron) |
 
 ## Layout
 
 ```
 prisma/
-  schema.prisma          the source of truth: 23 models, 16 enums
+  schema.prisma          the source of truth: 24 models, 16 enums
   seed.ts                the ONLY file that enumerates the five services
   sql/                   invariants Prisma's schema language cannot express
 src/
   app/                   Next.js App Router screens
-  components/            presentation only
+  components/            presentation, plus the client-side cart
   lib/
     services/registry.ts the only reader of the Service registry
-    orders/              lifecycle config map, state machine, details shapes
+    orders/              lifecycle map, state machine, details, placement, timeouts
     wallet/              the credits ledger and its pure rules
-    pricing/             subscription-aware checkout pricing
+    pricing/             delivery rates and subscription-aware checkout pricing
     fleet/               dispatch, filtered by approved services
     support/             unified tickets
-  tests/                 62 tests, database-free
+  tests/                 91 tests, database-free
 ```
 
 ## Money

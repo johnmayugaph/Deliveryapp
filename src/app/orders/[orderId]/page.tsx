@@ -7,7 +7,16 @@ import { statusPresentation } from '@/lib/orders/status-presentation';
 import { summariseDetails } from '@/lib/orders/details';
 import { serviceGlyph } from '@/lib/services/presentation';
 import { formatCentavos } from '@/lib/money';
-import { allowedTransitions, isTerminal } from '@/lib/orders/state-machine';
+import {
+  allowedTransitions,
+  isActorPermitted,
+  isInProgress,
+  isTerminal,
+} from '@/lib/orders/state-machine';
+import { OrderLiveRefresh } from '@/components/orders/OrderLiveRefresh';
+import { CancelOrderButton } from '@/components/orders/CancelOrderButton';
+import { OrderActor, OrderStatus } from '@prisma/client';
+import { cancellationStatusForActor } from '@/lib/orders/state-machine';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,6 +53,22 @@ export default async function OrderDetailPage({
   const dropoff = order.addresses.find((address) => address.role === 'DROPOFF');
   const nextStates = allowedTransitions(order.serviceType, order.status);
 
+  // Whether the customer may cancel is the transition map's decision, not this
+  // screen's: a food order can be cancelled while the store decides or cooks,
+  // but not once a partner is carrying it.
+  const customerCancellation = cancellationStatusForActor(OrderActor.CUSTOMER);
+  const canCustomerCancel =
+    nextStates.includes(customerCancellation) &&
+    isActorPermitted(order.serviceType, customerCancellation, OrderActor.CUSTOMER);
+
+  const isLive = isInProgress(order.serviceType, order.status);
+
+  // The "what happens next" hint should show the forward path only. Listing
+  // every cancellation state reads as a menu of ways the order might fail.
+  const forwardStates = nextStates.filter(
+    (state) => !isTerminal(order.serviceType, state) || state === OrderStatus.COMPLETED,
+  );
+
   const feeLines = [
     { label: 'Subtotal', centavos: order.subtotalCentavos, sign: 1 },
     { label: 'Delivery fee', centavos: order.deliveryFeeCentavos, sign: 1 },
@@ -58,6 +83,8 @@ export default async function OrderDetailPage({
 
   return (
     <main>
+      <OrderLiveRefresh isActive={isLive} />
+
       <header className="bg-surface px-4 pb-4 pt-5">
         <Link href="/orders" className="text-xs font-semibold text-brand-700">
           ← Orders
@@ -74,6 +101,17 @@ export default async function OrderDetailPage({
           <p className="mt-3 text-xs text-ink-muted">
             Papunta sa {dropoff.line1}
             {dropoff.barangay ? `, ${dropoff.barangay}` : ''}, {dropoff.cityName}
+          </p>
+        ) : null}
+        {order.etaAt && isLive ? (
+          <p className="mt-1 text-xs font-semibold text-brand-700">
+            Tinatayang dating{' '}
+            {order.etaAt.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })}
+          </p>
+        ) : null}
+        {order.status === OrderStatus.CANCELLED_BY_SYSTEM && order.cancellationReason ? (
+          <p className="mt-2 rounded-lg bg-rose-50 px-2.5 py-2 text-xs text-rose-800">
+            {order.cancellationReason}
           </p>
         ) : null}
       </header>
@@ -119,9 +157,9 @@ export default async function OrderDetailPage({
             </li>
           ))}
         </ol>
-        {!isTerminal(order.serviceType, order.status) && nextStates.length > 0 ? (
+        {!isTerminal(order.serviceType, order.status) && forwardStates.length > 0 ? (
           <p className="mt-2 text-[11px] text-ink-faint">
-            Susunod: {nextStates.map((state) => statusPresentation(state).label).join(' / ')}
+            Susunod: {forwardStates.map((state) => statusPresentation(state).label).join(' / ')}
           </p>
         ) : null}
       </section>
@@ -150,7 +188,13 @@ export default async function OrderDetailPage({
         </dl>
       </section>
 
-      <section className="mx-4 mt-4">
+      {canCustomerCancel ? (
+        <section className="mx-4 mt-4">
+          <CancelOrderButton orderId={order.id} />
+        </section>
+      ) : null}
+
+      <section className="mx-4 mt-4 mb-8">
         <Link
           href={`/help?orderId=${order.id}`}
           className="flex items-center justify-between rounded-xl bg-surface px-3 py-3 shadow-sm ring-1 ring-black/5"

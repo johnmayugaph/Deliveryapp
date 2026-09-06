@@ -5,6 +5,7 @@ import {
 } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { getService } from '@/lib/services/registry';
+import { generateTicketNumber } from '@/lib/reference-numbers';
 
 /**
  * Unified support.
@@ -26,18 +27,6 @@ export interface CreateTicketInput {
   categorySlug?: string;
   subject: string;
   body: string;
-}
-
-/** Sequential per day, readable over the phone: DA-20260906-0042. */
-async function nextTicketNumber(now: Date = new Date()): Promise<string> {
-  const datePart = now.toISOString().slice(0, 10).replace(/-/g, '');
-  const startOfDay = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
-  );
-  const countToday = await prisma.supportTicket.count({
-    where: { createdAt: { gte: startOfDay } },
-  });
-  return `DA-${datePart}-${String(countToday + 1).padStart(4, '0')}`;
 }
 
 export async function createSupportTicket(input: CreateTicketInput): Promise<SupportTicket> {
@@ -62,7 +51,7 @@ export async function createSupportTicket(input: CreateTicketInput): Promise<Sup
 
   return prisma.supportTicket.create({
     data: {
-      ticketNumber: await nextTicketNumber(),
+      ticketNumber: generateTicketNumber(),
       userId: input.userId,
       serviceType,
       relatedOrderId: input.relatedOrderId ?? null,

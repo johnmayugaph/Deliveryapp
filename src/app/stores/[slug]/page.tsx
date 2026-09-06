@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { prisma } from '@/lib/prisma';
 import { getAllServices } from '@/lib/services/registry';
 import { formatCentavos } from '@/lib/money';
+import { AddToCartControls } from '@/components/cart/AddToCartControls';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,6 +42,10 @@ export default async function StorePage({
   const liveServices = services.filter(
     (service) => service.isActive && store.serviceKeys.includes(service.key),
   );
+
+  // No add buttons on a closed store or one whose services are not live here —
+  // a cart nobody can check out with is a worse experience than no cart.
+  const canOrder = store.isOpen && liveServices.length > 0;
 
   // Group the menu by its own category strings — data, not a fixed list.
   const byCategory = new Map<string, typeof store.menuItems>();
@@ -111,8 +116,17 @@ export default async function StorePage({
                     </span>
                   ) : null}
                 </span>
-                <span className="shrink-0 text-sm font-semibold tabular-nums">
-                  {formatCentavos(item.priceCentavos)}
+                <span className="flex shrink-0 flex-col items-end gap-1.5">
+                  <span className="text-sm font-semibold tabular-nums">
+                    {formatCentavos(item.priceCentavos)}
+                  </span>
+                  {canOrder ? (
+                    <AddToCartControls
+                      store={{ id: store.id, name: store.name, slug: store.slug }}
+                      menuItemId={item.id}
+                      itemName={item.name}
+                    />
+                  ) : null}
                 </span>
               </li>
             ))}
