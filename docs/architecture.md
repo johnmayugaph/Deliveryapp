@@ -420,6 +420,94 @@ permitted wherever the state is reachable.
 
 ---
 
+## Fleet partner app
+
+The last piece of the loop. An order can now go from a customer's cart to
+COMPLETED without anybody touching the database by hand.
+
+### Offers are records, not a push
+
+`DispatchOffer` exists for two reasons. It makes
+`FleetPartner.acceptanceRate` mean something — without a row saying "this was
+offered and went unanswered", that column is decorative. And it makes the race
+safe: several partners hold a PENDING offer for the same order, the first to
+accept wins on the state machine's optimistic guard, and the rest are marked
+SUPERSEDED.
+
+**SUPERSEDED deliberately does not count against anyone.** Being beaten to a job
+by a closer partner is not a decision the partner made, and counting it would
+punish people for working in a busy area. An EXPIRED offer *does* count —
+ignoring your phone while online is a choice. A partner with no decisions yet
+gets `null` from `computeAcceptanceRate`, and `1` for ranking: a brand-new
+partner is not a 0% partner, and burying them at the bottom of every candidate
+list would make the app useless on their first shift.
+
+| Control | Value | Why |
+| --- | --- | --- |
+| Offer window | 60s | Long enough to answer at a traffic light |
+| Fan-out | 3 partners | A sequential cascade means a customer waits five minutes while five people ignore their phone |
+| Re-fan-out | after 20s | So a cron every minute does not stack batches |
+
+One offer per partner per order, enforced by a unique key: re-offering the same
+job to the same person is how an acceptance rate gets quietly destroyed.
+
+### There is no worker
+
+Dispatch runs on the same cron entry as the order sweep
+(`npm run jobs:orders`), in a deliberate order: lapsed offers close first so the
+fan-out sees accurate live counts, then dispatch runs, then the timeout sweep —
+so an order that just found a partner is not cancelled a second later for having
+no partner. Dispatch latency is therefore bounded by cron frequency, which the
+twenty-minute `AWAITING_RIDER_ASSIGNMENT` timeout absorbs. A real queue is the
+upgrade path, and this is documented rather than hidden.
+
+### Nothing is food-shaped
+
+The offers board shows only services the partner is approved for, because
+`findDispatchCandidates` filters on `enabledServices` — verified: the seeded
+partner is a FOOD candidate and is *not* a RIDE candidate, despite having
+applied for RIDE. The active-job screen's buttons come from the lifecycle map,
+so a ride would show "Nakasakay na" and end at `DROPPED_OFF` without that screen
+knowing passengers exist.
+
+### Approval is not self-service
+
+Applying creates the `FleetPartner` record and a PENDING
+`FleetPartnerServiceVerification` per service; `enabledServices` stays **empty**
+until somebody approves. That is the per-service model doing its job: approval
+to carry food is not approval to carry a passenger. There is no admin console
+yet, so `npm run fleet:approve -- <phone> FOOD` is the honest stand-in — a
+deliberate act by a person, not a button the applicant can press.
+
+Going online requires a position, because dispatch ranks on distance and a
+partner with no location can never be a candidate. Appearing "online" while
+unreachable would mean sitting there receiving nothing and concluding the app is
+broken.
+
+### Earnings
+
+The delivery fee plus the whole tip. The fee is the order's **full quoted fee
+even when a subscription waived it for the customer** — that waiver is our
+marketing cost, not a pay cut for the person doing the ride, which works because
+Phase 5 kept the fee at full value and recorded the waiver as a discount.
+Counted on COMPLETED orders only: a cancelled job pays nothing, and showing it
+as earned is a promise broken at payout. Platform commission is not modelled
+yet; when it is, it comes off our side, not out of the tip.
+
+### Giving a job back
+
+`abandonJobAction` returns an order to the pool rather than cancelling it: the
+food is still sitting on a counter and another partner can still collect it.
+Only where the lifecycle allows the move back to `AWAITING_RIDER_ASSIGNMENT`;
+otherwise it becomes a rider cancellation, with a reason.
+
+### Completion closes the loop
+
+Delivering runs two transitions: the partner marks DELIVERED, then the SYSTEM
+completes the order — which is what grants the customer any credit-back their
+subscription accrued and counts the job as paid. Same two-actor pattern as the
+merchant's mark-ready.
+
 ## Merchant back office
 
 Until something could accept an order, every order placed was cancelled by the
@@ -774,6 +862,7 @@ Database-free, in CI (`npm run verify`) — **62 tests**:
 | `auth-crypto.test.ts` | Code and token generation, keyed hashing, constant-time compare |
 | `sms-sender.test.ts` | Sender selection, the production refusal, the Semaphore request shape |
 | `merchant-queue.test.ts` | Role ranking, store-id extraction, queue coverage of every merchant-actionable status |
+| `fleet-offers.test.ts` | Acceptance-rate maths, offer windows, earnings, active-job coverage, per-vertical partner steps |
 
 Verified separately against a live PostgreSQL 16 with the SQL guards applied:
 
@@ -805,13 +894,24 @@ Verified separately against a live PostgreSQL 16 with the SQL guards applied:
   an unaccepted one of the same age is cancelled, menu writes scoped to the
   store, and a price change not rewriting an existing order.
 
-And driven through a real browser three times over: cart → checkout → placement
+- **36 end-to-end checks** on dispatch and the fleet: per-service approval
+  gating candidacy, offers fanning out without duplicating, two partners racing
+  one order with the loser SUPERSEDED and their rate untouched, the job screen
+  offering only the next step, delivery completing the order, an ignored offer
+  expiring and denting the rate, dispatch reporting nobody in range, and a job
+  handed back landing in the pool rather than cancelled.
+
+And driven through a real browser four times over: cart → checkout → placement
 → tracking → cancellation; signed-out redirect → bad number → wrong code → real
 code → `/welcome` → onboarding gate → session → httpOnly cookie → sign-out →
 forged cookie rejected → sign back in; and a customer placing an order while a
 merchant accepts it, cooks it, adds ten minutes, marks it ready, then rejects a
 second one with a reason the customer reads — plus a two-store owner getting a
 picker, and both a rival merchant and a customer getting not-found on somebody
-else's store.
+else's store; and the whole loop with three separate sessions — a customer
+places an order with a tip, the merchant cooks and readies it, the cron
+dispatches, the partner accepts and works it to delivery, the customer's
+timeline reaches twelve events at COMPLETED, and a new applicant is blocked from
+going online until `npm run fleet:approve` is run.
 
 `npm run build` and `npm run lint` are clean; every route returns 200.

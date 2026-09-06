@@ -10,6 +10,11 @@ import { transitionOrder } from '@/lib/orders/state-machine';
 import { ALL_STATUS_TIMEOUTS } from '@/lib/orders/transitions';
 import { grantCredit, refundToCredits } from '@/lib/wallet/ledger';
 import { pruneSessions, pruneVerifications } from '@/lib/auth/prune';
+import {
+  expireDispatchOffers,
+  fanOutDispatchOffers,
+  type FanOutResult,
+} from '@/lib/fleet/dispatch-offers';
 
 /**
  * Scheduled order maintenance.
@@ -23,8 +28,8 @@ import { pruneSessions, pruneVerifications } from '@/lib/auth/prune';
  *     be delivered. Credits go back to CREDITS, never to cash: there is no rail
  *     out, by design.
  *
- * Run from cron: `npm run jobs:orders`, which also prunes spent login codes and
- * dead sessions — see `runMaintenance()`.
+ * Run from cron: `npm run jobs:orders`, which also drives dispatch and prunes
+ * spent login codes and dead sessions — see `runMaintenance()`.
  */
 
 export interface ExpiredOrderResult {
@@ -244,13 +249,20 @@ export async function completeOrder(input: {
  * of hashed codes and address fingerprints is not something to accumulate.
  */
 export async function runMaintenance(): Promise<{
+  expiredOffers: number;
+  dispatched: FanOutResult[];
   expired: ExpiredOrderResult[];
   prunedVerifications: number;
   prunedSessions: number;
 }> {
+  // Order matters. Lapsed offers are closed first so the fan-out sees accurate
+  // live counts; dispatch runs before the timeout sweep so an order that just
+  // found a partner is not cancelled a second later for having no partner.
+  const expiredOffers = await expireDispatchOffers();
+  const dispatched = await fanOutDispatchOffers();
   const expired = await expireStaleOrders();
   const prunedVerifications = await pruneVerifications();
   const prunedSessions = await pruneSessions();
 
-  return { expired, prunedVerifications, prunedSessions };
+  return { expiredOffers, dispatched, expired, prunedVerifications, prunedSessions };
 }

@@ -17,7 +17,7 @@ import { usePathname } from 'next/navigation';
  * (offering navigation to signed-in destinations to somebody who is not signed
  * in) and the merchant back office (a different product with its own tabs).
  */
-const HIDDEN_ON = ['/login', '/welcome', '/merchant'];
+const HIDDEN_ON = ['/login', '/welcome', '/merchant', '/fleet'];
 const ITEMS = [
   { href: '/', label: 'Home', glyph: '🏠' },
   { href: '/orders', label: 'Orders', glyph: '🧾' },

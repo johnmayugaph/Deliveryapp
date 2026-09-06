@@ -20,7 +20,8 @@
     "db:setup": "prisma migrate deploy && npm run prisma:guards && npm run db:seed",
     "db:seed": "tsx prisma/seed.ts",
     "verify": "npm run typecheck && npm run test",
-    "jobs:orders": "tsx scripts/run-order-maintenance.ts"
+    "jobs:orders": "tsx scripts/run-order-maintenance.ts",
+    "fleet:approve": "tsx scripts/approve-fleet-partner.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

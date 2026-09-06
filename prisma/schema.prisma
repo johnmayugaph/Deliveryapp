@@ -183,6 +183,18 @@ enum VerificationStatus {
   SUSPENDED
 }
 
+/// The life of a dispatch offer.
+enum DispatchOfferStatus {
+  /// Sent, still within its window.
+  PENDING
+  ACCEPTED
+  DECLINED
+  /// The window closed with no answer. Counts against acceptance rate.
+  EXPIRED
+  /// Somebody else took the order first. Does NOT count against anyone.
+  SUPERSEDED
+}
+
 enum SubscriptionStatus {
   ACTIVE
   PAST_DUE
@@ -688,6 +700,7 @@ model Order {
   updatedAt DateTime @updatedAt
 
   statusEvents       OrderStatusEvent[]
+  dispatchOffers     DispatchOffer[]
   walletTransactions WalletTransaction[]
   supportTickets     SupportTicket[]
   appliedBenefits    OrderAppliedBenefit[]
@@ -803,6 +816,7 @@ model FleetPartner {
 
   serviceVerifications FleetPartnerServiceVerification[]
   orders               Order[]
+  dispatchOffers       DispatchOffer[]
 
   @@index([isOnline, isSuspended, homeCityId])
   @@index([enabledServices], type: Gin)
@@ -838,6 +852,44 @@ model FleetPartnerServiceVerification {
 
   @@unique([fleetPartnerId, serviceType])
   @@index([serviceType, status])
+}
+
+/// An order offered to one fleet partner.
+///
+/// Offers are records rather than a transient push, for two reasons. It makes
+/// `FleetPartner.acceptanceRate` mean something — without a row saying "this
+/// was offered and went unanswered" that column is decorative. And it makes
+/// the race safe: several partners can hold a PENDING offer for the same order,
+/// and the first to accept wins on the state machine's optimistic guard while
+/// the rest are SUPERSEDED rather than penalised.
+model DispatchOffer {
+  id      String @id @default(cuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  fleetPartnerId String
+  fleetPartner   FleetPartner @relation(fields: [fleetPartnerId], references: [id], onDelete: Cascade)
+
+  status DispatchOfferStatus @default(PENDING)
+
+  /// Position in the ranked candidate list when the offer was made, and the
+  /// distance it was ranked on. Kept so a dispatch decision can be reviewed
+  /// after the partners have moved.
+  rank           Int
+  distanceMeters Int
+
+  offeredAt   DateTime  @default(now())
+  expiresAt   DateTime
+  respondedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  /// One offer per partner per order: re-offering the same job to the same
+  /// person is how an acceptance rate gets quietly destroyed.
+  @@unique([orderId, fleetPartnerId])
+  @@index([fleetPartnerId, status, expiresAt])
+  @@index([orderId, status])
+  @@index([status, expiresAt])
 }
 
 // -----------------------------------------------------------------------------

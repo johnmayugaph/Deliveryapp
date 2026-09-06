@@ -78,9 +78,29 @@ merchants and the customer profile offers a link in:
 | `0917 000 2222` | Ben Ocampo | Owner of two stores — exercises the picker |
 | `0917 000 3333` | Rosa Lim | Staff at Nena's: queue only, no prices |
 
-Note that nothing can *accept a dispatch offer* yet: the fleet app is Phase 8,
-so an order the merchant marks ready waits at "looking for a rider" until the
-sweep cancels it after twenty minutes. That is the system working.
+### The fleet side
+
+A partner's app lives at `/fleet`. Maria (`0918 987 6543`) is seeded as both a
+customer and a fleet partner on one account — approved for Kainan, pending for
+Sakay, which is the per-service model in action.
+
+Any other account can apply at `/fleet/apply`. Approval is **not** self-service;
+approve from the command line:
+
+```bash
+npm run fleet:approve -- 0917 555 1234 FOOD
+npm run fleet:approve -- 0917 555 1234 --reject RIDE "Expired licence"
+```
+
+Dispatch has no background worker — offers are created by `npm run jobs:orders`,
+so run it (or wait for your cron) after a merchant marks an order ready.
+
+### The whole loop
+
+With all three sides in place an order goes: customer orders → merchant accepts,
+cooks, marks ready → cron dispatches → partner accepts, collects, delivers →
+order completes and any subscription credit-back is granted. Nothing needs
+touching by hand.
 
 ## Scripts
 
@@ -93,13 +113,14 @@ sweep cancels it after twenty minutes. That is the system working.
 | `npm run lint` | ESLint, including the no-service-branch rule |
 | `npm run prisma:guards` | Apply `prisma/sql/*.sql` |
 | `npm run db:seed` | Seed |
-| `npm run jobs:orders` | Sweep orders that waited past their vertical's timeout (cron) |
+| `npm run jobs:orders` | Dispatch offers, order timeouts, auth housekeeping (cron) |
+| `npm run fleet:approve` | Approve or reject a fleet partner for a service |
 
 ## Layout
 
 ```
 prisma/
-  schema.prisma          the source of truth: 27 models, 17 enums
+  schema.prisma          the source of truth: 28 models, 18 enums
   seed.ts                the ONLY file that enumerates the five services
   sql/                   invariants Prisma's schema language cannot express
 src/
@@ -111,10 +132,10 @@ src/
     orders/              lifecycle map, state machine, details, placement, timeouts
     wallet/              the credits ledger and its pure rules
     pricing/             delivery rates and subscription-aware checkout pricing
-    fleet/               dispatch, filtered by approved services
+    fleet/               dispatch, offers, and the partner's own view
     merchant/            store access and the order queue
     support/             unified tickets
-  tests/                 204 tests, database-free
+  tests/                 230 tests, database-free
 ```
 
 ## Money

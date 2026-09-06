@@ -43,7 +43,7 @@ brief's changes already folded in.
 | 5 | FOOD checkout end to end | ✅ Done |
 | 6 | Real authentication (OTP) | ✅ Done |
 | 7 | Merchant back office | ✅ Done |
-| 8 | Fleet partner app | ⬜ Next |
+| 8 | Fleet partner app | ✅ Done |
 | 9 | Subscription launch decision | ⬜ Gated on data |
 | 10 | Second vertical | ⬜ Gated on demand |
 
@@ -113,7 +113,7 @@ choices:
 
 ## Phase 2 — Schema and data ✅
 
-- `prisma/schema.prisma`: 27 models, 17 enums.
+- `prisma/schema.prisma`: 28 models, 18 enums.
 - Initial migration `20260906134534_unified_multi_service_schema`.
 - `prisma/sql/wallet_append_only.sql`: append-only triggers on the credits
   ledger plus five CHECK constraints. Applied by `npm run prisma:guards`.
@@ -376,23 +376,81 @@ sweep eight minutes later.
   picker, and both a rival merchant and a customer getting not-found on somebody
   else's store.
 
-## Phase 8 — Fleet partner app ⬜ Next
+## Phase 8 — Fleet partner app ✅
 
-Orders now reach `AWAITING_RIDER_ASSIGNMENT` and wait there for twenty minutes
-before the sweep cancels them. Nothing can accept a dispatch offer yet, so this
-is the new binding constraint.
+The loop closes here. An order now goes from a customer's cart to COMPLETED
+without anybody touching the database by hand.
 
-- Onboarding that submits per-service verification documents, feeding
-  `FleetPartnerServiceVerification` and `syncEnabledServices()`.
-- Offer and accept, using `findDispatchCandidates()`. `RIDER_ASSIGNED` already
-  permits `FLEET_PARTNER`, which is what `acceptanceRate` measures.
-- Status updates through the state machine as `OrderActor.FLEET_PARTNER`:
-  at-pickup, picked up, in transit, delivered.
-- Location updates feeding the candidate query's bounding box.
-- Earnings, from the order fee breakdown.
+### What was built
 
-A partner may hold approvals for several verticals and should see the union of
-what they are approved for — never a food-shaped UI with the others bolted on.
+| Area | Detail |
+| --- | --- |
+| Offers | `DispatchOffer` — a record with a 60-second window, a rank, and a response, fanned out to three partners at a time. |
+| Dispatch loop | Runs on the existing cron: close lapsed offers, fan out, then the timeout sweep. No worker. |
+| Acceptance rate | Recomputed from the offer record. SUPERSEDED excluded, EXPIRED counted, no history means benefit of the doubt. |
+| Onboarding | Apply with a vehicle and a set of services; every service PENDING, `enabledServices` empty until approved. |
+| Approval | `npm run fleet:approve -- <phone> FOOD` — a deliberate act, since approval must not be self-service and there is no admin console yet. |
+| Availability | Online/offline with a position, required because dispatch ranks on distance. |
+| Offers board | Only services the partner is approved for; earnings, distance, and a live countdown. |
+| Active job | Both addresses, tappable contact numbers, one big next-step button chosen by the lifecycle map. |
+| Give back | Returns an order to the pool rather than cancelling it. |
+| Earnings | Fee plus tip, on COMPLETED orders only. |
+
+### Decisions worth remembering
+
+- **Offers are records, not a transient push.** Without a row saying "offered
+  and unanswered", `acceptanceRate` is decorative — and the record is what makes
+  the race safe.
+- **SUPERSEDED does not count against anyone.** Being beaten to a job by a
+  closer partner is not a decision they made; counting it would punish people
+  for working in a busy area. EXPIRED does count.
+- **A new partner ranks at 100%, not 0%.** `computeAcceptanceRate` returns null
+  with no history and ranking substitutes 1. A zero would bury them on their
+  first shift.
+- **Three at a time, not one.** A sequential cascade with a 60-second window
+  means a customer waits five minutes while five partners ignore their phone.
+- **One offer per partner per order**, enforced by a unique key. Re-offering the
+  same job to the same person destroys an acceptance rate quietly.
+- **Dispatch has no worker**, and that is documented rather than hidden: latency
+  is bounded by cron frequency, which the twenty-minute timeout absorbs.
+- **Approval is not self-service.** Applying creates PENDING rows and nothing
+  else. The approval script is the honest stand-in for an admin console.
+- **Going online needs a position.** A partner with no location can never be a
+  candidate, so "online" would mean receiving nothing and blaming the app.
+- **A partner keeps the full delivery fee even when a subscription waived it.**
+  That waiver is our marketing cost, not a pay cut — which works only because
+  Phase 5 kept the fee at full value and recorded the waiver as a discount.
+- **Giving a job back returns it to the pool.** The food is still on a counter;
+  cancelling would throw away a recoverable order.
+
+### Things fixed along the way
+
+Two spurious lifecycle edges, both found by a test asking which statuses a
+partner can act from:
+
+- **A rider could cancel an order from `PENDING_PAYMENT`** and
+  `PENDING_MERCHANT_ACCEPTANCE`, where no rider exists yet. `PRE_PICKUP_CANCELLATIONS`
+  was applied uniformly; there is now a narrower `PRE_DISPATCH_CANCELLATIONS`
+  without `CANCELLED_BY_RIDER`.
+- **`READY_FOR_PICKUP → RIDER_AT_PICKUP` was unreachable.** Arriving at a store
+  requires having been assigned, and assignment *is* the `RIDER_ASSIGNED`
+  transition, so the edge claimed something untrue.
+
+Neither was exploitable — the actions guard on assignment anyway — but a map
+that asserts false things is a map nobody can trust.
+
+### Verification
+
+- `npm run verify` — **230 tests** (up from 204).
+- **36 end-to-end checks** against live PostgreSQL 16, including two partners
+  racing one order, an ignored offer denting the rate while a lost race does
+  not, dispatch reporting nobody in range, and a job handed back landing in the
+  pool rather than cancelled.
+- Driven through a real browser with three separate sessions: a customer places
+  an order with a ₱50 tip, the merchant cooks and readies it, the cron
+  dispatches, the partner accepts and works it to delivery, the customer's
+  timeline reaches twelve events at COMPLETED, and a new applicant is blocked
+  from going online until the approval script is run.
 
 ## Phase 9 — Subscription launch decision ⬜ Gated
 
@@ -429,11 +487,17 @@ is the return on this phase's design, and the thing to protect in review.
 
 ## Known gaps
 
-- **No fleet UI — the binding constraint now.** A merchant can cook an order,
-  but nothing can accept the dispatch offer, so it waits at
-  `AWAITING_RIDER_ASSIGNMENT` until the sweep cancels it. Phase 8.
-- **No merchant notifications.** The queue polls every 20 seconds while open;
-  a merchant who closes the tab learns nothing about a new order.
+- **No notifications anywhere.** Every screen polls while it is open. A merchant
+  or partner who closes the tab learns nothing about a new order or offer, which
+  is the single biggest gap left in the working product.
+- **Dispatch has no worker.** Offers are created by cron, so how fast a partner
+  sees a job depends on how often it runs.
+- **No admin console.** Fleet approval is a CLI script; store membership and
+  service activation are seeded or edited by hand.
+- **No live location on the tracking screen.** The customer sees statuses, not a
+  moving pin, even though partner positions are stored.
+- **No ratings.** `ratingAvg` and `ratingCount` are read by dispatch ranking but
+  nothing writes them.
 - **Store membership is seeded, not managed.** There is no UI to invite staff or
   change a role — `StoreMember` rows are written by the seed or by hand.
 - **The Semaphore SMS adapter is unverified against the live API.** Written from

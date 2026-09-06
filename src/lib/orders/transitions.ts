@@ -110,7 +110,25 @@ export const STATUS_TIMESTAMP_FIELDS: Partial<Record<OrderStatus, string>> = {
   [OrderStatus.CANCELLED_BY_SYSTEM]: 'cancelledAt',
 };
 
-/** Cancellation states available while an order has not yet been collected. */
+/**
+ * Cancellation states available BEFORE any partner could be involved.
+ *
+ * No `CANCELLED_BY_RIDER`: an order that has not reached dispatch has no rider
+ * to cancel it, and offering the transition would let the map assert something
+ * untrue. (Caught by a test asking which statuses a partner can act from.)
+ */
+const PRE_DISPATCH_CANCELLATIONS: readonly OrderStatus[] = [
+  OrderStatus.CANCELLED_BY_CUSTOMER,
+  OrderStatus.CANCELLED_BY_MERCHANT,
+  OrderStatus.CANCELLED_BY_SYSTEM,
+];
+
+/**
+ * Cancellation states available once a partner may be on the job but has not
+ * collected yet. Dispatch runs alongside the kitchen, so a partner can be
+ * assigned while food is still cooking — hence rider cancellation from the
+ * merchant states too.
+ */
 const PRE_PICKUP_CANCELLATIONS: readonly OrderStatus[] = [
   OrderStatus.CANCELLED_BY_CUSTOMER,
   OrderStatus.CANCELLED_BY_MERCHANT,
@@ -158,13 +176,16 @@ const FOOD_LIFECYCLE: ServiceLifecycle = {
   ],
   transitions: {
     [OrderStatus.DRAFT]: [OrderStatus.PENDING_PAYMENT, OrderStatus.PENDING_MERCHANT_ACCEPTANCE, OrderStatus.CANCELLED_BY_CUSTOMER],
-    [OrderStatus.PENDING_PAYMENT]: [OrderStatus.PENDING_MERCHANT_ACCEPTANCE, ...PRE_PICKUP_CANCELLATIONS],
-    [OrderStatus.PENDING_MERCHANT_ACCEPTANCE]: [OrderStatus.MERCHANT_ACCEPTED, ...PRE_PICKUP_CANCELLATIONS],
+    [OrderStatus.PENDING_PAYMENT]: [OrderStatus.PENDING_MERCHANT_ACCEPTANCE, ...PRE_DISPATCH_CANCELLATIONS],
+    [OrderStatus.PENDING_MERCHANT_ACCEPTANCE]: [OrderStatus.MERCHANT_ACCEPTED, ...PRE_DISPATCH_CANCELLATIONS],
     [OrderStatus.MERCHANT_ACCEPTED]: [OrderStatus.PREPARING, OrderStatus.AWAITING_RIDER_ASSIGNMENT, ...PRE_PICKUP_CANCELLATIONS],
     // Dispatch runs alongside the kitchen: a partner can be found while the
     // food is still cooking, which is why PREPARING reaches both.
     [OrderStatus.PREPARING]: [OrderStatus.READY_FOR_PICKUP, OrderStatus.AWAITING_RIDER_ASSIGNMENT, ...PRE_PICKUP_CANCELLATIONS],
-    [OrderStatus.READY_FOR_PICKUP]: [OrderStatus.AWAITING_RIDER_ASSIGNMENT, OrderStatus.RIDER_ASSIGNED, OrderStatus.RIDER_AT_PICKUP, ...PRE_PICKUP_CANCELLATIONS],
+    // No direct edge to RIDER_AT_PICKUP: arriving at a store requires having
+    // been assigned first, and assignment IS the RIDER_ASSIGNED transition, so
+    // that edge was unreachable and claimed otherwise.
+    [OrderStatus.READY_FOR_PICKUP]: [OrderStatus.AWAITING_RIDER_ASSIGNMENT, OrderStatus.RIDER_ASSIGNED, ...PRE_PICKUP_CANCELLATIONS],
     [OrderStatus.AWAITING_RIDER_ASSIGNMENT]: [OrderStatus.RIDER_ASSIGNED, ...PRE_PICKUP_CANCELLATIONS],
     [OrderStatus.RIDER_ASSIGNED]: [OrderStatus.RIDER_AT_PICKUP, OrderStatus.AWAITING_RIDER_ASSIGNMENT, ...PRE_PICKUP_CANCELLATIONS],
     [OrderStatus.RIDER_AT_PICKUP]: [OrderStatus.PICKED_UP, OrderStatus.AWAITING_RIDER_ASSIGNMENT, ...PRE_PICKUP_CANCELLATIONS],
@@ -225,7 +246,7 @@ const MART_LIFECYCLE: ServiceLifecycle = {
   ],
   transitions: {
     [OrderStatus.DRAFT]: [OrderStatus.PENDING_PAYMENT, OrderStatus.AWAITING_RIDER_ASSIGNMENT, OrderStatus.CANCELLED_BY_CUSTOMER],
-    [OrderStatus.PENDING_PAYMENT]: [OrderStatus.AWAITING_RIDER_ASSIGNMENT, ...PRE_PICKUP_CANCELLATIONS],
+    [OrderStatus.PENDING_PAYMENT]: [OrderStatus.AWAITING_RIDER_ASSIGNMENT, ...PRE_DISPATCH_CANCELLATIONS],
     [OrderStatus.AWAITING_RIDER_ASSIGNMENT]: [OrderStatus.RIDER_ASSIGNED, ...PRE_PICKUP_CANCELLATIONS],
     [OrderStatus.RIDER_ASSIGNED]: [OrderStatus.RIDER_AT_PICKUP, OrderStatus.AWAITING_RIDER_ASSIGNMENT, ...PRE_PICKUP_CANCELLATIONS],
     [OrderStatus.RIDER_AT_PICKUP]: [OrderStatus.SHOPPING_IN_PROGRESS, ...PRE_PICKUP_CANCELLATIONS],
@@ -275,7 +296,7 @@ const PARCEL_LIFECYCLE: ServiceLifecycle = {
   ],
   transitions: {
     [OrderStatus.DRAFT]: [OrderStatus.PENDING_PAYMENT, OrderStatus.AWAITING_RIDER_ASSIGNMENT, OrderStatus.CANCELLED_BY_CUSTOMER],
-    [OrderStatus.PENDING_PAYMENT]: [OrderStatus.AWAITING_RIDER_ASSIGNMENT, ...PRE_PICKUP_CANCELLATIONS],
+    [OrderStatus.PENDING_PAYMENT]: [OrderStatus.AWAITING_RIDER_ASSIGNMENT, ...PRE_DISPATCH_CANCELLATIONS],
     [OrderStatus.AWAITING_RIDER_ASSIGNMENT]: [OrderStatus.RIDER_ASSIGNED, ...PRE_PICKUP_CANCELLATIONS],
     [OrderStatus.RIDER_ASSIGNED]: [OrderStatus.RIDER_AT_PICKUP, OrderStatus.AWAITING_RIDER_ASSIGNMENT, ...PRE_PICKUP_CANCELLATIONS],
     [OrderStatus.RIDER_AT_PICKUP]: [OrderStatus.PICKED_UP, ...PRE_PICKUP_CANCELLATIONS],
@@ -324,7 +345,7 @@ const PABILI_LIFECYCLE: ServiceLifecycle = {
   ],
   transitions: {
     [OrderStatus.DRAFT]: [OrderStatus.PENDING_PAYMENT, OrderStatus.AWAITING_RIDER_ASSIGNMENT, OrderStatus.CANCELLED_BY_CUSTOMER],
-    [OrderStatus.PENDING_PAYMENT]: [OrderStatus.AWAITING_RIDER_ASSIGNMENT, ...PRE_PICKUP_CANCELLATIONS],
+    [OrderStatus.PENDING_PAYMENT]: [OrderStatus.AWAITING_RIDER_ASSIGNMENT, ...PRE_DISPATCH_CANCELLATIONS],
     [OrderStatus.AWAITING_RIDER_ASSIGNMENT]: [OrderStatus.RIDER_ASSIGNED, ...PRE_PICKUP_CANCELLATIONS],
     [OrderStatus.RIDER_ASSIGNED]: [OrderStatus.SHOPPING_IN_PROGRESS, OrderStatus.AWAITING_RIDER_ASSIGNMENT, ...PRE_PICKUP_CANCELLATIONS],
     [OrderStatus.SHOPPING_IN_PROGRESS]: [OrderStatus.AWAITING_BUDGET_APPROVAL, OrderStatus.PICKED_UP, ...PRE_PICKUP_CANCELLATIONS],

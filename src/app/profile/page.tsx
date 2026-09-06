@@ -138,34 +138,53 @@ export default async function ProfilePage() {
         )}
       </section>
 
-      {fleetPartner ? (
-        <section aria-labelledby="fleet-heading" className="mt-5 px-4">
-          <h2
-            id="fleet-heading"
-            className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted"
+      <section aria-labelledby="fleet-heading" className="mt-5 px-4">
+        <h2
+          id="fleet-heading"
+          className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted"
+        >
+          Fleet
+        </h2>
+        {fleetPartner ? (
+          <>
+            <Link
+              href="/fleet"
+              className="mt-2 flex items-center justify-between rounded-xl bg-surface px-3 py-3 shadow-sm ring-1 ring-black/5 transition-colors hover:bg-brand-50/40"
+            >
+              <span className="min-w-0">
+                <span className="block text-sm font-semibold">Buksan ang fleet app</span>
+                <span className="mt-0.5 block text-[11px] text-ink-muted">
+                  {fleetPartner.enabledServices.length > 0
+                    ? `Approved sa ${fleetPartner.enabledServices.length} service`
+                    : 'Hinihintay ang approval'}
+                  {fleetPartner.isOnline ? ' · online' : ''}
+                </span>
+              </span>
+              <span aria-hidden className="text-xs text-ink-faint">
+                ›
+              </span>
+            </Link>
+            <p className="mt-1.5 text-[11px] text-ink-faint">
+              Approved sa isang service ay hindi approved sa lahat.
+            </p>
+          </>
+        ) : (
+          <Link
+            href="/fleet/apply"
+            className="mt-2 flex items-center justify-between rounded-xl bg-surface px-3 py-3 shadow-sm ring-1 ring-black/5 transition-colors hover:bg-brand-50/40"
           >
-            Fleet approvals
-          </h2>
-          <p className="mt-1 text-[11px] text-ink-faint">
-            Approved sa isang service ay hindi approved sa lahat.
-          </p>
-          <ul className="mt-2 space-y-1.5">
-            {fleetPartner.serviceVerifications.map((verification) => (
-              <li
-                key={verification.id}
-                className="flex items-center justify-between rounded-xl bg-surface px-3 py-2.5 shadow-sm ring-1 ring-black/5"
-              >
-                <span className="text-sm font-medium">
-                  {verification.service.displayName}
-                </span>
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
-                  {verification.status.replace(/_/g, ' ').toLowerCase()}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
+            <span className="min-w-0">
+              <span className="block text-sm font-semibold">Maging fleet partner</span>
+              <span className="mt-0.5 block text-[11px] text-ink-muted">
+                Kumita sa paghahatid — parehong account lang.
+              </span>
+            </span>
+            <span aria-hidden className="text-xs text-ink-faint">
+              ›
+            </span>
+          </Link>
+        )}
+      </section>
 
       <ActiveSessions sessions={sessions} />
 

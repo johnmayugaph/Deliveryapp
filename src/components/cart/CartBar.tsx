@@ -17,7 +17,7 @@ import { cartItemCount } from '@/lib/cart/types';
  * itself, and order tracking — where a leftover cart must not compete with the
  * order the customer is actually watching.
  */
-const HIDDEN_ON = ['/checkout', '/orders', '/login', '/welcome', '/merchant'];
+const HIDDEN_ON = ['/checkout', '/orders', '/login', '/welcome', '/merchant', '/fleet'];
 
 export function CartBar() {
   const { cart, isLoaded } = useCart();
