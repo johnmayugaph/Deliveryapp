@@ -439,9 +439,21 @@ partner can act from:
 Neither was exploitable — the actions guard on assignment anyway — but a map
 that asserts false things is a map nobody can trust.
 
+### Two acceptance rates, one metric
+
+Re-shooting the screens for review turned up a display bug the tests could not
+see: the offers board read `FleetPartner.acceptanceRate` — the *ranking* column,
+which defaults to `1` so a new partner is not buried — and rendered **94% next
+to an empty offer history**, while the profile screen, which guards on the offer
+records, correctly said *Wala pang offer* on the same account. Both screens now
+compute from the records via `computeAcceptanceRate()`, the board shows an em
+dash with no history, and `getPartnerEarnings()` no longer carries the field, so
+the display path cannot read the ranking prior at all. Three grep tests hold the
+line.
+
 ### Verification
 
-- `npm run verify` — **230 tests** (up from 204).
+- `npm run verify` — **233 tests** (up from 204).
 - **36 end-to-end checks** against live PostgreSQL 16, including two partners
   racing one order, an ignored offer denting the rate while a lost race does
   not, dispatch reporting nobody in range, and a job handed back landing in the

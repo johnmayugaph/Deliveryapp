@@ -442,6 +442,15 @@ gets `null` from `computeAcceptanceRate`, and `1` for ranking: a brand-new
 partner is not a 0% partner, and burying them at the bottom of every candidate
 list would make the app useless on their first shift.
 
+**The number the partner sees is computed, not the stored one.** Because the
+ranking column always holds a value — `1` by default — reading it for display
+put "94%" beside an empty offer history on the offers board. Both partner-facing
+screens now call `computeAcceptanceRate()` on the offer records, where "no
+history yet" is expressible: the board shows an em dash and the profile says
+*Wala pang offer*. `getPartnerEarnings()` no longer returns the field at all, so
+there is one source of truth for display and one for ranking, and they cannot
+drift.
+
 | Control | Value | Why |
 | --- | --- | --- |
 | Offer window | 60s | Long enough to answer at a traffic light |

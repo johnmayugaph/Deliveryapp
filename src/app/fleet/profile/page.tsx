@@ -6,6 +6,7 @@ import {
   getPartnerEarnings,
   listVerifications,
 } from '@/lib/fleet/partner';
+import { computeAcceptanceRate } from '@/lib/fleet/offer-policy';
 import { getAllServices } from '@/lib/services/registry';
 import { ApplyForServiceButton } from '@/components/fleet/ApplyForServiceButton';
 import { formatCentavos } from '@/lib/money';
@@ -54,6 +55,7 @@ export default async function FleetProfilePage() {
   );
 
   const decided = tallies.accepted + tallies.declined + tallies.expired;
+  const acceptanceRate = computeAcceptanceRate(tallies);
 
   return (
     <main className="space-y-4 px-4 py-4">
@@ -122,9 +124,9 @@ export default async function FleetProfilePage() {
           <Row
             label="Acceptance rate"
             value={
-              decided === 0
+              acceptanceRate === null
                 ? 'Wala pang offer'
-                : `${Math.round(earnings.acceptanceRate * 100)}% (${tallies.accepted}/${decided})`
+                : `${Math.round(acceptanceRate * 100)}% (${tallies.accepted}/${decided})`
             }
           />
           <Row

@@ -1,7 +1,13 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { getActiveJob, getFleetPartner, getPartnerEarnings } from '@/lib/fleet/partner';
+import {
+  getActiveJob,
+  getFleetPartner,
+  getOfferTallies,
+  getPartnerEarnings,
+} from '@/lib/fleet/partner';
 import { listPartnerOffers } from '@/lib/fleet/dispatch-offers';
+import { computeAcceptanceRate } from '@/lib/fleet/offer-policy';
 import { OfferCard } from '@/components/fleet/OfferCard';
 import { OrderLiveRefresh } from '@/components/orders/OrderLiveRefresh';
 import { formatCentavos } from '@/lib/money';
@@ -22,11 +28,17 @@ export default async function FleetOffersPage() {
     redirect('/fleet/apply');
   }
 
-  const [offers, activeJob, earnings] = await Promise.all([
+  const [offers, activeJob, earnings, tallies] = await Promise.all([
     listPartnerOffers(partner.id),
     getActiveJob(partner.id),
     getPartnerEarnings(partner),
+    getOfferTallies(partner.id),
   ]);
+
+  // Computed from the offer records, not from the stored ranking figure: that
+  // one defaults to 1 so a new partner is not buried in the candidate list,
+  // and showing it here would put a 100% next to no offers at all.
+  const acceptanceRate = computeAcceptanceRate(tallies);
 
   return (
     <main>
@@ -39,7 +51,7 @@ export default async function FleetOffersPage() {
         <Stat label="Jobs ngayon" value={String(earnings.todayJobs)} />
         <Stat
           label="Acceptance"
-          value={`${Math.round(earnings.acceptanceRate * 100)}%`}
+          value={acceptanceRate === null ? '—' : `${Math.round(acceptanceRate * 100)}%`}
         />
       </section>
 

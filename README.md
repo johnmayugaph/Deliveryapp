@@ -135,7 +135,7 @@ src/
     fleet/               dispatch, offers, and the partner's own view
     merchant/            store access and the order queue
     support/             unified tickets
-  tests/                 230 tests, database-free
+  tests/                 233 tests, database-free
 ```
 
 ## Money

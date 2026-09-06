@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { DispatchOfferStatus, OrderActor, OrderStatus, ServiceKey } from '@prisma/client';
 import {
   acceptanceRateForRanking,
@@ -252,5 +254,35 @@ describe('a rider cannot cancel an order that has no rider', () => {
         OrderStatus.CANCELLED_BY_CUSTOMER,
       );
     }
+  });
+});
+
+/**
+ * `FleetPartner.acceptanceRate` is a ranking input with a benefit-of-the-doubt
+ * default of 1, so it always holds a number — including for a partner who has
+ * never been offered anything. Showing that number to the partner reads as a
+ * measurement, which is how the offers board came to display "94%" beside an
+ * empty history. Both partner-facing screens must compute the figure from the
+ * offer records instead, where "no history" is expressible.
+ */
+describe('the partner-facing acceptance rate', () => {
+  const SCREENS = ['app/fleet/page.tsx', 'app/fleet/profile/page.tsx'];
+
+  for (const screen of SCREENS) {
+    it(`${screen} computes it from the offer records`, () => {
+      const source = readFileSync(path.resolve(__dirname, '..', screen), 'utf8');
+      expect(source).toContain('computeAcceptanceRate');
+      expect(source).not.toMatch(/earnings\.acceptanceRate/);
+    });
+  }
+
+  it('has no second source of truth to read from', () => {
+    const source = readFileSync(
+      path.resolve(__dirname, '..', 'lib/fleet/partner.ts'),
+      'utf8',
+    );
+    // The ranking column may be read for ranking; it must not be re-exported
+    // as part of the earnings a screen renders.
+    expect(source).not.toMatch(/acceptanceRate: (number|partner\.acceptanceRate)/);
   });
 });

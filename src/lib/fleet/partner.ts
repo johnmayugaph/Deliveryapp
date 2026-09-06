@@ -176,7 +176,6 @@ export interface PartnerEarnings {
   weekCentavos: number;
   weekJobs: number;
   lifetimeJobs: number;
-  acceptanceRate: number;
   ratingAvg: number;
   ratingCount: number;
 }
@@ -214,7 +213,6 @@ export async function getPartnerEarnings(partner: FleetPartner): Promise<Partner
     weekCentavos: sum(rows),
     weekJobs: rows.length,
     lifetimeJobs: partner.completedOrderCount,
-    acceptanceRate: partner.acceptanceRate,
     ratingAvg: partner.ratingAvg,
     ratingCount: partner.ratingCount,
   };
