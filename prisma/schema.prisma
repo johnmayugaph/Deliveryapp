@@ -1,0 +1,1016 @@
+// =============================================================================
+// Deliveryapp — unified multi-service schema
+// =============================================================================
+// Design rules this schema exists to enforce:
+//
+//  1. A vertical is DATA (a `Service` row), never a code branch. Anything that
+//     differs between verticals is either a column on `Service` or an entry in
+//     a per-service config map in `src/lib`. There is no hardcoded list of
+//     services anywhere outside `prisma/seed.ts`.
+//  2. There is ONE `Order` table for every vertical. Shared fields are real
+//     columns; vertical-specific fields live in the `details` JSON container
+//     whose shape is validated per service key in `src/lib/orders/details.ts`.
+//  3. ONE `User` per person, with a `roles` ARRAY — the same person can be a
+//     customer and a fleet partner at once. ONE address book, shared across
+//     every vertical.
+//  4. The fleet is service-neutral (`FleetPartner`), with per-service approval.
+//  5. Credits are a ledger. `Wallet.balanceCentavos` is a derived cache of
+//     `sum(WalletTransaction.amountCentavos)`; the ledger is the truth. There
+//     is no top-up, transfer, or cash-out path anywhere in this schema.
+//
+// See docs/architecture.md for the reasoning behind each of these.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// -----------------------------------------------------------------------------
+// Enums
+// -----------------------------------------------------------------------------
+
+/// The five verticals. Adding a member here is the ONLY code change a new
+/// vertical requires at the schema level; everything else is a `Service` row
+/// plus an entry in the order-details and lifecycle config maps.
+enum ServiceKey {
+  FOOD
+  MART
+  PARCEL
+  PABILI
+  RIDE
+}
+
+/// How a service is presented on the home screen. Group membership is a
+/// property of the `Service` row, so regrouping the home screen is a data edit.
+/// Human-readable group labels live in `src/lib/services/intent-groups.ts`.
+enum IntentGroup {
+  GO
+  EAT
+  GET
+  PAY
+}
+
+/// The physical shape of the job. Dispatch and tracking read this instead of
+/// asking "is this a food order?".
+enum FulfilmentType {
+  MERCHANT_TO_DOOR // a merchant prepares, a partner carries it to the door
+  SHOPPER_TO_DOOR // a partner buys the goods, then carries them to the door
+  POINT_TO_POINT // a partner moves a thing from A to B
+  PASSENGER // a partner moves a person from A to B
+}
+
+/// Roles are held as an array on `User`. One person may hold several at once.
+enum UserRole {
+  CUSTOMER
+  FLEET_PARTNER
+  MERCHANT_OWNER
+  SUPPORT_AGENT
+  ADMIN
+}
+
+/// A SUPERSET of every state any vertical can be in. Which of these a given
+/// service may actually enter, and in what order, is defined per service in
+/// `src/lib/orders/transitions.ts` — not by the ordering of this enum.
+enum OrderStatus {
+  // --- pre-dispatch (all services) ---
+  DRAFT
+  PENDING_PAYMENT
+
+  // --- merchant leg (services whose lifecycle includes acceptance) ---
+  PENDING_MERCHANT_ACCEPTANCE
+  MERCHANT_ACCEPTED
+  PREPARING
+  READY_FOR_PICKUP
+
+  // --- dispatch leg (all services that require a fleet partner) ---
+  AWAITING_RIDER_ASSIGNMENT
+  RIDER_ASSIGNED
+  RIDER_AT_PICKUP
+
+  // --- shopper leg (SHOPPER_TO_DOOR fulfilment) ---
+  SHOPPING_IN_PROGRESS
+  AWAITING_BUDGET_APPROVAL
+
+  // --- passenger leg (PASSENGER fulfilment) ---
+  PASSENGER_ONBOARD
+
+  // --- transit leg ---
+  PICKED_UP
+  IN_TRANSIT
+  ARRIVED_AT_DROPOFF
+
+  // --- terminal ---
+  DELIVERED
+  DROPPED_OFF
+  COMPLETED
+  FAILED_DELIVERY
+  CANCELLED_BY_CUSTOMER
+  CANCELLED_BY_MERCHANT
+  CANCELLED_BY_RIDER
+  CANCELLED_BY_SYSTEM
+}
+
+/// Who moved the order into a state. Recorded on every status event so support
+/// can reconstruct a timeline without guessing.
+enum OrderActor {
+  CUSTOMER
+  MERCHANT
+  FLEET_PARTNER
+  SUPPORT_AGENT
+  SYSTEM
+}
+
+/// Deliberately short. `WALLET_CREDIT` spends the credits ledger; there is no
+/// stored-value instrument here and no card-on-file rail yet.
+enum PaymentMethod {
+  CASH_ON_DELIVERY
+  WALLET_CREDIT
+}
+
+enum PaymentStatus {
+  PENDING
+  AUTHORIZED
+  PAID
+  PARTIALLY_REFUNDED
+  REFUNDED
+  FAILED
+}
+
+/// The only five ways a credits balance can move. Note what is absent: there is
+/// no TOP_UP, no TRANSFER_IN, no TRANSFER_OUT, and no WITHDRAWAL. That absence
+/// is the product constraint, expressed in the type system.
+enum WalletTransactionType {
+  PROMO_CREDIT // granted by us (campaign, goodwill, credit-back benefit)
+  REFUND // returned to the customer for a failed or cancelled order
+  REFERRAL_BONUS // granted by us for a successful referral
+  ORDER_PAYMENT // spent on an order inside the app — the only debit customers cause
+  ADJUSTMENT // signed correction, requires an admin actor and a reason
+}
+
+enum VehicleType {
+  ON_FOOT
+  BICYCLE
+  MOTORCYCLE
+  TRICYCLE
+  CAR
+  MPV
+  VAN
+}
+
+/// Verification is tracked PER SERVICE. Approved to carry food is not approved
+/// to carry a passenger.
+enum VerificationStatus {
+  NOT_SUBMITTED
+  PENDING
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+  EXPIRED
+}
+
+/// Benefits are structured records the pricing engine reads, not marketing
+/// copy. Each type uses a documented subset of the columns on
+/// `SubscriptionBenefit`.
+enum BenefitType {
+  FREE_DELIVERY // uses minimumOrderCentavos + monthlyUsageCap
+  DISCOUNT_PERCENT // uses percentBasisPoints + serviceKeys (+ optional cap)
+  CREDIT_BACK_PERCENT // uses percentBasisPoints + monthlyCeilingCentavos
+}
+
+enum SupportTicketStatus {
+  OPEN
+  AWAITING_CUSTOMER
+  ESCALATED
+  RESOLVED
+  CLOSED
+}
+
+enum SupportTicketPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+/// Where a snapshotted address sits in the job. Every order has exactly one of
+/// each, whatever the vertical: food picks up at a store, a parcel picks up at
+/// the sender, a ride picks up a passenger.
+enum FulfilmentAddressRole {
+  PICKUP
+  DROPOFF
+}
+
+// -----------------------------------------------------------------------------
+// 1. Service registry — each vertical defined as data
+// -----------------------------------------------------------------------------
+
+/// The registry. Every part of the product that needs to know something about a
+/// vertical reads it from here. Seeded with all five services; only FOOD is
+/// active. The other four exist as `isComingSoon` records so the home screen
+/// can render them greyed with a "Coming soon" label — which doubles as demand
+/// measurement before we build anything.
+model Service {
+  key         ServiceKey @id
+  displayName String
+  /// Short subtitle under the tile label, e.g. "Food delivery".
+  tagline     String
+  /// Icon identifier resolved by the client's icon map, not a file path, so the
+  /// same row works for web and a future native client.
+  icon        String
+  description String
+
+  intentGroup IntentGroup
+
+  /// Tappable and orderable right now.
+  isActive     Boolean @default(false)
+  /// Rendered dimmed with a "Coming soon" label and NOT tappable.
+  isComingSoon Boolean @default(true)
+  sortOrder    Int
+
+  fulfilmentType FulfilmentType
+  /// Whether an order in this vertical must reference a `Store`. Distinct from
+  /// whether its lifecycle contains a merchant-acceptance step — that is a
+  /// lifecycle question answered by `src/lib/orders/transitions.ts`.
+  requiresMerchant Boolean
+  /// Whether an order in this vertical must be assigned a `FleetPartner`.
+  requiresRider    Boolean
+
+  /// Cities where this service is orderable. Empty means "nowhere yet", which
+  /// is the correct state for a coming-soon service.
+  availableCityIds String[] @default([])
+
+  /// Tailwind-ish colour token resolved by the client. Keeps per-service
+  /// styling out of the components.
+  accentToken String @default("brand")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  orders          Order[]
+  supportTickets  SupportTicket[]
+  faqCategories   FaqCategory[]
+  fleetApprovals  FleetPartnerServiceVerification[]
+
+  @@index([isActive, sortOrder])
+  @@index([intentGroup, sortOrder])
+}
+
+/// Cities exist so `Service.availableCityIds` and address snapshots mean
+/// something. Kept deliberately thin.
+model City {
+  id       String  @id
+  name     String
+  province String
+  region   String
+  isActive Boolean @default(true)
+
+  centroidLat Float?
+  centroidLng Float?
+
+  addresses Address[]
+  stores    Store[]
+
+  @@index([isActive, name])
+}
+
+// -----------------------------------------------------------------------------
+// 3. Unified identity and address book
+// -----------------------------------------------------------------------------
+
+/// ONE record per person, regardless of how many services they use or how many
+/// roles they hold. A rider who orders lunch is this row twice over, not two
+/// rows.
+model User {
+  id String @id @default(cuid())
+
+  /// Philippine mobile number in E.164, e.g. +639171234567. The login identity.
+  phone       String    @unique
+  email       String?   @unique
+  fullName    String
+  displayName String?
+  avatarUrl   String?
+  phoneVerifiedAt DateTime?
+
+  /// ROLES ARE AN ARRAY, not a single field. Someone can be a customer and a
+  /// fleet partner simultaneously; the fleet works across every vertical it is
+  /// approved for.
+  roles UserRole[] @default([CUSTOMER])
+
+  preferredCityId String?
+  locale          String  @default("fil-PH")
+  isBlocked       Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  addresses          Address[]
+  orders             Order[]
+  wallet             Wallet?
+  fleetPartner       FleetPartner?
+  subscriptions      UserSubscription[]
+  supportTickets     SupportTicket[]
+  supportMessages    SupportTicketMessage[]
+  assignedTickets    SupportTicket[]        @relation("SupportAgentTickets")
+  statusEvents       OrderStatusEvent[]
+  recordedAdjustments WalletTransaction[]   @relation("WalletAdjustmentActor")
+  fleetDecisions     FleetPartnerServiceVerification[] @relation("FleetVerificationDecider")
+
+  @@index([roles], type: Gin)
+  @@index([preferredCityId])
+}
+
+/// ONE address book per person, shared across every vertical. An address saved
+/// while ordering food is immediately available as a parcel pickup.
+model Address {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// User-chosen name: "Home", "Lola's house", "Office".
+  label String
+
+  line1        String
+  line2        String?
+  barangay     String?
+  cityId       String
+  city         City    @relation(fields: [cityId], references: [id])
+  province     String
+  postalCode   String?
+  landmark     String?
+  /// Free-text rider instructions: "green gate, ring twice".
+  deliveryNotes String?
+
+  latitude  Float
+  longitude Float
+
+  /// Contact at the address — not necessarily the account holder.
+  contactName  String?
+  contactPhone String?
+
+  /// Some saved places make sense as origins, not just destinations. A parcel
+  /// pickup or a ride start reads this.
+  isPickupCapable Boolean @default(false)
+  isDefault       Boolean @default(false)
+
+  /// Maintained by `bumpAddressUsage()` in src/lib/addresses/usage.ts so the
+  /// address picker can order by real behaviour rather than creation date.
+  usageCount Int       @default(0)
+  lastUsedAt DateTime?
+
+  archivedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, archivedAt, usageCount(sort: Desc)])
+  @@index([userId, isPickupCapable])
+  @@index([userId, lastUsedAt(sort: Desc)])
+}
+
+// -----------------------------------------------------------------------------
+// Merchants and catalogue (supporting cast for FOOD, reused later by MART)
+// -----------------------------------------------------------------------------
+
+model Store {
+  id   String @id @default(cuid())
+  name String
+  slug String @unique
+
+  /// A store can be orderable in more than one vertical — the same sari-sari
+  /// store may serve MART now and FOOD later. Read this, do not assume FOOD.
+  serviceKeys ServiceKey[] @default([])
+
+  ownerUserId String?
+  description String?
+  logoUrl     String?
+  coverUrl    String?
+
+  cityId String
+  city   City   @relation(fields: [cityId], references: [id])
+
+  addressLine String
+  latitude    Float
+  longitude   Float
+  contactPhone String?
+
+  isOpen    Boolean @default(true)
+  isVisible Boolean @default(true)
+
+  /// Merchant's own quoted prep time, snapshotted into FOOD order details at
+  /// checkout so a later menu edit cannot rewrite history.
+  preparationMinutes Int @default(20)
+
+  ratingAvg   Float @default(0)
+  ratingCount Int   @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  menuItems MenuItem[]
+
+  @@index([cityId, isVisible, isOpen])
+  @@index([serviceKeys], type: Gin)
+}
+
+model MenuItem {
+  id      String @id @default(cuid())
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  name         String
+  description  String?
+  category     String  @default("Main")
+  priceCentavos Int
+  imageUrl     String?
+  isAvailable  Boolean @default(true)
+  sortOrder    Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([storeId, isAvailable, sortOrder])
+}
+
+// -----------------------------------------------------------------------------
+// 2. Unified order model — one table for every vertical
+// -----------------------------------------------------------------------------
+
+/// The base record for EVERY vertical. Shared concerns are columns here;
+/// vertical-specific concerns live in `details`.
+model Order {
+  id          String @id @default(cuid())
+  /// Human-facing reference, shown in support and receipts.
+  orderNumber String @unique
+
+  /// References `Service.key`. The FK is what makes "unknown vertical"
+  /// unrepresentable.
+  serviceType ServiceKey
+  service     Service    @relation(fields: [serviceType], references: [key])
+
+  customerId String
+  customer   User   @relation(fields: [customerId], references: [id])
+
+  status OrderStatus @default(DRAFT)
+
+  /// Exactly two rows per order: one PICKUP, one DROPOFF. Each is a full
+  /// snapshot taken at placement — editing the address book never rewrites a
+  /// past order.
+  addresses OrderAddress[]
+
+  // --- fee breakdown, all in CENTAVOS (integer). Never store money as float.
+  subtotalCentavos             Int @default(0)
+  deliveryFeeCentavos          Int @default(0)
+  serviceFeeCentavos           Int @default(0)
+  smallOrderFeeCentavos        Int @default(0)
+  surgeCentavos                Int @default(0)
+  tipCentavos                  Int @default(0)
+  /// Promo/voucher discount, stored positive and subtracted.
+  promoDiscountCentavos        Int @default(0)
+  /// Discount attributable to an active subscription benefit, kept separate so
+  /// we can measure what the tier actually costs us.
+  subscriptionDiscountCentavos Int @default(0)
+  /// Credits spent on this order. Mirrors the ORDER_PAYMENT ledger entry.
+  walletCreditAppliedCentavos  Int @default(0)
+  /// What the customer owes after everything above.
+  totalCentavos                Int @default(0)
+  currency                     String @default("PHP")
+
+  paymentMethod PaymentMethod
+  paymentStatus PaymentStatus @default(PENDING)
+
+  /// Field name kept as `assignedRiderId` per the shared-field contract even
+  /// though the fleet model is service-neutral.
+  assignedRiderId String?
+  assignedRider   FleetPartner? @relation(fields: [assignedRiderId], references: [id])
+
+  /// Vertical-specific payload. Shape is validated per service key by
+  /// `parseOrderDetails()` in src/lib/orders/details.ts. Only the FOOD shape is
+  /// implemented; the other four are documented placeholders.
+  details Json @default("{}")
+
+  // --- timestamps ---
+  placedAt    DateTime?
+  acceptedAt  DateTime?
+  readyAt     DateTime?
+  pickedUpAt  DateTime?
+  deliveredAt DateTime?
+  completedAt DateTime?
+  cancelledAt DateTime?
+  /// Best current estimate shown on the tracking screen.
+  etaAt       DateTime?
+
+  cancellationReason String?
+  cancelledBy        OrderActor?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  statusEvents       OrderStatusEvent[]
+  walletTransactions WalletTransaction[]
+  supportTickets     SupportTicket[]
+  appliedBenefits    OrderAppliedBenefit[]
+
+  /// Powers the unified cross-service order history: one chronological list,
+  /// every vertical, no per-service queries.
+  @@index([customerId, createdAt(sort: Desc)])
+  @@index([customerId, status])
+  @@index([serviceType, status])
+  @@index([assignedRiderId, status])
+  @@index([status, createdAt])
+}
+
+/// A full address snapshot bound to an order. Denormalised on purpose: an order
+/// must remain readable years later even if the source `Address` row is edited
+/// or deleted.
+model OrderAddress {
+  id      String @id @default(cuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  role FulfilmentAddressRole
+
+  /// Where this snapshot came from, when it came from the address book at all.
+  /// Nullable because a store pickup or a map-pin dropoff has no book entry.
+  sourceAddressId String?
+
+  label       String?
+  line1       String
+  line2       String?
+  barangay    String?
+  cityId      String
+  cityName    String
+  province    String
+  postalCode  String?
+  landmark    String?
+  deliveryNotes String?
+
+  latitude  Float
+  longitude Float
+
+  contactName  String?
+  contactPhone String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([orderId, role])
+  @@index([cityId])
+}
+
+/// Append-only audit of every status change, written by the state machine. Also
+/// what the tracking screen renders as a timeline.
+model OrderStatusEvent {
+  id      String @id @default(cuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  fromStatus OrderStatus?
+  toStatus   OrderStatus
+
+  actor       OrderActor
+  actorUserId String?
+  actorUser   User?   @relation(fields: [actorUserId], references: [id])
+  reason      String?
+  metadata    Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([orderId, createdAt])
+}
+
+// -----------------------------------------------------------------------------
+// 4. Unified fleet — service-neutral, per-service approval
+// -----------------------------------------------------------------------------
+
+/// Formerly `RiderProfile`. Renamed because the same person will eventually
+/// deliver food, carry parcels, and possibly drive passengers, and a name that
+/// says "rider" invites food-shaped assumptions.
+model FleetPartner {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Which services this partner is APPROVED to work. Dispatch builds its
+  /// candidate list from this array; everything else about ranking is unchanged.
+  /// Derived from `serviceVerifications` — kept denormalised because dispatch
+  /// reads it on every candidate query.
+  enabledServices ServiceKey[] @default([])
+
+  vehicleType  VehicleType
+  vehiclePlate String?
+  vehicleModel String?
+  /// Insulated bag, top box, child seat, etc. Some services will require some
+  /// of these; that requirement belongs in config, not here.
+  equipment    String[]     @default([])
+
+  homeCityId String?
+
+  isOnline    Boolean @default(false)
+  isSuspended Boolean @default(false)
+
+  currentLatitude  Float?
+  currentLongitude Float?
+  locationUpdatedAt DateTime?
+
+  ratingAvg           Float @default(0)
+  ratingCount         Int   @default(0)
+  completedOrderCount Int   @default(0)
+  acceptanceRate      Float @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  serviceVerifications FleetPartnerServiceVerification[]
+  orders               Order[]
+
+  @@index([isOnline, isSuspended, homeCityId])
+  @@index([enabledServices], type: Gin)
+}
+
+/// Verification status held PER SERVICE. A partner approved for food delivery
+/// is not automatically approved to carry passengers, and this table is where
+/// the model says so out loud.
+model FleetPartnerServiceVerification {
+  id             String @id @default(cuid())
+  fleetPartnerId String
+  fleetPartner   FleetPartner @relation(fields: [fleetPartnerId], references: [id], onDelete: Cascade)
+
+  serviceType ServiceKey
+  service     Service    @relation(fields: [serviceType], references: [key])
+
+  status VerificationStatus @default(NOT_SUBMITTED)
+
+  /// Document identifiers required for THIS service (e.g. a professional
+  /// driver's licence for RIDE, a food-handler card for FOOD).
+  submittedDocuments String[] @default([])
+
+  submittedAt     DateTime?
+  decidedAt       DateTime?
+  decidedByUserId String?
+  decidedBy       User?     @relation("FleetVerificationDecider", fields: [decidedByUserId], references: [id])
+  rejectionReason String?
+  expiresAt       DateTime?
+  notes           String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([fleetPartnerId, serviceType])
+  @@index([serviceType, status])
+}
+
+// -----------------------------------------------------------------------------
+// 5. Credits — a ledger, and nothing else
+// -----------------------------------------------------------------------------
+// HARD CONSTRAINTS, enforced in src/lib/wallet/ledger.ts and by the SQL guard
+// in prisma/sql/wallet_append_only.sql:
+//   * No top-up. A customer cannot add their own cash to a balance.
+//   * No transfers between users.
+//   * No withdrawal or cash-out.
+//   * Balance can only be spent on orders inside the app.
+// Surfaced in the UI as "Credits" / "Rewards" — never "wallet" or "e-money".
+// -----------------------------------------------------------------------------
+
+/// One per user. `balanceCentavos` is a DERIVED CACHE of the ledger sum, written
+/// only by `recordWalletTransaction()`. Never update it directly.
+model Wallet {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Derived: sum(transactions.amountCentavos). The ledger is the truth.
+  balanceCentavos Int    @default(0)
+  currency        String @default("PHP")
+
+  /// Blocks spending without deleting history, e.g. during a fraud review.
+  isFrozen     Boolean @default(false)
+  frozenReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  transactions WalletTransaction[]
+}
+
+/// APPEND-ONLY ledger. Every balance change is a row here, written by exactly
+/// one backend function. There is no UPDATE or DELETE path in application code,
+/// and the SQL guard rejects both at the database level.
+model WalletTransaction {
+  id       String @id @default(cuid())
+  walletId String
+  wallet   Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  type WalletTransactionType
+
+  /// SIGNED amount in centavos. Credits are positive, ORDER_PAYMENT is
+  /// negative, ADJUSTMENT may be either. The sign is forced by `type` in
+  /// `recordWalletTransaction()`, never supplied by a caller.
+  amountCentavos Int
+
+  /// The recomputed ledger sum immediately after this row. Lets us detect
+  /// drift: a replay of the ledger must reproduce every value in this column.
+  balanceAfterCentavos Int
+
+  relatedOrderId String?
+  relatedOrder   Order?  @relation(fields: [relatedOrderId], references: [id])
+
+  /// Customer-visible line in the credits history.
+  description String
+
+  /// Set for ADJUSTMENT rows: which admin made the correction.
+  adminUserId String?
+  adminUser   User?   @relation("WalletAdjustmentActor", fields: [adminUserId], references: [id])
+
+  /// Makes granting idempotent — a retried promo campaign cannot double-credit.
+  idempotencyKey String? @unique
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  /// Note the absence of `updatedAt`. This table is not updated.
+  @@index([walletId, createdAt(sort: Desc)])
+  @@index([relatedOrderId])
+  @@index([type, createdAt])
+}
+
+// -----------------------------------------------------------------------------
+// 6. Subscription tier
+// -----------------------------------------------------------------------------
+
+model SubscriptionPlan {
+  id                  String  @id @default(cuid())
+  name                String
+  slug                String  @unique
+  tagline             String?
+  monthlyPriceCentavos Int
+  currency            String  @default("PHP")
+
+  /// Seeded plan ships INACTIVE. Flip this when we decide to launch.
+  isActive  Boolean @default(false)
+  sortOrder Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// The benefits array. Structured records the pricing engine reads.
+  benefits      SubscriptionBenefit[]
+  subscriptions UserSubscription[]
+
+  @@index([isActive, sortOrder])
+}
+
+/// One structured benefit. Which columns are meaningful depends on `type`:
+///   FREE_DELIVERY       -> minimumOrderCentavos, monthlyUsageCap
+///   DISCOUNT_PERCENT    -> percentBasisPoints, serviceKeys, maxDiscountCentavos
+///   CREDIT_BACK_PERCENT -> percentBasisPoints, monthlyCeilingCentavos
+/// `src/lib/pricing/checkout.ts` validates that pairing before applying it.
+model SubscriptionBenefit {
+  id     String @id @default(cuid())
+  planId String
+  plan   SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  type BenefitType
+
+  /// Empty means "every active service". Otherwise the benefit applies only to
+  /// these service keys — this is how a discount gets scoped without a branch.
+  serviceKeys ServiceKey[] @default([])
+
+  /// Basis points, so 1250 == 12.5%. Whole-percent columns force us to
+  /// re-migrate the first time marketing wants 7.5%.
+  percentBasisPoints Int?
+
+  /// FREE_DELIVERY: the order subtotal the benefit needs to trigger.
+  minimumOrderCentavos Int?
+  /// FREE_DELIVERY: how many times per calendar month it may be used.
+  monthlyUsageCap      Int?
+  /// DISCOUNT_PERCENT: per-order ceiling on the discount.
+  maxDiscountCentavos  Int?
+  /// CREDIT_BACK_PERCENT: how much credit-back this benefit may accrue per
+  /// calendar month.
+  monthlyCeilingCentavos Int?
+
+  /// Shown on the plan card. Never read by the pricing engine.
+  displayLabel String
+
+  sortOrder Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  usages         SubscriptionBenefitUsage[]
+  appliedToOrders OrderAppliedBenefit[]
+
+  @@index([planId, type])
+}
+
+model UserSubscription {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId String
+  plan   SubscriptionPlan @relation(fields: [planId], references: [id])
+
+  status SubscriptionStatus @default(ACTIVE)
+
+  startedAt   DateTime  @default(now())
+  renewsAt    DateTime
+  cancelledAt DateTime?
+  endedAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  benefitUsages SubscriptionBenefitUsage[]
+
+  /// One live subscription per person; history is preserved by `endedAt`.
+  @@index([userId, status])
+  @@index([status, renewsAt])
+}
+
+/// Tracks consumption of capped benefits within a calendar month, so
+/// `monthlyUsageCap` and `monthlyCeilingCentavos` are enforceable rather than
+/// aspirational.
+model SubscriptionBenefitUsage {
+  id                 String @id @default(cuid())
+  userSubscriptionId String
+  userSubscription   UserSubscription @relation(fields: [userSubscriptionId], references: [id], onDelete: Cascade)
+  benefitId          String
+  benefit            SubscriptionBenefit @relation(fields: [benefitId], references: [id], onDelete: Cascade)
+
+  /// First instant of the calendar month this row accounts for, in UTC.
+  periodStart DateTime
+
+  usageCount        Int @default(0)
+  creditedCentavos  Int @default(0)
+  discountedCentavos Int @default(0)
+
+  updatedAt DateTime @updatedAt
+
+  @@unique([userSubscriptionId, benefitId, periodStart])
+  @@index([periodStart])
+}
+
+/// What a specific order actually received, so we can answer "why was this
+/// cheaper?" without re-running the pricing engine against changed config.
+model OrderAppliedBenefit {
+  id      String @id @default(cuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  benefitId String?
+  benefit   SubscriptionBenefit? @relation(fields: [benefitId], references: [id])
+
+  type             BenefitType
+  displayLabel     String
+  /// Positive centavos taken off the total by this benefit.
+  amountCentavos   Int
+  /// For CREDIT_BACK_PERCENT: credits to grant on completion, not a discount.
+  creditBackCentavos Int @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([orderId])
+  @@index([benefitId, createdAt])
+}
+
+// -----------------------------------------------------------------------------
+// 8. Unified support
+// -----------------------------------------------------------------------------
+
+/// One ticket model covering all services.
+model SupportTicket {
+  id           String @id @default(cuid())
+  ticketNumber String @unique
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// The vertical the ticket is about. NULL means an account-level or general
+  /// issue that belongs to no single service.
+  serviceType ServiceKey?
+  service     Service?    @relation(fields: [serviceType], references: [key])
+
+  relatedOrderId String?
+  relatedOrder   Order?  @relation(fields: [relatedOrderId], references: [id])
+
+  /// Slug of the `FaqCategory` the customer entered through, so we can see
+  /// which help topics generate tickets.
+  categorySlug String?
+
+  subject String
+  body    String
+
+  status   SupportTicketStatus   @default(OPEN)
+  priority SupportTicketPriority @default(NORMAL)
+
+  assignedAgentId String?
+  assignedAgent   User?   @relation("SupportAgentTickets", fields: [assignedAgentId], references: [id])
+
+  resolvedAt DateTime?
+  closedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages SupportTicketMessage[]
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([status, priority, createdAt])
+  @@index([serviceType, status])
+  @@index([relatedOrderId])
+}
+
+model SupportTicketMessage {
+  id       String @id @default(cuid())
+  ticketId String
+  ticket   SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  authorUserId String?
+  author       User?   @relation(fields: [authorUserId], references: [id])
+  isFromSupport Boolean @default(false)
+
+  body        String
+  attachments String[] @default([])
+
+  createdAt DateTime @default(now())
+
+  @@index([ticketId, createdAt])
+}
+
+/// Help-section categories. Driven by the Service registry: a category with a
+/// `serviceType` only appears once that service exists, and a NULL
+/// `serviceType` is the general/account section.
+model FaqCategory {
+  id    String @id @default(cuid())
+  slug  String @unique
+  title String
+
+  serviceType ServiceKey?
+  service     Service?    @relation(fields: [serviceType], references: [key])
+
+  sortOrder Int     @default(0)
+  isActive  Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  articles FaqArticle[]
+
+  @@index([serviceType, sortOrder])
+  @@index([isActive, sortOrder])
+}
+
+model FaqArticle {
+  id         String @id @default(cuid())
+  categoryId String
+  category   FaqCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  question  String
+  answer    String
+  sortOrder Int    @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([categoryId, sortOrder])
+}
+
+// -----------------------------------------------------------------------------
+// 7. Home screen supporting data
+// -----------------------------------------------------------------------------
+
+/// Promotions rail on the home screen. Scoped to service keys so a food-only
+/// promo does not advertise itself once MART launches.
+model Promotion {
+  id       String @id @default(cuid())
+  title    String
+  subtitle String?
+  imageUrl String?
+  ctaHref  String?
+
+  serviceKeys ServiceKey[] @default([])
+  cityIds     String[]     @default([])
+
+  isActive  Boolean   @default(true)
+  startsAt  DateTime?
+  endsAt    DateTime?
+  sortOrder Int       @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, sortOrder])
+  @@index([serviceKeys], type: Gin)
+}

@@ -1,0 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  @apply bg-surface-sunken text-ink antialiased;
+}
+
+/* Bottom navigation is fixed; keep the last section clear of it. */
+.app-shell {
+  padding-bottom: 5.5rem;
+}

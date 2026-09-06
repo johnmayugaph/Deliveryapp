@@ -1,0 +1,34 @@
+{
+  "extends": ["next/core-web-vitals", "next/typescript"],
+  "rules": {
+    "no-restricted-syntax": [
+      "error",
+      {
+        "selector": "BinaryExpression[operator=/^(===|!==|==|!=)$/][right.value='FOOD']",
+        "message": "Do not branch on a service key. Read the behaviour from the Service registry (src/lib/services/registry.ts) or from a per-service config map."
+      },
+      {
+        "selector": "BinaryExpression[operator=/^(===|!==|==|!=)$/][right.value='MART']",
+        "message": "Do not branch on a service key. Read the behaviour from the Service registry or a per-service config map."
+      },
+      {
+        "selector": "BinaryExpression[operator=/^(===|!==|==|!=)$/][right.value='PARCEL']",
+        "message": "Do not branch on a service key. Read the behaviour from the Service registry or a per-service config map."
+      },
+      {
+        "selector": "BinaryExpression[operator=/^(===|!==|==|!=)$/][right.value='PABILI']",
+        "message": "Do not branch on a service key. Read the behaviour from the Service registry or a per-service config map."
+      },
+      {
+        "selector": "BinaryExpression[operator=/^(===|!==|==|!=)$/][right.value='RIDE']",
+        "message": "Do not branch on a service key. Read the behaviour from the Service registry or a per-service config map."
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": ["prisma/seed.ts", "src/lib/orders/transitions.ts", "src/lib/orders/details.ts", "src/tests/**/*.ts"],
+      "rules": { "no-restricted-syntax": "off" }
+    }
+  ]
+}

@@ -1,0 +1,469 @@
+# Architecture
+
+Deliveryapp is a multi-service delivery app for the Philippine market. It runs
+five verticals — **Kainan** (food), **Tindahan** (mart), **Padala** (parcel),
+**Pabili**, and **Sakay** (rides) — as one product rather than five apps sharing
+a login.
+
+Only Kainan is live. The other four exist in the database as coming-soon records
+so the home screen can show them, which measures demand before any of them costs
+engineering time.
+
+> **Status note.** This document was written alongside the initial commit. The
+> brief it implements described itself as superseding "Phase 4 onward" of an
+> existing plan and asked for the changes to be folded into the schema "before
+> Phase 2 runs". No prior plan, schema, or docs existed in this repository —
+> it had zero commits — so rather than amend a Phase 4, the decisions below are
+> the foundation, and they are in the *initial* migration rather than a
+> follow-up. See [PROGRESS.md](./PROGRESS.md) for how the phases are numbered
+> now.
+
+## Stack
+
+| Concern | Choice |
+| --- | --- |
+| Database | PostgreSQL |
+| Schema & access | Prisma (`prisma/schema.prisma` is the source of truth) |
+| App | Next.js App Router, React server components, TypeScript |
+| Styling | Tailwind |
+| Tests | Vitest (`src/tests/`), database-free |
+| Money | Integer **centavos**, never floats |
+
+The web app and the schema live in one repository because every screen here is a
+thin read over the domain layer in `src/lib`. If a React Native client arrives
+later, `src/lib` is the part that moves with it — nothing in it imports React
+except the request-level `cache()` in the registry.
+
+---
+
+## 1. Service registry — a vertical is data, not a branch
+
+Each vertical is a row in `Service` (`prisma/schema.prisma`), keyed by
+`ServiceKey`:
+
+| Column | Purpose |
+| --- | --- |
+| `key` | `FOOD` \| `MART` \| `PARCEL` \| `PABILI` \| `RIDE` |
+| `displayName`, `tagline`, `icon`, `description` | Presentation |
+| `intentGroup` | `GO` \| `EAT` \| `GET` \| `PAY` — home-screen grouping |
+| `isActive` | Tappable and orderable now |
+| `isComingSoon` | Rendered dimmed with a "Coming soon" label, not tappable |
+| `sortOrder` | Order within its group |
+| `fulfilmentType` | `MERCHANT_TO_DOOR` \| `SHOPPER_TO_DOOR` \| `POINT_TO_POINT` \| `PASSENGER` |
+| `requiresMerchant` | Orders must reference a `Store` |
+| `requiresRider` | Orders must be assigned a `FleetPartner` |
+| `availableCityIds` | Where the service is live |
+| `accentToken` | Resolves to a colour pair at render time |
+
+Seeded state: five rows, `FOOD` active in Manila, Quezon City and Makati; the
+other four `isComingSoon` with no cities.
+
+### The rule
+
+> Nowhere in the codebase should there be a hardcoded list of services, or an
+> `if (serviceType === 'FOOD')` branch in shared logic. Read from the registry.
+
+This is enforced three ways, not just documented:
+
+1. **`src/lib/services/registry.ts`** is the only reader. Everything else —
+   home screen, search, help, dispatch, pricing — goes through it.
+2. **`src/tests/no-service-branches.test.ts`** greps the whole tree for
+   `=== 'FOOD'`-shaped comparisons and for files naming three or more service
+   keys, and fails the build on either.
+3. **ESLint** (`no-restricted-syntax` in `.eslintrc.json`) rejects a comparison
+   against a service-key literal at edit time, before the tests run.
+
+Where behaviour genuinely differs per vertical, it goes in a **config map keyed
+by every `ServiceKey`** — so a sixth vertical is a TypeScript compile error in
+the map, not a surprise in production. There are exactly two such maps
+(`ORDER_LIFECYCLES`, `ORDER_DETAILS_SPECS`), and both are exempted by name in
+the test above. `prisma/seed.ts` is the one other exemption: the seed *is* the
+data.
+
+Intent-group labels live in `src/lib/services/intent-groups.ts`. That file names
+the groups and contains **no service keys** — membership comes from
+`Service.intentGroup`, so regrouping the home screen is a data edit. The labels
+are plain Filipino-market language rather than a translation of anyone else's
+taxonomy: *Pagkain at Grocery*, *Padala at Pabili*, *Sakay*, *Bayad*.
+
+---
+
+## 2. Unified order model — one table for every vertical
+
+`Order` is the base record for all five verticals.
+
+**Shared columns**, present for every service: `id`, `orderNumber`,
+`serviceType` (FK to `Service.key`), `customerId`, `status`, the fee breakdown
+in centavos, `paymentMethod`, `paymentStatus`, `assignedRiderId`, timestamps,
+`cancellationReason` and `cancelledBy`.
+
+Fulfilment addresses are two `OrderAddress` rows per order — one `PICKUP`, one
+`DROPOFF`, unique on `(orderId, role)`. Each is a **full snapshot** taken at
+placement, deliberately denormalised: an order must stay readable years later
+even if the source address is edited or deleted. Every vertical has both — food
+picks up at a store, a parcel at the sender, a ride collects a passenger.
+
+The fee breakdown keeps `subscriptionDiscountCentavos` separate from
+`promoDiscountCentavos` so we can measure what the subscription tier actually
+costs us, and `walletCreditAppliedCentavos` separate again so credits spending
+reconciles against the ledger.
+
+### The `details` container
+
+Vertical-specific fields live in `Order.details` (JSON), validated per service
+key by `parseOrderDetails()` in `src/lib/orders/details.ts`.
+
+| Service | Shape | Status |
+| --- | --- | --- |
+| `FOOD` | `storeId`, embedded item snapshots, `merchantPreparationMinutes` | **Implemented** (Zod schema) |
+| `MART` | `storeId`, item snapshots, `substitutionPreference` | Planned |
+| `PARCEL` | `packageDescription`, `declaredValueCentavos`, `sizeCategory`, `recipientName`, `recipientPhone` | Planned |
+| `PABILI` | `shoppingListText`, `estimatedBudgetCentavos`, `budgetCeilingCentavos`, `actualReceiptCentavos` | Planned |
+| `RIDE` | `passengerCount`, `vehicleClass`, `routePolyline` | Planned |
+
+Only `FOOD` is implemented. The other four are written down as TypeScript
+interfaces so the container's design is reviewable today, and
+`parseOrderDetails` throws `ServiceDetailsNotImplementedError` for them — a
+loud failure rather than silent acceptance of an undesigned payload.
+
+Food item snapshots record `unitPriceCentavos` and `lineTotalCentavos` at order
+time. A merchant raising a price must not rewrite last month's receipt.
+
+`summariseDetails()` produces a one-line summary for the order history and the
+active-order strip **without** branching on the vertical, which is why a parcel
+in progress will render in those lists the day PARCEL launches.
+
+### Status handling
+
+One `OrderStatus` enum holds a **superset** of every state any vertical can
+reach. Which states a vertical may enter, and in what order, is defined per
+service in `ORDER_LIFECYCLES` (`src/lib/orders/transitions.ts`) — *not* by the
+ordering of the enum.
+
+The lifecycles genuinely differ:
+
+- **FOOD** — the existing chain: `PENDING_MERCHANT_ACCEPTANCE` →
+  `MERCHANT_ACCEPTED` → `PREPARING` → dispatch → transit → `DELIVERED` →
+  `COMPLETED`. Dispatch runs alongside the kitchen, so `PREPARING` reaches both
+  `READY_FOR_PICKUP` and `AWAITING_RIDER_ASSIGNMENT`.
+- **PARCEL** — **skips merchant acceptance entirely.** A placed parcel order
+  goes straight to `AWAITING_RIDER_ASSIGNMENT`; there is nobody to accept it but
+  us. No merchant status appears anywhere in its map, and a test asserts that.
+- **MART** — has a store but no merchant acceptance: a shopper picks the items
+  (`SHOPPING_IN_PROGRESS`).
+- **PABILI** — a shopping leg plus an `AWAITING_BUDGET_APPROVAL` gate that only
+  the *customer* can release.
+- **RIDE** — a passenger boards (`PASSENGER_ONBOARD`) and the trip ends at
+  `DROPPED_OFF`, never "delivered".
+
+`src/lib/orders/state-machine.ts` reads that map and **contains no service-key
+literal**. It also:
+
+- validates the transition, the acting role (`permittedActors`), and that
+  cancellations carry a reason;
+- stamps timestamps from the declarative `STATUS_TIMESTAMP_FIELDS` map, once
+  only, so a re-dispatch cannot rewrite `placedAt`;
+- guards concurrency with `where: { id, status: <previous> }`, so two riders
+  tapping "picked up" cannot both win;
+- writes an `OrderStatusEvent` for every change — the audit trail the tracking
+  screen renders as a timeline.
+
+`submitOrder()` moves a new order to its vertical's `submittedStatus`. Checkout
+calls that rather than naming a status, which is how checkout stays free of
+per-vertical knowledge: food lands in `PENDING_MERCHANT_ACCEPTANCE`, a parcel in
+`AWAITING_RIDER_ASSIGNMENT`, and checkout spells out neither.
+
+**`requiresMerchant` vs. merchant acceptance.** These are different questions
+and conflating them is how the `if FOOD` branches come back. `requiresMerchant`
+means "an order must reference a store" — true for FOOD and MART. Whether the
+lifecycle contains an *acceptance step* is a lifecycle concern, answered only by
+the transition map. MART is `requiresMerchant: true` with no acceptance step.
+
+---
+
+## 3. Unified identity and address book
+
+**One `User` per person**, regardless of how many services they use.
+
+Roles are an **array** (`User.roles: UserRole[]`), not a single field. One person
+can be a customer and a fleet partner at the same time — the seeded Maria Santos
+is exactly that, on one record. Nothing downstream may assume a session belongs
+to a customer.
+
+**One address book**, shared across every vertical. An address saved while
+ordering food is immediately available as a Padala pickup. Beyond the usual
+fields, `Address` carries:
+
+- `usageCount` and `lastUsedAt` — maintained by `bumpAddressUsage()` once per
+  order placement, so the picker orders by real behaviour rather than creation
+  date;
+- `isPickupCapable` — some saved places make sense as origins, not just
+  destinations. A parcel pickup or a ride start reads this, which is why the
+  flag lives on the address rather than being asked again in a future parcel
+  flow.
+
+---
+
+## 4. Unified fleet
+
+`RiderProfile` is **`FleetPartner`**. The rename is the point: the same person
+will eventually deliver food, carry parcels, and possibly drive passengers, and
+a name that says "rider" invites food-shaped assumptions.
+
+Added:
+
+- **`enabledServices: ServiceKey[]`** — which verticals this partner is approved
+  for. Dispatch builds its candidate list from this array.
+- **`vehicleType`**, plus `vehiclePlate`, `vehicleModel` and an `equipment`
+  array.
+- **Per-service verification** in `FleetPartnerServiceVerification`, unique on
+  `(fleetPartnerId, serviceType)`, with its own status, submitted documents,
+  decision, and expiry.
+
+A partner approved for food delivery is **not** automatically approved to carry
+passengers, and the model says so out loud rather than leaving it to policy. The
+seeded partner is `APPROVED` for FOOD and `PENDING` for RIDE; a verified
+end-to-end check confirms they appear as a FOOD candidate and not as a RIDE one.
+
+`enabledServices` is a denormalised read model — dispatch hits it on every
+candidate query — and `syncEnabledServices()` is the only writer. It recomputes
+from `APPROVED`, unexpired verifications, so an approval in one service can
+never leak into another.
+
+`findDispatchCandidates()` reads `enabledServices` and `Service.requiresRider`.
+**Everything else about the ranking logic stays as it is**: proximity dominates
+(60 points), then rating (25), then acceptance rate (15).
+
+---
+
+## 5. Credits — rewards only, and a ledger
+
+`Wallet` (one per user, `balanceCentavos`, `currency` PHP) and
+`WalletTransaction` (append-only: `walletId`, `type`, `amountCentavos`,
+`balanceAfterCentavos`, `relatedOrderId`, `description`, `createdAt`).
+
+Transaction types: `PROMO_CREDIT`, `REFUND`, `REFERRAL_BONUS`, `ORDER_PAYMENT`,
+`ADJUSTMENT`. Note what is *absent* — there is no `TOP_UP`, no `TRANSFER_IN`/
+`TRANSFER_OUT`, no `WITHDRAWAL`. The absence is the product constraint,
+expressed in the type system.
+
+### Hard constraints
+
+1. **No top-up.** There is no path for a customer to add their own cash to a
+   balance.
+2. **No transfers between users.**
+3. **No withdrawal or cash-out.**
+4. **Balance can only be spent on orders within the app.**
+
+These are enforced, not merely stated:
+
+| Constraint | Enforcement |
+| --- | --- |
+| No top-up | No transaction type and no function grants credit on a customer's authority. `grantCredit()` is called by promo campaigns, referral payouts and support — never by a customer paying in. |
+| No transfers | No function accepts two wallet or user identifiers. A transfer needs two parties and there is no signature for one. |
+| No cash-out | No withdrawal function exists. `refundToCredits()` returns credits *to credits*, never to cash or a card. |
+| Spend on orders only | `ORDER_PAYMENT` and `REFUND` require a `relatedOrderId` in application code **and** in a database `CHECK`. |
+
+`src/tests/wallet-ledger.test.ts` asserts the module exports nothing matching
+`topUp`, `transfer`, `withdraw`, `cashOut`, `setBalance` and friends, and that
+the enum contains exactly the five permitted types. Adding one of those is a
+failing test, not a quiet regression. `src/lib/wallet/ledger.ts` ends with a
+comment block naming the four functions that must never be added, and why.
+
+> If a requirement seems to need one of these, that is a product conversation,
+> not a patch. Adding a cash-in rail turns this into a stored-value instrument
+> with the regulatory weight that implies.
+
+### The ledger is the truth
+
+Every balance change goes through **one** backend function,
+`recordWalletTransaction()`. It writes a `WalletTransaction`, then
+**recalculates the balance from the sum of the ledger** and writes that derived
+value to `Wallet.balanceCentavos`. Nothing else in the codebase writes that
+column.
+
+- The prior balance is read from `sumLedger()`, never from the cached column, so
+  a drifted cache cannot authorise an overspend.
+- The balance is written as an absolute value, never as an `increment` — an
+  increment would make the column the truth.
+- Runs at `Serializable` isolation, so two concurrent grants cannot both read a
+  stale sum.
+- **Signs are forced by type** (`signedAmountFor()` in
+  `src/lib/wallet/rules.ts`): callers pass a magnitude and a type and never a
+  sign, so a payment cannot be booked as a credit by passing the wrong number.
+  `ADJUSTMENT` is the single signed type, and requires an `adminUserId`.
+- `idempotencyKey` makes grants replay-safe: a retried campaign cannot
+  double-credit.
+- `reconcileWalletBalance()` replays the ledger, reports drift, and repairs the
+  cache. Safe to run on a schedule.
+
+`prisma/sql/wallet_append_only.sql` makes the same rules true at the database
+level, so a console session or a future service in another language cannot
+bypass them: triggers rejecting `UPDATE` and `DELETE` on `WalletTransaction`,
+and `CHECK` constraints for the sign-per-type rule, the order-link requirement,
+the admin requirement on adjustments, and a non-negative balance. Apply with
+`npm run prisma:guards` after migrating. All six guards are verified against a
+live database.
+
+### Wording
+
+Surface this as **"Credits"** or **"Rewards"**. Never "wallet", "e-wallet",
+"e-money", or anything implying a cash-out. The bottom navigation says Credits;
+`WALLET_CONSTRAINTS.uiLabel` carries the string, and a test pins it. The
+`/credits` screen states the four constraints in plain Filipino, because a
+customer should never discover them at the moment they are counting on the
+opposite.
+
+---
+
+## 6. Subscription tier
+
+`SubscriptionPlan` (name, `monthlyPriceCentavos`, benefits, `isActive`) and
+`UserSubscription` (userId, planId, status, `startedAt`, `renewsAt`,
+`cancelledAt`).
+
+Benefits are **structured records the pricing engine reads**, in
+`SubscriptionBenefit` — a child table rather than free text, so nothing has to
+parse marketing copy:
+
+| Type | Columns used |
+| --- | --- |
+| `FREE_DELIVERY` | `minimumOrderCentavos`, `monthlyUsageCap` |
+| `DISCOUNT_PERCENT` | `percentBasisPoints`, `serviceKeys`, `maxDiscountCentavos` |
+| `CREDIT_BACK_PERCENT` | `percentBasisPoints`, `monthlyCeilingCentavos` |
+
+Percentages are **basis points** (1250 = 12.5%), so the first 7.5% campaign does
+not need a migration. `displayLabel` is the only column the pricing engine
+ignores.
+
+Scoping is data: an **empty `serviceKeys` means every active service**,
+otherwise the benefit applies only to the listed keys. That is how a discount
+gets scoped to a vertical without a branch — the seeded 5% discount is
+`[FOOD]`, and extending it to MART on launch day is a row edit.
+
+`SubscriptionBenefitUsage`, unique on
+`(userSubscriptionId, benefitId, periodStart)`, tracks consumption within a
+calendar month, so `monthlyUsageCap` and `monthlyCeilingCentavos` are
+enforceable rather than aspirational.
+
+### Pricing
+
+`quoteOrderPrice()` (`src/lib/pricing/checkout.ts`) checks the registry, loads
+any active subscription, and hands the arithmetic to the pure `applyBenefits()`
+in `src/lib/pricing/benefits.ts`. The split is what lets the benefit rules be
+tested exhaustively without a database — 22 tests cover the caps, ceilings,
+scoping and rounding.
+
+Order of operations, deliberate:
+
+1. Fees as quoted.
+2. `FREE_DELIVERY` — waives the delivery fee above the minimum order, within the
+   monthly cap. **The fee is not zeroed**; it stays on the order at full value
+   and the waiver is recorded as a discount line, so the receipt reads
+   "Delivery fee ₱49 / Plus benefits −₱49". Zeroing the fee *and* recording a
+   discount would subtract it twice.
+3. `DISCOUNT_PERCENT` — off the subtotal, service-scoped, within its ceiling.
+4. Promo/voucher discount, then the total. Combined discounts are capped at the
+   gross, and when they overshoot the *subscription* share is trimmed first so
+   the customer's own voucher is never the thing that gets clipped.
+5. `CREDIT_BACK_PERCENT` — accrued against what the customer actually pays,
+   within the monthly ceiling. **Not a discount**: they pay full price now and
+   the credits arrive on completion, via the ledger.
+6. Credits applied, capped at the balance and at what is owed.
+
+Quoting **writes nothing**. `commitBenefitUsage()` records consumption once the
+order row exists, because quoting happens on every keystroke in checkout and a
+quote must never burn someone's monthly free deliveries.
+
+An **inactive plan grants nothing**, even to someone already subscribed —
+`getActiveSubscription()` filters on `plan: { isActive: true }`. That is what
+makes the seeded plan safe to leave in place.
+
+**Seeded plan:** *Deliveryapp Plus*, ₱99/month, `isActive: false`. Free delivery
+over ₱299 (8×/month), 5% off Kainan (₱100 cap), 2% credits back (₱200/month
+cap). It stays off until there is a decision to launch it.
+
+---
+
+## 7. Home screen
+
+`src/app/page.tsx`, built around **service selection** rather than dropping
+straight into a restaurant list.
+
+1. **Location** — current delivery address with a tap-to-change control, reading
+   the shared address book (`LocationHeader`).
+2. **Global search** — one box across every active service (`GlobalSearch` →
+   `/search` → `globalSearch()`). It searches only active services live in the
+   current city; which services have a searchable catalogue comes from
+   `requiresMerchant`, so MART becomes searchable the moment it is activated.
+   Returning a result we cannot fulfil is worse than returning none.
+3. **Service tiles grouped by intent**, from the registry (`ServiceTileGrid`).
+   Active services are links. Coming-soon services render dimmed with a "Coming
+   soon" label and are **not tappable** — not a disabled link but *no link*, so
+   keyboard and screen-reader users are not offered a dead target either. Empty
+   groups are omitted, so the *Bayad* section simply does not render yet.
+4. **Active-order strip** — anything in progress in *any* vertical, with status
+   and a tap-through to tracking. Built from `ALL_IN_PROGRESS_STATUSES`, derived
+   from the lifecycle map, so a new vertical's states are covered as soon as its
+   lifecycle is registered.
+5. **Promotions** — scoped by service key, and filtered so a promo whose only
+   services are unlaunched never advertises itself.
+6. **Recent stores / reorder shortcuts** — from the customer's own history,
+   falling back to well-rated local stores for a first-time visitor.
+
+**Bottom navigation: Home, Orders, Credits, Profile.**
+
+`/orders` is **every order across every service in one chronological list**.
+That unified history is a large part of what makes this feel like one product
+rather than several, and it is one query with no per-service branches only
+because there is one `Order` table. A vertical launched next year appears there
+automatically.
+
+Per-service styling is resolved from `Service.accentToken` through a static map
+keyed by *token*, not by service key (`src/lib/services/presentation.ts`) —
+Tailwind cannot build a class name from a runtime string, but a new vertical can
+reuse an existing token and change nothing here.
+
+---
+
+## 8. Unified support
+
+One `SupportTicket` model covering all services, with a `serviceType` field and
+an optional `relatedOrderId`, plus `SupportTicketMessage` for the thread.
+
+A ticket raised against an order **inherits that order's vertical** — the
+customer should not have to tell us something we already know.
+
+`serviceType` is **nullable**, a deliberate deviation from a literal reading of
+the brief: an account-level problem ("I can't log in", "credits question")
+belongs to no single vertical, and forcing one would make the data lie. Null
+means account/general.
+
+One help section (`/help`), with per-service FAQ categories driven by the
+registry: a category carrying a `serviceType` renders under that service's name
+and picks up its "Coming soon" marker, and a category for a service that does
+not exist is dropped rather than shown as an empty section.
+
+---
+
+## Verification
+
+Database-free, in CI (`npm run verify`) — **62 tests**:
+
+| File | Covers |
+| --- | --- |
+| `no-service-branches.test.ts` | The registry rule, across the whole tree; config-map exhaustiveness |
+| `order-transitions.test.ts` | Per-service lifecycles, reachability, no dead ends, actor permissions |
+| `wallet-ledger.test.ts` | The four hard constraints, sign derivation, ledger replay, SQL-guard agreement |
+| `pricing-benefits.test.ts` | Benefit caps, ceilings, scoping, basis-point rounding, discount floors |
+
+Verified separately against a live PostgreSQL 16 with the SQL guards applied —
+**42 end-to-end checks**, all passing: registry gating by city, the FOOD
+lifecycle and its rejections, dispatch including a partner for FOOD and
+excluding the same partner from RIDE, ledger idempotency and overspend
+rejection, ledger replay reproducing every `balanceAfterCentavos`, all four
+database guards rejecting raw writes, subscription benefits firing only once the
+plan is active, and support tickets inheriting the order's vertical.
+
+`npm run build` and `npm run lint` are clean; every route returns 200 against
+seeded data.
