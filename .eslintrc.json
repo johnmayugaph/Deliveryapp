@@ -1,5 +1,8 @@
 {
-  "extends": ["next/core-web-vitals", "next/typescript"],
+  "extends": [
+    "next/core-web-vitals",
+    "next/typescript"
+  ],
   "rules": {
     "no-restricted-syntax": [
       "error",
@@ -23,12 +26,27 @@
         "selector": "BinaryExpression[operator=/^(===|!==|==|!=)$/][right.value='RIDE']",
         "message": "Do not branch on a service key. Read the behaviour from the Service registry or a per-service config map."
       }
+    ],
+    "@typescript-eslint/no-unused-vars": [
+      "error",
+      {
+        "argsIgnorePattern": "^_",
+        "varsIgnorePattern": "^_",
+        "caughtErrorsIgnorePattern": "^_"
+      }
     ]
   },
   "overrides": [
     {
-      "files": ["prisma/seed.ts", "src/lib/orders/transitions.ts", "src/lib/orders/details.ts", "src/tests/**/*.ts"],
-      "rules": { "no-restricted-syntax": "off" }
+      "files": [
+        "prisma/seed.ts",
+        "src/lib/orders/transitions.ts",
+        "src/lib/orders/details.ts",
+        "src/tests/**/*.ts"
+      ],
+      "rules": {
+        "no-restricted-syntax": "off"
+      }
     }
   ]
 }

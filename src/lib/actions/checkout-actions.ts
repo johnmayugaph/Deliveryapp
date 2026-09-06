@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { OrderActor, PaymentMethod } from '@prisma/client';
-import { requireCurrentUser } from '@/lib/auth/session';
+import { requireCurrentUser, requireOnboardedUser } from '@/lib/auth/session';
 import {
   placeOrder,
   quoteCheckout,
@@ -39,7 +39,7 @@ export type QuoteResult =
 /** Prices a cart for display. Same code path as placement, so no drift. */
 export async function quoteCheckoutAction(input: CheckoutFormInput): Promise<QuoteResult> {
   try {
-    const user = await requireCurrentUser();
+    const user = await requireOnboardedUser();
     const quote = await quoteCheckout({ customerId: user.id, ...input });
     return { ok: true, quote };
   } catch (error) {
@@ -53,7 +53,7 @@ export type PlaceOrderResult =
 
 export async function placeOrderAction(input: CheckoutFormInput): Promise<PlaceOrderResult> {
   try {
-    const user = await requireCurrentUser();
+    const user = await requireOnboardedUser();
     const { order } = await placeOrder({ customerId: user.id, ...input });
 
     revalidatePath('/');
@@ -132,6 +132,8 @@ function toUserMessage(error: unknown): string {
     'InsufficientCreditsForPaymentError',
     'InsufficientCreditsError',
     'ServiceNotActiveError',
+    'NotAuthenticatedError',
+    'OnboardingIncompleteError',
     'NoDeliveryFeeRuleError',
     'IllegalTransitionError',
     'MissingTransitionReasonError',

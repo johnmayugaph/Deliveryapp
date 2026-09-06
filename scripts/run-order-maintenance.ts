@@ -5,15 +5,22 @@
  *     npm run jobs:orders
  *
  * Expires orders that have waited too long in a state their vertical's
- * lifecycle declares a timeout for, and refunds any credits they consumed.
+ * lifecycle declares a timeout for, refunds any credits they consumed, and
+ * prunes spent login codes and dead sessions.
  * Safe to run frequently: it is idempotent and bounded per policy.
  */
-import { expireStaleOrders } from '../src/lib/orders/maintenance';
+import { runMaintenance } from '../src/lib/orders/maintenance';
 import { prisma } from '../src/lib/prisma';
 import { formatCentavos } from '../src/lib/money';
 
 async function main() {
-  const expired = await expireStaleOrders();
+  const { expired, prunedVerifications, prunedSessions } = await runMaintenance();
+
+  if (prunedVerifications > 0 || prunedSessions > 0) {
+    console.log(
+      `Pruned ${prunedVerifications} login code(s) and ${prunedSessions} dead session(s).`,
+    );
+  }
 
   if (expired.length === 0) {
     console.log('No stale orders.');

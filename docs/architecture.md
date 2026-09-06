@@ -27,7 +27,8 @@ engineering time.
 | App | Next.js App Router, React server components, TypeScript |
 | Styling | Tailwind |
 | Tests | Vitest (`src/tests/`), database-free |
-| Jobs | `npm run jobs:orders` — the order-timeout sweep, for cron |
+| Auth | Phone + one-time code over SMS; opaque server-side sessions |
+| Jobs | `npm run jobs:orders` — order timeouts plus auth housekeeping, for cron |
 | Money | Integer **centavos**, never floats |
 
 The web app and the schema live in one repository because every screen here is a
@@ -298,6 +299,88 @@ fields, `Address` carries:
   flow.
 
 ---
+
+### Authentication
+
+Phone number plus a one-time code. No passwords — a password is a liability for
+a market where the phone *is* the identity, and `User.phone` already was the
+login identity in the original model.
+
+**Signup and login are the same request.** Nothing in the flow reveals whether
+a number already has an account: requesting a code answers identically either
+way, and the `User` row is created at the moment a code is verified. That row
+starts with `fullName: null` — which is why the column is nullable. A
+phone-first signup knows the number before it knows the name, and putting a
+placeholder there would make every reader guess whether the value was real.
+`onboardedAt` gates the app on `/welcome` until a name is given, and checkout
+requires an onboarded account, because an order needs somebody to hand food to.
+
+**Codes** (`src/lib/auth/otp.ts`, rules in `otp-policy.ts`):
+
+| Control | Value | Why |
+| --- | --- | --- |
+| Expiry | 5 minutes | A leaked code is stale before it is useful |
+| Attempt ceiling | 5 wrong guesses | Five tries against a million possibilities |
+| Resend cooldown | 45 seconds | A double-tapped button should not cost two SMS |
+| Per phone | 3 per 15 min | Nobody gets bombarded with codes they did not ask for |
+| Per source address | 12 per hour | One script cannot burn the SMS budget across many numbers |
+
+The code is stored as **HMAC-SHA256 keyed with `AUTH_SECRET`**, never in
+plaintext. A six-digit code has only a million possibilities, so a plain hash in
+a leaked database is a rainbow table away from recovery; keying it means the
+database alone is not enough. Comparison is constant-time. A wrong guess
+increments the attempt counter even against an already-dead code, so poking an
+expired one is not a free try. Issuing a new code consumes any outstanding one
+in the same transaction — two live codes would be two chances to guess.
+
+Every refusal reports **when to come back**, because a bare "try later" is a
+dead end for someone who genuinely did not receive the first code. The two
+messages an attacker would find useful — no code outstanding, and wrong code —
+are deliberately identical, so the form cannot be used as an oracle.
+
+**Sessions** (`src/lib/auth/session.ts`): an opaque 256-bit token in an
+httpOnly, SameSite=Lax cookie; the database stores only its SHA-256 hash.
+Server-side rows rather than a JWT for one reason that outweighs the
+convenience: a session must be **revocable**. A signed token asserting "valid
+for 30 days" cannot be taken back when a phone is stolen. The window slides on
+use, sign-out revokes rather than deletes (so a stolen token cannot be
+resurrected by re-inserting a row), and `/profile` lists live sessions with
+"sign out everywhere else" — a list nobody can act on would be decoration.
+
+Plain SHA-256 for the session token, not a slow KDF: the token is already 256
+bits of CSPRNG output, so there is no dictionary to attack and no reason to tax
+every request. What matters is that the database holds the hash.
+
+**Route protection** is two layers. `src/middleware.ts` checks only whether a
+cookie is *present* — middleware runs on the edge runtime where Prisma is
+unavailable, so it cannot tell a valid session from a forged one. It exists to
+bounce obviously signed-out traffic without a database round trip. The real
+check is `getCurrentUser()` / `requireCurrentUser()`, which validate the token
+hash on every page and action; a hand-written cookie gets past the middleware
+and then resolves to nobody. Nothing in the middleware is load-bearing for
+security, which is verified: a forged cookie reaches `/orders` and sees no data.
+
+**SMS delivery** is an interface (`src/lib/auth/sms/`), because the provider is
+the part most likely to be swapped — Philippine gateways differ in price,
+sender-name registration and reliability. Development prints codes to the server
+console; production **refuses to start a login** with no gateway configured,
+because a console "sender" in production is the worst failure mode available:
+every login reports success and no code arrives. The seeded adapter is Semaphore
+(semaphore.co), the common local choice — written from its documented request
+shape and **not verified against the live API**, since this codebase has no
+account. Send one real message before trusting it.
+
+**Progressive enhancement.** The login and onboarding forms post to server
+actions through `useActionState`, so they work *before* hydration. This is not
+theoretical for a market of low-end Android phones on patchy mobile data: a
+`useState`-driven form loses whatever was typed before the JavaScript arrived
+and leaves the submit button disabled while the person stares at their own
+number in the field. Reading the client address is wrapped in a try/catch for
+the same reason — `headers()` is unavailable on that path, and a throttling
+input must never fail a sign-in. Both cost a real bug before they were fixed.
+
+Login codes and dead sessions are pruned by `npm run jobs:orders`: a table of
+hashed codes and address fingerprints has no value once the codes are dead.
 
 ## 4. Unified fleet
 
@@ -600,7 +683,10 @@ Database-free, in CI (`npm run verify`) — **62 tests**:
 | `wallet-ledger.test.ts` | The four hard constraints, sign derivation, ledger replay, SQL-guard agreement |
 | `pricing-benefits.test.ts` | Benefit caps, ceilings, scoping, basis-point rounding, discount floors |
 | `delivery-fee.test.ts` | Pro-rata distance, floors and ceilings, both thresholds, haversine |
-| `session-guard.test.ts` | The placeholder session refuses production without a deliberate override |
+| `phone.test.ts` | E.164 normalisation of every way a Filipino writes their number |
+| `otp-policy.test.ts` | Expiry, attempt ceiling, all three throttles, non-leaking messages |
+| `auth-crypto.test.ts` | Code and token generation, keyed hashing, constant-time compare |
+| `sms-sender.test.ts` | Sender selection, the production refusal, the Semaphore request shape |
 
 Verified separately against a live PostgreSQL 16 with the SQL guards applied:
 
@@ -617,6 +703,15 @@ Verified separately against a live PostgreSQL 16 with the SQL guards applied:
   window with a customer-readable reason, credit-back granted on completion, and
   an eleven-step lifecycle audit trail that is contiguous end to end.
 
-And driven through a real browser: cart → checkout → placement → tracking →
-cancellation, against seeded data. `npm run build` and `npm run lint` are
-clean; every route returns 200.
+- **33 end-to-end checks** on authentication: the plaintext code never reaching
+  the database, only the newest code working, single use, lockout after five
+  wrong guesses (including the *right* code being refused afterwards), expiry,
+  an undelivered code being consumed rather than left usable, a landline
+  rejected before any SMS, a code requested as `+63` verifying as `09xx`,
+  session lookup by hash, and pruning.
+
+And driven through a real browser, twice over: cart → checkout → placement →
+tracking → cancellation; and signed-out redirect → bad number → code sent →
+wrong code → real code → `/welcome` → onboarding gate → name → session across
+pages → httpOnly cookie → sign-out → forged cookie rejected → sign back in.
+`npm run build` and `npm run lint` are clean; every route returns 200.

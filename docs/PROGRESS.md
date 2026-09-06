@@ -41,8 +41,8 @@ brief's changes already folded in.
 | 3 | Core backend: state machine, credits ledger, pricing, dispatch, support | ✅ Done |
 | 4 | Customer app shell: home, unified orders, credits, profile, help | ✅ Done |
 | 5 | FOOD checkout end to end | ✅ Done |
-| 6 | Real authentication (OTP) | ⬜ Next |
-| 7 | Fleet partner app | ⬜ Planned |
+| 6 | Real authentication (OTP) | ✅ Done |
+| 7 | Fleet partner app | ⬜ Next |
 | 8 | Merchant tools | ⬜ Planned |
 | 9 | Subscription launch decision | ⬜ Gated on data |
 | 10 | Second vertical | ⬜ Gated on demand |
@@ -113,7 +113,7 @@ choices:
 
 ## Phase 2 — Schema and data ✅
 
-- `prisma/schema.prisma`: 24 models, 16 enums.
+- `prisma/schema.prisma`: 26 models, 16 enums.
 - Initial migration `20260906134534_unified_multi_service_schema`.
 - `prisma/sql/wallet_append_only.sql`: append-only triggers on the credits
   ledger plus five CHECK constraints. Applied by `npm run prisma:guards`.
@@ -238,21 +238,86 @@ The first real order. An order now goes cart → checkout → placement → trac
   appearing in the unified history, then cancellation.
 - `npm run jobs:orders` swept six orders left waiting past the merchant window.
 
-## Phase 6 — Authentication ⬜ Next
+## Phase 6 — Authentication ✅
 
-`src/lib/auth/session.ts` is a **placeholder** resolving the seeded demo
-customer, and it now refuses to run in production without an explicit override.
-Replace it with OTP over SMS against `User.phone`.
+Phone number plus a one-time code. The placeholder is gone, along with its
+`ALLOW_INSECURE_DEMO_SESSION` escape hatch.
 
-Keep the properties that matter: it returns **one** `User`; roles are read from
-`user.roles`, so nothing assumes a session belongs to a customer; and
-`requireCurrentUser()` throws rather than letting a mutation act as nobody.
-Delete the `ALLOW_INSECURE_DEMO_SESSION` escape hatch when this lands.
+### What was built
 
-Order tracking and every checkout action are already scoped to the signed-in
-customer; an order id is not an access token.
+| Area | Detail |
+| --- | --- |
+| Phone normalisation | Every way a Filipino writes their number (`0917…`, `+63 917…`, `639…`, dashes, brackets) collapses to one E.164 identity. Landlines rejected. |
+| One-time codes | 6 digits, 5-minute expiry, 5 attempts, HMAC-keyed with `AUTH_SECRET`, constant-time compare, single use, newest-code-wins. |
+| Throttles | 45s resend cooldown, 3 codes per phone per 15 min, 12 per source address per hour — each refusal saying when to come back. |
+| Sessions | Opaque 256-bit token in an httpOnly cookie; only its SHA-256 hash stored. Sliding 30-day window, revocable, with a live-sessions list and "sign out everywhere else". |
+| SMS | Provider interface; console sender for development, Semaphore adapter for production, and a hard refusal to run production with neither. |
+| Signup | Login and signup are the same request. The account is created when the code is verified, with no name; `/welcome` collects it. |
+| Route protection | `src/middleware.ts` for a cheap cookie-presence bounce; real validation server-side on every page and action. |
+| Housekeeping | Spent codes and dead sessions pruned by `npm run jobs:orders`. |
 
-## Phase 7 — Fleet partner app ⬜
+### Decisions worth remembering
+
+- **`User.fullName` is nullable now.** A phone-first signup knows the number
+  before the name. A placeholder in that column would make every reader guess
+  whether the value was real; `onboardedAt` gates the app instead.
+- **No enumeration.** Requesting a code answers identically whether the number
+  is registered or not, and "no code outstanding" reads the same as "wrong
+  code" so the form is not an oracle.
+- **Codes are HMAC-keyed, sessions are plain SHA-256.** Six digits is a million
+  possibilities, so a code needs a secret to resist an offline attack. A
+  256-bit random token has no dictionary, so keying it would only tax every
+  request.
+- **Sessions are server-side rows, not JWTs.** A signed token asserting "valid
+  for 30 days" cannot be revoked when a phone is stolen.
+- **Sign-out revokes, it does not delete.** History survives, and a stolen
+  token cannot be resurrected by re-inserting a row.
+- **Middleware is not load-bearing.** It cannot reach Prisma on the edge
+  runtime, so it only bounces obviously signed-out traffic. A forged cookie
+  gets past it and then resolves to nobody — verified.
+- **Production refuses the console SMS sender.** A sender that writes to a
+  terminal nobody reads would make every login report success while no code
+  arrives. That is worse than failing loudly.
+- **The login form works without JavaScript.** For low-end Android phones on
+  patchy mobile data this is not a nicety: a `useState`-driven form loses what
+  was typed before hydration and leaves the button disabled.
+
+### Things fixed along the way
+
+- **The login form 500'd before hydration.** `getClientIp()` calls `headers()`,
+  which is unavailable on the native form-post path — so a pre-hydration login
+  failed outright. A throttling input must never fail a sign-in; it is now
+  wrapped and degrades to the per-phone throttle.
+- **`INITIAL_LOGIN_STATE` was exported from a `'use server'` module**, where
+  only async functions may be exported. It never reached the client as the value
+  written, so the login screen rendered on its *second* step. Moved to
+  `src/lib/auth/login-state.ts`.
+- **Server actions were calling other server actions**, which loses the request
+  scope `headers()` and `cookies()` need. The orchestration moved to plain
+  functions in `src/lib/auth/login.ts`; actions read request values and pass
+  them in.
+- **`middleware.ts` at the repo root did nothing.** With a `src/` directory
+  Next expects `src/middleware.ts`. Every route was reachable signed out until
+  it moved.
+- **Ticket numbers and the login page's redirect validation** were duplicated
+  logic; both now use one implementation.
+
+### Verification
+
+- `npm run verify` — **186 tests** (up from 91), no database needed.
+- **33 end-to-end checks** against live PostgreSQL 16: the plaintext code never
+  in the database, only the newest code working, single use, lockout after five
+  wrong guesses (and the *right* code refused afterwards), expiry, an
+  undelivered code consumed rather than left usable, a landline rejected before
+  any SMS, a code requested as `+63` verifying as `09xx`, session lookup by
+  hash, and pruning.
+- Driven through a real browser: signed-out redirect carrying the destination →
+  bad number → code sent → wrong code → real code → `/welcome` → onboarding
+  gate blocking `/checkout` → name → session across pages → httpOnly cookie
+  unreadable by script → sign-out → forged cookie rejected with no data leaked
+  → sign back in as an existing account, skipping `/welcome`.
+
+## Phase 7 — Fleet partner app ⬜ Next
 
 Onboarding that submits per-service verification documents; offer/accept using
 `findDispatchCandidates()`; status updates through the state machine with
@@ -302,11 +367,16 @@ is the return on this phase's design, and the thing to protect in review.
 
 ## Known gaps
 
-- **No authentication.** `getCurrentUser()` returns the seeded demo customer and
-  refuses production without `ALLOW_INSECURE_DEMO_SESSION=1`. Phase 6.
-- **No merchant or fleet UI.** An order placed today sits in
-  `PENDING_MERCHANT_ACCEPTANCE` until the timeout sweep cancels it, because
-  nothing can accept it yet. Phases 7 and 8.
+- **No merchant or fleet UI — the binding constraint now.** An order placed
+  today sits in `PENDING_MERCHANT_ACCEPTANCE` until the timeout sweep cancels
+  it, because nothing can accept it. Phases 7 and 8.
+- **The Semaphore SMS adapter is unverified against the live API.** Written from
+  its documented request shape and exercised only against a stub; this codebase
+  has no gateway account. Send one real message before trusting it.
+- **No account recovery.** Losing the phone number means losing the account —
+  there is no email fallback and no support-assisted transfer.
+- **No CAPTCHA.** The three throttles are the only abuse defence on code
+  requests, which is thin if someone brings many source addresses.
 - **No realtime.** Tracking polls every 15 seconds; there is no push.
 - **Menu categories sort alphabetically**, so "Add-ons" leads the menu ahead of
   "Rice meals". Needs a sort field on the category, or categories as rows.

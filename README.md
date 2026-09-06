@@ -11,7 +11,7 @@ before any of them costs engineering time.
 - **[docs/architecture.md](docs/architecture.md)** — how it is built and why.
 - **[docs/PROGRESS.md](docs/PROGRESS.md)** — what is done and what is next.
 
-## The two rules
+## The three rules
 
 1. **A vertical is data, not a branch.** There is no hardcoded list of services
    and no `if (serviceType === 'FOOD')` in shared logic. Everything reads the
@@ -20,6 +20,9 @@ before any of them costs engineering time.
 2. **Credits are a ledger.** No top-up, no transfers, no cash-out; spendable on
    orders only. Every balance change goes through one function that recalculates
    the balance from the ledger. Enforced in code, in tests, and by SQL triggers.
+3. **Prices come from the database, never from the client.** A request carries
+   identifiers and quantities. `quoteCheckout()` is the only thing that prices a
+   cart, and placement calls it again for the number it charges.
 
 ## Getting started
 
@@ -28,7 +31,8 @@ guards.
 
 ```bash
 npm install
-cp .env.example .env          # then point DATABASE_URL at your database
+cp .env.example .env          # point DATABASE_URL at your database, and set
+                              # AUTH_SECRET (openssl rand -hex 32)
 npm run prisma:migrate        # create the schema
 npm run prisma:guards         # append-only ledger triggers + CHECK constraints
 npm run db:seed               # five services, three stores, two users
@@ -39,21 +43,33 @@ npm run dev
 database — use it on a deploy, where the guards **must** be reapplied after
 every `migrate deploy`.
 
-The seeded demo customer is Juan Dela Cruz (`+639171234567`). Authentication is
-not built yet: `src/lib/auth/session.ts` resolves that user directly, and is
-the one file to replace in Phase 6.
+### Signing in
 
-Because that placeholder returns the same person to **every** visitor, it
-refuses to run in production. `npm run dev` is unaffected; a production start
-needs `ALLOW_INSECURE_DEMO_SESSION=1`, and only for a throwaway demo:
+Phone number plus a six-digit code — no passwords. In development there is no
+SMS gateway, so **the code is printed to the server console**: sign in with the
+seeded customer `0917 123 4567` and copy the code out of your `npm run dev`
+output.
 
-```bash
-ALLOW_INSECURE_DEMO_SESSION=1 npm start
+```
+  ┌─ SMS (development) ─────────────────────────────
+  │ to:   +639171234567  (0917 ••• 4567)
+  │ body: 428913 ang Deliveryapp code mo. …
+  └─────────────────────────────────────────────────
 ```
 
+Any other Philippine mobile number works too and creates a fresh account.
+In production, configure `SEMAPHORE_API_KEY` — with no gateway set, a
+production build refuses to start a login rather than pretend to send a code.
+
+### Cron
+
 Order timeouts are swept by a job, not a background thread — put
-`npm run jobs:orders` on a cron every minute or two, or orders will sit
-waiting on a merchant forever.
+`npm run jobs:orders` on a cron every minute or two, or orders will sit waiting
+on a merchant forever. The same job prunes spent login codes and dead sessions.
+
+Note that nothing can *accept* an order yet: the merchant queue is Phase 8, so
+an order you place will be cancelled by the timeout after eight minutes. That is
+the system working.
 
 ## Scripts
 
@@ -72,7 +88,7 @@ waiting on a merchant forever.
 
 ```
 prisma/
-  schema.prisma          the source of truth: 24 models, 16 enums
+  schema.prisma          the source of truth: 26 models, 16 enums
   seed.ts                the ONLY file that enumerates the five services
   sql/                   invariants Prisma's schema language cannot express
 src/
@@ -80,12 +96,13 @@ src/
   components/            presentation, plus the client-side cart
   lib/
     services/registry.ts the only reader of the Service registry
+    auth/                phone normalisation, one-time codes, sessions, SMS
     orders/              lifecycle map, state machine, details, placement, timeouts
     wallet/              the credits ledger and its pure rules
     pricing/             delivery rates and subscription-aware checkout pricing
     fleet/               dispatch, filtered by approved services
     support/             unified tickets
-  tests/                 91 tests, database-free
+  tests/                 186 tests, database-free
 ```
 
 ## Money

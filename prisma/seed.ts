@@ -496,8 +496,9 @@ async function seedUsers() {
       roles: [UserRole.CUSTOMER],
       preferredCityId: 'city_manila',
       phoneVerifiedAt: new Date(),
+      onboardedAt: new Date(),
     },
-    update: {},
+    update: { fullName: 'Juan Dela Cruz', onboardedAt: new Date() },
   });
 
   const maria = await prisma.user.upsert({
@@ -510,8 +511,13 @@ async function seedUsers() {
       roles: [UserRole.CUSTOMER, UserRole.FLEET_PARTNER],
       preferredCityId: 'city_quezon',
       phoneVerifiedAt: new Date(),
+      onboardedAt: new Date(),
     },
-    update: { roles: [UserRole.CUSTOMER, UserRole.FLEET_PARTNER] },
+    update: {
+      roles: [UserRole.CUSTOMER, UserRole.FLEET_PARTNER],
+      fullName: 'Maria Santos',
+      onboardedAt: new Date(),
+    },
   });
 
   // Credits accounts. Balances stay at zero here: the ledger is the only way to

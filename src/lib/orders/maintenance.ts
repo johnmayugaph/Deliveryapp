@@ -9,6 +9,7 @@ import { prisma, type PrismaTransactionClient } from '@/lib/prisma';
 import { transitionOrder } from '@/lib/orders/state-machine';
 import { ALL_STATUS_TIMEOUTS } from '@/lib/orders/transitions';
 import { grantCredit, refundToCredits } from '@/lib/wallet/ledger';
+import { pruneSessions, pruneVerifications } from '@/lib/auth/prune';
 
 /**
  * Scheduled order maintenance.
@@ -22,7 +23,8 @@ import { grantCredit, refundToCredits } from '@/lib/wallet/ledger';
  *     be delivered. Credits go back to CREDITS, never to cash: there is no rail
  *     out, by design.
  *
- * Run from cron: `npm run jobs:orders`.
+ * Run from cron: `npm run jobs:orders`, which also prunes spent login codes and
+ * dead sessions — see `runMaintenance()`.
  */
 
 export interface ExpiredOrderResult {
@@ -231,4 +233,24 @@ export async function completeOrder(input: {
 
     return { order, creditBackCentavos };
   });
+}
+
+/**
+ * Everything the cron job does, in one call.
+ *
+ * Housekeeping for authentication lives here rather than in its own job because
+ * the two run on the same cadence and neither is worth a second scheduler entry:
+ * spent login codes and expired sessions are not needed once dead, and a table
+ * of hashed codes and address fingerprints is not something to accumulate.
+ */
+export async function runMaintenance(): Promise<{
+  expired: ExpiredOrderResult[];
+  prunedVerifications: number;
+  prunedSessions: number;
+}> {
+  const expired = await expireStaleOrders();
+  const prunedVerifications = await pruneVerifications();
+  const prunedSessions = await pruneSessions();
+
+  return { expired, prunedVerifications, prunedSessions };
 }

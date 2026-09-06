@@ -1,9 +1,16 @@
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { UserRole } from '@prisma/client';
-import { getCurrentUser } from '@/lib/auth/session';
+import {
+  displayNameFor,
+  getCurrentUser,
+  listActiveSessions,
+} from '@/lib/auth/session';
 import { prisma } from '@/lib/prisma';
-import { listAddressBook } from '@/lib/addresses/usage';
-import { formatAddressLine } from '@/lib/addresses/usage';
+import { formatAddressLine, listAddressBook } from '@/lib/addresses/usage';
+import { formatPhilippineMobile } from '@/lib/auth/phone';
+import { SignOutButton } from '@/components/auth/SignOutButton';
+import { ActiveSessions } from '@/components/auth/ActiveSessions';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,27 +34,25 @@ export default async function ProfilePage() {
   const user = await getCurrentUser();
 
   if (!user) {
-    return (
-      <main className="px-4 py-8">
-        <h1 className="text-xl font-bold">Profile</h1>
-        <p className="mt-2 text-sm text-ink-muted">Mag-sign in para makita ito.</p>
-      </main>
-    );
+    redirect('/login?next=%2Fprofile');
   }
 
-  const [addresses, fleetPartner] = await Promise.all([
+  const [addresses, fleetPartner, sessions] = await Promise.all([
     listAddressBook({ userId: user.id, limit: 5 }),
     prisma.fleetPartner.findUnique({
       where: { userId: user.id },
       include: { serviceVerifications: { include: { service: true } } },
     }),
+    listActiveSessions(user.id),
   ]);
 
   return (
     <main>
       <header className="bg-surface px-4 pb-4 pt-5">
-        <h1 className="text-xl font-bold">{user.displayName ?? user.fullName}</h1>
-        <p className="mt-0.5 text-xs text-ink-muted">{user.phone}</p>
+        <h1 className="text-xl font-bold">{displayNameFor(user)}</h1>
+        <p className="mt-0.5 text-xs text-ink-muted tabular-nums">
+          {formatPhilippineMobile(user.phone)}
+        </p>
         <ul className="mt-2 flex flex-wrap gap-1.5">
           {user.roles.map((role) => (
             <li
@@ -133,7 +138,9 @@ export default async function ProfilePage() {
         </section>
       ) : null}
 
-      <section className="mt-5 px-4">
+      <ActiveSessions sessions={sessions} />
+
+      <section className="mt-5 space-y-2 px-4 pb-8">
         <Link
           href="/help"
           className="flex items-center justify-between rounded-xl bg-surface px-3 py-3 shadow-sm ring-1 ring-black/5"
@@ -143,6 +150,7 @@ export default async function ProfilePage() {
             ›
           </span>
         </Link>
+        <SignOutButton />
       </section>
     </main>
   );

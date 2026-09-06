@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { PaymentMethod } from '@prisma/client';
+import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/session';
 import { listAddressBook } from '@/lib/addresses/usage';
 import { getSpendableCentavos } from '@/lib/wallet/ledger';
@@ -20,12 +21,11 @@ export default async function CheckoutPage() {
   const user = await getCurrentUser();
 
   if (!user) {
-    return (
-      <main className="px-4 py-8">
-        <h1 className="text-xl font-bold">Checkout</h1>
-        <p className="mt-2 text-sm text-ink-muted">Mag-sign in para makapag-order.</p>
-      </main>
-    );
+    redirect('/login?next=%2Fcheckout');
+  }
+  // Placing an order needs somebody to hand the food to.
+  if (user.onboardedAt === null) {
+    redirect('/welcome');
   }
 
   const [addresses, spendableCreditsCentavos] = await Promise.all([

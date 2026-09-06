@@ -300,10 +300,17 @@ model User {
   /// Philippine mobile number in E.164, e.g. +639171234567. The login identity.
   phone       String    @unique
   email       String?   @unique
-  fullName    String
+  /// NULL until the person tells us their name. A phone-first signup creates the
+  /// record at the moment a code is verified, which is before they have typed
+  /// anything else — pretending otherwise would put placeholder junk in the
+  /// column and make every reader guess whether it is real.
+  fullName    String?
   displayName String?
   avatarUrl   String?
+  /// Set the first time an OTP for this number is verified.
   phoneVerifiedAt DateTime?
+  /// Set once the account has a name. Until then the app routes to /welcome.
+  onboardedAt DateTime?
 
   /// ROLES ARE AN ARRAY, not a single field. Someone can be a customer and a
   /// fleet partner simultaneously; the fleet works across every vertical it is
@@ -327,6 +334,7 @@ model User {
   assignedTickets    SupportTicket[]        @relation("SupportAgentTickets")
   statusEvents       OrderStatusEvent[]
   recordedAdjustments WalletTransaction[]   @relation("WalletAdjustmentActor")
+  sessions           Session[]
   fleetDecisions     FleetPartnerServiceVerification[] @relation("FleetVerificationDecider")
 
   @@index([roles], type: Gin)
@@ -379,6 +387,74 @@ model Address {
   @@index([userId, archivedAt, usageCount(sort: Desc)])
   @@index([userId, isPickupCapable])
   @@index([userId, lastUsedAt(sort: Desc)])
+}
+
+// -----------------------------------------------------------------------------
+// Authentication — one-time codes over SMS, opaque server-side sessions
+// -----------------------------------------------------------------------------
+
+/// A login session.
+///
+/// The cookie carries an opaque random token; this table stores only its SHA-256
+/// hash, so a database dump does not hand over live sessions. Server-side rows
+/// rather than a self-contained JWT because a session must be REVOCABLE — a
+/// signed token that says "valid for 30 days" cannot be taken back.
+model Session {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// SHA-256 of the cookie token, hex. Never the token itself.
+  tokenHash String @unique
+
+  expiresAt  DateTime
+  createdAt  DateTime  @default(now())
+  /// Bumped on use, so a stale session can be spotted and a sliding window
+  /// extended without issuing a new token.
+  lastSeenAt DateTime  @default(now())
+  revokedAt  DateTime?
+
+  /// Coarse provenance for the "signed in on" list, and for spotting a session
+  /// that suddenly moves. Truncated user agent and a HASHED ip — we do not need
+  /// to keep the address itself to notice that it changed.
+  userAgent String?
+  ipHash    String?
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+}
+
+/// A one-time code sent to a phone number.
+///
+/// Stores an HMAC of the code, not the code. A six-digit code has only a
+/// million possibilities, so the HMAC is keyed with `AUTH_SECRET`: without the
+/// secret a stolen database cannot be brute-forced back to live codes, and with
+/// a five-minute expiry there is nothing much left to steal anyway.
+model PhoneVerification {
+  id    String @id @default(cuid())
+  /// E.164, normalised before it ever reaches this table.
+  phone String
+
+  /// HMAC-SHA256(code, AUTH_SECRET), hex.
+  codeHash String
+
+  expiresAt DateTime
+  /// Failed verifications. The code dies at `MAX_VERIFY_ATTEMPTS`, so an online
+  /// guess gets a handful of tries rather than a million.
+  attempts  Int      @default(0)
+  /// Single use: set the moment a code succeeds.
+  consumedAt DateTime?
+
+  /// Hashed requester address, for throttling bulk requests from one source
+  /// without keeping a log of who asked.
+  requestIpHash String?
+
+  createdAt DateTime @default(now())
+
+  /// Powers the per-phone throttle and "most recent code wins".
+  @@index([phone, createdAt(sort: Desc)])
+  @@index([requestIpHash, createdAt])
+  @@index([expiresAt])
 }
 
 // -----------------------------------------------------------------------------
