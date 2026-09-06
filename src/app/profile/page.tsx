@@ -9,6 +9,7 @@ import {
 import { prisma } from '@/lib/prisma';
 import { formatAddressLine, listAddressBook } from '@/lib/addresses/usage';
 import { formatPhilippineMobile } from '@/lib/auth/phone';
+import { getAccessibleStores } from '@/lib/merchant/access';
 import { SignOutButton } from '@/components/auth/SignOutButton';
 import { ActiveSessions } from '@/components/auth/ActiveSessions';
 
@@ -37,13 +38,14 @@ export default async function ProfilePage() {
     redirect('/login?next=%2Fprofile');
   }
 
-  const [addresses, fleetPartner, sessions] = await Promise.all([
+  const [addresses, fleetPartner, sessions, stores] = await Promise.all([
     listAddressBook({ userId: user.id, limit: 5 }),
     prisma.fleetPartner.findUnique({
       where: { userId: user.id },
       include: { serviceVerifications: { include: { service: true } } },
     }),
     listActiveSessions(user.id),
+    getAccessibleStores(),
   ]);
 
   return (
@@ -64,6 +66,33 @@ export default async function ProfilePage() {
           ))}
         </ul>
       </header>
+
+      {stores.length > 0 ? (
+        <section aria-labelledby="store-heading" className="mt-4 px-4">
+          <h2
+            id="store-heading"
+            className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted"
+          >
+            Store
+          </h2>
+          <Link
+            href="/merchant"
+            className="mt-2 flex items-center justify-between rounded-xl bg-surface px-3 py-3 shadow-sm ring-1 ring-black/5 transition-colors hover:bg-brand-50/40"
+          >
+            <span className="min-w-0">
+              <span className="block text-sm font-semibold">Buksan ang store</span>
+              <span className="mt-0.5 block text-[11px] text-ink-muted">
+                {stores.length === 1
+                  ? stores[0]!.store.name
+                  : `${stores.length} stores`}
+              </span>
+            </span>
+            <span aria-hidden className="text-xs text-ink-faint">
+              ›
+            </span>
+          </Link>
+        </section>
+      ) : null}
 
       <section aria-labelledby="addresses-heading" className="mt-4 px-4">
         <div className="flex items-baseline justify-between">

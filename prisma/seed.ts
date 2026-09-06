@@ -4,6 +4,7 @@ import {
   IntentGroup,
   PrismaClient,
   ServiceKey,
+  StoreRole,
   UserRole,
   VehicleType,
   VerificationStatus,
@@ -450,6 +451,76 @@ async function seedStores() {
   console.log(`  stores: ${stores.length}`);
 }
 
+/**
+ * Merchant accounts.
+ *
+ * Nena owns one store; Ben owns two, which is what exercises the store picker
+ * and stops the merchant screens quietly assuming a single store. Rosa is STAFF
+ * at Nena's place: she works the queue but cannot change prices.
+ */
+async function seedMerchants() {
+  const merchants = [
+    {
+      phone: '+639170001111',
+      fullName: 'Nena Bautista',
+      displayName: 'Nena',
+      cityId: 'city_manila',
+      stores: [{ slug: 'aling-nena-carinderia', role: StoreRole.OWNER }],
+    },
+    {
+      phone: '+639170002222',
+      fullName: 'Ben Ocampo',
+      displayName: 'Ben',
+      cityId: 'city_quezon',
+      stores: [
+        { slug: 'kuya-bens-grill', role: StoreRole.OWNER },
+        { slug: 'sunrise-bakeshop', role: StoreRole.OWNER },
+      ],
+    },
+    {
+      phone: '+639170003333',
+      fullName: 'Rosa Lim',
+      displayName: 'Rosa',
+      cityId: 'city_manila',
+      stores: [{ slug: 'aling-nena-carinderia', role: StoreRole.STAFF }],
+    },
+  ];
+
+  for (const merchant of merchants) {
+    const { stores, cityId, ...person } = merchant;
+    const user = await prisma.user.upsert({
+      where: { phone: merchant.phone },
+      create: {
+        ...person,
+        roles: [UserRole.CUSTOMER, UserRole.MERCHANT_OWNER],
+        preferredCityId: cityId,
+        phoneVerifiedAt: new Date(),
+        onboardedAt: new Date(),
+      },
+      update: {
+        fullName: person.fullName,
+        roles: [UserRole.CUSTOMER, UserRole.MERCHANT_OWNER],
+        onboardedAt: new Date(),
+      },
+    });
+
+    for (const membership of stores) {
+      const store = await prisma.store.findUniqueOrThrow({
+        where: { slug: membership.slug },
+        select: { id: true },
+      });
+      await prisma.storeMember.upsert({
+        where: { storeId_userId: { storeId: store.id, userId: user.id } },
+        create: { storeId: store.id, userId: user.id, role: membership.role },
+        update: { role: membership.role },
+      });
+    }
+  }
+
+  const total = merchants.reduce((count, m) => count + m.stores.length, 0);
+  console.log(`  merchants: ${merchants.length} across ${total} store membership(s)`);
+}
+
 async function seedPromotions() {
   const promotions = [
     {
@@ -615,6 +686,7 @@ async function main() {
   await seedStores();
   await seedFaq();
   await seedSubscriptionPlan();
+  await seedMerchants();
   await seedPromotions();
   await seedUsers();
   console.log('Done.');

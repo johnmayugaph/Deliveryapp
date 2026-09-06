@@ -42,8 +42,8 @@ brief's changes already folded in.
 | 4 | Customer app shell: home, unified orders, credits, profile, help | ✅ Done |
 | 5 | FOOD checkout end to end | ✅ Done |
 | 6 | Real authentication (OTP) | ✅ Done |
-| 7 | Fleet partner app | ⬜ Next |
-| 8 | Merchant tools | ⬜ Planned |
+| 7 | Merchant back office | ✅ Done |
+| 8 | Fleet partner app | ⬜ Next |
 | 9 | Subscription launch decision | ⬜ Gated on data |
 | 10 | Second vertical | ⬜ Gated on demand |
 
@@ -113,7 +113,7 @@ choices:
 
 ## Phase 2 — Schema and data ✅
 
-- `prisma/schema.prisma`: 26 models, 16 enums.
+- `prisma/schema.prisma`: 27 models, 17 enums.
 - Initial migration `20260906134534_unified_multi_service_schema`.
 - `prisma/sql/wallet_append_only.sql`: append-only triggers on the credits
   ledger plus five CHECK constraints. Applied by `npm run prisma:guards`.
@@ -317,20 +317,82 @@ Phone number plus a one-time code. The placeholder is gone, along with its
   unreadable by script → sign-out → forged cookie rejected with no data leaked
   → sign back in as an existing account, skipping `/welcome`.
 
-## Phase 7 — Fleet partner app ⬜ Next
+## Phase 7 — Merchant back office ✅
 
-Onboarding that submits per-service verification documents; offer/accept using
-`findDispatchCandidates()`; status updates through the state machine with
-`OrderActor.FLEET_PARTNER`; location updates; earnings.
+Taken ahead of the fleet app, because it was the binding constraint: until
+something could accept an order, every order placed was cancelled by the timeout
+sweep eight minutes later.
+
+### What was built
+
+| Area | Detail |
+| --- | --- |
+| Store access | `StoreMember` join table with OWNER / MANAGER / STAFF. Replaces the unused `Store.ownerUserId`. |
+| Authorisation | `requireStoreAccess(storeId, minRole)` and `requireOrderStoreAccess(orderId)` — the latter reads the store from the order's own record. |
+| Queue | Three stages from the kitchen's own rhythm; per-card buttons derived from the lifecycle map; 20-second auto-refresh. |
+| Actions | Accept, start preparing, reject with a reason and credit refund, mark ready (handing to dispatch), +10 minutes with an audit event. |
+| Menu | Availability toggle for STAFF; price editing for MANAGER and above. |
+| Settings | Prep time, store open/closed, the store's live services from the registry, and who has access. |
+| History | Finished orders with cancellation reasons. |
+| Shell | Its own layout and tabs; the customer bottom nav hidden here and on the auth screens. |
+
+### Decisions worth remembering
+
+- **Store access is a join table, not an owner column.** The real shape is
+  many-to-many both ways: an owner plus staff on one store, and one owner across
+  several. An owner column forces a second source of truth the first time either
+  happens.
+- **Authorisation reads the ORDER's store**, never a store id sent alongside it.
+  Otherwise a merchant accepts a neighbour's order by editing a form field.
+- **Access failures are indistinguishable** from a missing store, so the screen
+  cannot be used to probe for other stores' ids.
+- **The buttons are the map's decision, not the screen's.** A card offers what
+  `allowedTransitions` filtered by `isActorPermitted(..., MERCHANT)` returns, so
+  a vertical with a different merchant leg gets the right controls for free.
+- **Mark-ready is two transitions**, because they belong to different actors:
+  the merchant says the food is ready, the SYSTEM starts looking for a rider. A
+  merchant cannot do the second — finding a partner is ours.
+- **A rejection reason reaches the customer verbatim.** "Wala nang adobo" beats
+  a silent cancellation they have to phone about.
+- **+10 minutes writes an event**, not just a new `etaAt`. A delay should be
+  visible in the timeline and in support, not a quietly moved number.
+- **Price editing is safe** because orders snapshot what they charged. Verified:
+  changing a menu price leaves an existing order's receipt untouched.
+- **STAFF can close the store.** Someone has to be able to stop orders when the
+  rice runs out and the owner is not there.
+
+### Verification
+
+- `npm run verify` — **204 tests** (up from 186).
+- **34 end-to-end checks** against live PostgreSQL 16, including a second
+  store's queue not containing the first's orders, menu writes scoped to the
+  store, an accepted order surviving the timeout sweep while an unaccepted one
+  of the same age is cancelled, and a price change not rewriting an existing
+  order.
+- Driven through a real browser with two sessions side by side: a customer
+  places an order while the merchant accepts it, marks it preparing, adds ten
+  minutes, marks it ready; then rejects a second order with a reason the
+  customer reads on their tracking screen. Plus a two-store owner getting a
+  picker, and both a rival merchant and a customer getting not-found on somebody
+  else's store.
+
+## Phase 8 — Fleet partner app ⬜ Next
+
+Orders now reach `AWAITING_RIDER_ASSIGNMENT` and wait there for twenty minutes
+before the sweep cancels them. Nothing can accept a dispatch offer yet, so this
+is the new binding constraint.
+
+- Onboarding that submits per-service verification documents, feeding
+  `FleetPartnerServiceVerification` and `syncEnabledServices()`.
+- Offer and accept, using `findDispatchCandidates()`. `RIDER_ASSIGNED` already
+  permits `FLEET_PARTNER`, which is what `acceptanceRate` measures.
+- Status updates through the state machine as `OrderActor.FLEET_PARTNER`:
+  at-pickup, picked up, in transit, delivered.
+- Location updates feeding the candidate query's bounding box.
+- Earnings, from the order fee breakdown.
 
 A partner may hold approvals for several verticals and should see the union of
 what they are approved for — never a food-shaped UI with the others bolted on.
-
-## Phase 8 — Merchant tools ⬜
-
-Accept/reject queue, prep-time management, menu and availability editing, and a
-merchant-facing order history. Reads `Store.serviceKeys`, so the same tools
-serve a MART store later.
 
 ## Phase 9 — Subscription launch decision ⬜ Gated
 
@@ -367,9 +429,13 @@ is the return on this phase's design, and the thing to protect in review.
 
 ## Known gaps
 
-- **No merchant or fleet UI — the binding constraint now.** An order placed
-  today sits in `PENDING_MERCHANT_ACCEPTANCE` until the timeout sweep cancels
-  it, because nothing can accept it. Phases 7 and 8.
+- **No fleet UI — the binding constraint now.** A merchant can cook an order,
+  but nothing can accept the dispatch offer, so it waits at
+  `AWAITING_RIDER_ASSIGNMENT` until the sweep cancels it. Phase 8.
+- **No merchant notifications.** The queue polls every 20 seconds while open;
+  a merchant who closes the tab learns nothing about a new order.
+- **Store membership is seeded, not managed.** There is no UI to invite staff or
+  change a role — `StoreMember` rows are written by the seed or by hand.
 - **The Semaphore SMS adapter is unverified against the live API.** Written from
   its documented request shape and exercised only against a stub; this codebase
   has no gateway account. Send one real message before trusting it.

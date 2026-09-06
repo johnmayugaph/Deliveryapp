@@ -420,6 +420,92 @@ permitted wherever the state is reachable.
 
 ---
 
+## Merchant back office
+
+Until something could accept an order, every order placed was cancelled by the
+timeout sweep eight minutes later. This is the screen that unblocks the product,
+which is why it came before the fleet app rather than after it.
+
+### Who may touch which store
+
+`StoreMember` grants store access — a join table, not an owner column on
+`Store`, because the real shape is many-to-many in both directions: a karinderya
+owner works the queue alongside two staff, and a small chain owner holds several
+stores. An owner column would force a second source of truth the first time
+either happened, and `Store.ownerUserId` was removed for exactly that reason.
+
+Three roles, ranked so "at least this" is one comparison:
+
+| Role | May do |
+| --- | --- |
+| `STAFF` | Work the queue; open and close the store; take items off the menu |
+| `MANAGER` | Also prices and prep time |
+| `OWNER` | Everything |
+
+`STAFF` can close the store deliberately: someone has to be able to stop orders
+when the rice runs out at 8pm and the owner is not there.
+
+`User.roles` carrying `MERCHANT_OWNER` says what kind of person someone is. This
+table answers the question every merchant action actually asks — may THIS person
+touch THIS store — and it is the only thing that does.
+
+**Authorisation reads the order's own store**, never a store id sent alongside
+it: `requireOrderStoreAccess(orderId)` loads the order, pulls `storeId` out of
+its details container, and checks membership against that. Otherwise a merchant
+could accept a neighbour's order by editing a form field. Verified: a second
+owner's queue does not contain the first's orders, `/merchant/<other-store>`
+returns not-found, and menu writes are scoped `where: { id, storeId }` so an
+item id from elsewhere matches nothing.
+
+Access failures read identically whether the store is missing or simply not
+theirs, so the screen cannot be used to probe for other stores' ids.
+
+### The queue
+
+Three stages, in the order a kitchen works: what needs a decision, what is
+cooking, what is waiting to be collected. The stages are presentation; **the
+buttons on each card are the lifecycle map's decision** —
+`allowedTransitions(...)` filtered by `isActorPermitted(..., MERCHANT)`. A card
+for an order a partner is already carrying offers nothing but a cancellation,
+because that is what the map says, not because this screen knows about food.
+
+A test asserts every merchant-actionable status appears in some stage: a status
+a merchant can act on but that no stage shows would make an order invisible to
+the kitchen holding the food.
+
+Cards carry what a kitchen reads: elapsed wait rather than a timestamp, item
+notes, the cutlery flag, and the dropoff barangay for deciding what to cook
+first. Orders waiting more than three minutes for a decision get a ring.
+
+### The actions
+
+- **Accept** / **start preparing** — plain transitions.
+- **Reject** — requires a reason (the state machine enforces it for every
+  cancellation) which reaches the customer verbatim, and refunds any credits
+  they spent in the same transaction. "Wala nang adobo" beats a silent
+  cancellation they have to phone about.
+- **Mark ready** — two transitions, because they belong to different actors: the
+  merchant says the food is ready, and the SYSTEM starts looking for a rider.
+  Doing both here means an order cannot sit at `READY_FOR_PICKUP` with nobody
+  searching. A merchant cannot perform that second step themselves: finding a
+  partner is ours, and a test pins that `AWAITING_RIDER_ASSIGNMENT` permits
+  `SYSTEM` and not `MERCHANT`.
+- **+10 minutes** — writes an `OrderStatusEvent` as well as moving `etaAt`, so a
+  delay is visible in the customer's timeline and in support rather than being a
+  quietly moved number.
+
+Price editing is safe to expose because every order snapshots what it charged:
+raising a price today cannot rewrite last month's receipt. Verified against the
+database.
+
+Its own layout, with its own tabs — the customer's bottom navigation would offer
+Credits and Orders to somebody running a kitchen. That nav is now hidden on the
+merchant area and on the auth screens, where it was offering signed-in
+destinations to someone who was not signed in.
+
+The queue polls itself every 20 seconds: someone else may accept an order from
+another device, and a stale queue is how two people cook the same thing.
+
 ## 5. Credits — rewards only, and a ledger
 
 `Wallet` (one per user, `balanceCentavos`, `currency` PHP) and
@@ -687,6 +773,7 @@ Database-free, in CI (`npm run verify`) — **62 tests**:
 | `otp-policy.test.ts` | Expiry, attempt ceiling, all three throttles, non-leaking messages |
 | `auth-crypto.test.ts` | Code and token generation, keyed hashing, constant-time compare |
 | `sms-sender.test.ts` | Sender selection, the production refusal, the Semaphore request shape |
+| `merchant-queue.test.ts` | Role ranking, store-id extraction, queue coverage of every merchant-actionable status |
 
 Verified separately against a live PostgreSQL 16 with the SQL guards applied:
 
@@ -710,8 +797,21 @@ Verified separately against a live PostgreSQL 16 with the SQL guards applied:
   rejected before any SMS, a code requested as `+63` verifying as `09xx`,
   session lookup by hash, and pruning.
 
-And driven through a real browser, twice over: cart → checkout → placement →
-tracking → cancellation; and signed-out redirect → bad number → code sent →
-wrong code → real code → `/welcome` → onboarding gate → name → session across
-pages → httpOnly cookie → sign-out → forged cookie rejected → sign back in.
+- **34 end-to-end checks** on the merchant flow: memberships and role ranking,
+  an order reaching the right stage with the right buttons, a second store not
+  seeing it, accept → prepare → ready handing off to dispatch, rejection
+  refunding exactly what was spent and surfacing its reason, a cancellation
+  still requiring a reason, an accepted order surviving the timeout sweep while
+  an unaccepted one of the same age is cancelled, menu writes scoped to the
+  store, and a price change not rewriting an existing order.
+
+And driven through a real browser three times over: cart → checkout → placement
+→ tracking → cancellation; signed-out redirect → bad number → wrong code → real
+code → `/welcome` → onboarding gate → session → httpOnly cookie → sign-out →
+forged cookie rejected → sign back in; and a customer placing an order while a
+merchant accepts it, cooks it, adds ten minutes, marks it ready, then rejects a
+second one with a reason the customer reads — plus a two-store owner getting a
+picker, and both a rival merchant and a customer getting not-found on somebody
+else's store.
+
 `npm run build` and `npm run lint` are clean; every route returns 200.

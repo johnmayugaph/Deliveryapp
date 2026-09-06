@@ -153,6 +153,16 @@ enum WalletTransactionType {
   ADJUSTMENT // signed correction, requires an admin actor and a reason
 }
 
+/// What someone may do in a store's back office.
+enum StoreRole {
+  /// Everything, including menu, prices and settings.
+  OWNER
+  /// Everything except removing other members.
+  MANAGER
+  /// Works the order queue. Cannot change prices or settings.
+  STAFF
+}
+
 enum VehicleType {
   ON_FOOT
   BICYCLE
@@ -335,6 +345,7 @@ model User {
   statusEvents       OrderStatusEvent[]
   recordedAdjustments WalletTransaction[]   @relation("WalletAdjustmentActor")
   sessions           Session[]
+  storeMemberships   StoreMember[]
   fleetDecisions     FleetPartnerServiceVerification[] @relation("FleetVerificationDecider")
 
   @@index([roles], type: Gin)
@@ -470,7 +481,6 @@ model Store {
   /// store may serve MART now and FOOD later. Read this, do not assume FOOD.
   serviceKeys ServiceKey[] @default([])
 
-  ownerUserId String?
   description String?
   logoUrl     String?
   coverUrl    String?
@@ -497,6 +507,7 @@ model Store {
   updatedAt DateTime @updatedAt
 
   menuItems MenuItem[]
+  members   StoreMember[]
 
   @@index([cityId, isVisible, isOpen])
   @@index([serviceKeys], type: Gin)
@@ -573,6 +584,33 @@ model DeliveryFeeRule {
   /// One rule per service per city, plus one fallback per service.
   @@unique([serviceType, cityId])
   @@index([serviceType, isActive])
+}
+
+/// Who may work a store's back office.
+///
+/// A join table rather than an owner column on `Store`, because the real shape
+/// is many-to-many in both directions: a karinderya owner works the queue
+/// alongside two staff, and a small chain owner holds several stores. An owner
+/// column would force a second source of truth the first time either happened.
+///
+/// Store access is granted HERE and nowhere else. `User.roles` carrying
+/// MERCHANT_OWNER says what kind of person someone is; this table says which
+/// stores they may actually touch, which is the question every merchant action
+/// has to answer.
+model StoreMember {
+  id      String @id @default(cuid())
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  userId  String
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  role StoreRole @default(STAFF)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([storeId, userId])
+  @@index([userId])
 }
 
 // -----------------------------------------------------------------------------

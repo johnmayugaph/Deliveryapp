@@ -1,0 +1,232 @@
+'use client';
+
+import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
+import { OrderStatus } from '@prisma/client';
+import {
+  acceptOrderAction,
+  addPrepMinutesAction,
+  markReadyAction,
+  rejectOrderAction,
+  startPreparingAction,
+  type MerchantActionResult,
+} from '@/lib/actions/merchant-actions';
+import { formatCentavos } from '@/lib/money';
+import { statusPresentation } from '@/lib/orders/status-presentation';
+import type { FoodItemSnapshot } from '@/lib/orders/details';
+
+export interface QueueCardOrder {
+  id: string;
+  orderNumber: string;
+  status: OrderStatus;
+  subtotalCentavos: number;
+  waitingSeconds: number;
+  etaAt: string | null;
+  /** Transitions the state machine says a merchant may make from here. */
+  merchantActions: OrderStatus[];
+  items: FoodItemSnapshot[];
+  merchantNotes: string | null;
+  includeCutlery: boolean;
+  dropoffArea: string | null;
+}
+
+/** "3m" / "1h 12m" — a kitchen reads elapsed time, not a timestamp. */
+function formatWaiting(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 1) return 'ngayon lang';
+  if (minutes < 60) return `${minutes}m`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+/**
+ * One order in the queue.
+ *
+ * The buttons come from `merchantActions`, which the state machine computed —
+ * this component does not decide what is possible, so a vertical with a
+ * different merchant leg gets the right controls without touching it.
+ */
+export function OrderCard({
+  order,
+  isUrgent,
+}: {
+  order: QueueCardOrder;
+  isUrgent: boolean;
+}) {
+  const router = useRouter();
+  const [error, setError] = useState<string | null>(null);
+  const [rejecting, setRejecting] = useState(false);
+  const [reason, setReason] = useState('');
+  const [isPending, startTransition] = useTransition();
+
+  function run(action: () => Promise<MerchantActionResult>) {
+    setError(null);
+    startTransition(async () => {
+      const result = await action();
+      if (result.ok) {
+        setRejecting(false);
+        setReason('');
+        router.refresh();
+      } else {
+        setError(result.message);
+      }
+    });
+  }
+
+  const can = (status: OrderStatus) => order.merchantActions.includes(status);
+  const itemCount = order.items.reduce((total, item) => total + item.quantity, 0);
+
+  return (
+    <li
+      className={`rounded-xl bg-surface p-3.5 shadow-sm ring-1 ${
+        isUrgent && order.waitingSeconds > 180 ? 'ring-2 ring-amber-400' : 'ring-black/5'
+      }`}
+    >
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-sm font-bold tabular-nums">{order.orderNumber}</span>
+        <span
+          className={`text-[11px] font-semibold tabular-nums ${
+            isUrgent && order.waitingSeconds > 180 ? 'text-amber-800' : 'text-ink-faint'
+          }`}
+        >
+          {formatWaiting(order.waitingSeconds)}
+        </span>
+      </div>
+
+      <p className="mt-0.5 text-[11px] text-ink-muted">
+        {statusPresentation(order.status).label}
+        {order.dropoffArea ? ` · ${order.dropoffArea}` : ''}
+      </p>
+
+      <ul className="mt-2 space-y-0.5">
+        {order.items.map((item) => (
+          <li key={item.menuItemId} className="flex justify-between gap-2 text-xs">
+            <span className="min-w-0">
+              <span className="font-bold tabular-nums">{item.quantity}×</span> {item.name}
+              {item.notes ? (
+                <span className="mt-0.5 block text-[11px] font-medium text-amber-800">
+                  {item.notes}
+                </span>
+              ) : null}
+            </span>
+            <span className="shrink-0 tabular-nums text-ink-muted">
+              {formatCentavos(item.lineTotalCentavos)}
+            </span>
+          </li>
+        ))}
+      </ul>
+
+      {order.merchantNotes || order.includeCutlery ? (
+        <p className="mt-2 rounded-lg bg-surface-sunken px-2 py-1.5 text-[11px] text-ink-muted">
+          {order.includeCutlery ? 'May kubyertos. ' : ''}
+          {order.merchantNotes ?? ''}
+        </p>
+      ) : null}
+
+      <p className="mt-2 flex justify-between text-xs font-semibold">
+        <span>{itemCount} item{itemCount === 1 ? '' : 's'}</span>
+        <span className="tabular-nums">{formatCentavos(order.subtotalCentavos)}</span>
+      </p>
+
+      {error ? (
+        <p role="alert" className="mt-2 text-[11px] leading-relaxed text-rose-700">
+          {error}
+        </p>
+      ) : null}
+
+      {rejecting ? (
+        <div className="mt-3 rounded-lg bg-rose-50 p-2.5">
+          <label className="block text-[11px] font-semibold text-rose-900">
+            Bakit tinanggihan?
+            <span className="block font-normal text-rose-800">Makikita ito ng customer.</span>
+            <input
+              type="text"
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              maxLength={200}
+              autoFocus
+              placeholder="Halimbawa: wala nang adobo"
+              className="mt-1.5 w-full rounded-lg bg-white px-2 py-1.5 text-xs font-normal ring-1 ring-rose-200 focus:outline-none focus:ring-2 focus:ring-rose-400"
+            />
+          </label>
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              disabled={isPending || reason.trim().length < 3}
+              onClick={() => run(() => rejectOrderAction(order.id, reason))}
+              className="flex-1 rounded-lg bg-rose-600 px-2 py-2 text-xs font-bold text-white disabled:bg-ink-faint"
+            >
+              {isPending ? '…' : 'Tanggihan'}
+            </button>
+            <button
+              type="button"
+              disabled={isPending}
+              onClick={() => setRejecting(false)}
+              className="flex-1 rounded-lg bg-white px-2 py-2 text-xs font-semibold ring-1 ring-rose-200"
+            >
+              Huwag na
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {can(OrderStatus.MERCHANT_ACCEPTED) ? (
+            <button
+              type="button"
+              disabled={isPending}
+              onClick={() => run(() => acceptOrderAction(order.id))}
+              className="flex-1 rounded-lg bg-brand-700 px-3 py-2.5 text-xs font-bold text-white transition-colors hover:bg-brand-800 disabled:bg-ink-faint"
+            >
+              {isPending ? '…' : 'Tanggapin'}
+            </button>
+          ) : null}
+
+          {can(OrderStatus.PREPARING) ? (
+            <button
+              type="button"
+              disabled={isPending}
+              onClick={() => run(() => startPreparingAction(order.id))}
+              className="flex-1 rounded-lg bg-brand-700 px-3 py-2.5 text-xs font-bold text-white transition-colors hover:bg-brand-800 disabled:bg-ink-faint"
+            >
+              {isPending ? '…' : 'Ginagawa na'}
+            </button>
+          ) : null}
+
+          {can(OrderStatus.READY_FOR_PICKUP) ? (
+            <button
+              type="button"
+              disabled={isPending}
+              onClick={() => run(() => markReadyAction(order.id))}
+              className="flex-1 rounded-lg bg-emerald-700 px-3 py-2.5 text-xs font-bold text-white transition-colors hover:bg-emerald-800 disabled:bg-ink-faint"
+            >
+              {isPending ? '…' : 'Handa na'}
+            </button>
+          ) : null}
+
+          {can(OrderStatus.CANCELLED_BY_MERCHANT) ? (
+            <button
+              type="button"
+              disabled={isPending}
+              onClick={() => setRejecting(true)}
+              className="rounded-lg bg-surface-sunken px-3 py-2.5 text-xs font-semibold text-rose-700 ring-1 ring-black/5 transition-colors hover:bg-rose-50"
+            >
+              Tanggihan
+            </button>
+          ) : null}
+
+          {/* Running late is honest and visible; silently missing the ETA is not. */}
+          {order.status === OrderStatus.PREPARING ||
+          order.status === OrderStatus.MERCHANT_ACCEPTED ? (
+            <button
+              type="button"
+              disabled={isPending}
+              onClick={() => run(() => addPrepMinutesAction(order.id, 10))}
+              className="rounded-lg bg-surface-sunken px-3 py-2.5 text-xs font-semibold ring-1 ring-black/5 transition-colors hover:bg-brand-50"
+            >
+              +10 min
+            </button>
+          ) : null}
+        </div>
+      )}
+    </li>
+  );
+}

@@ -12,7 +12,12 @@ import { usePathname } from 'next/navigation';
  * Orders is one chronological list across every service. That unified history
  * is a large part of what makes this feel like one product rather than several
  * apps sharing a login.
+ *
+ * Hidden where it would be wrong rather than merely redundant: the auth screens
+ * (offering navigation to signed-in destinations to somebody who is not signed
+ * in) and the merchant back office (a different product with its own tabs).
  */
+const HIDDEN_ON = ['/login', '/welcome', '/merchant'];
 const ITEMS = [
   { href: '/', label: 'Home', glyph: '🏠' },
   { href: '/orders', label: 'Orders', glyph: '🧾' },
@@ -22,6 +27,10 @@ const ITEMS = [
 
 export function BottomNav() {
   const pathname = usePathname();
+
+  if (HIDDEN_ON.some((prefix) => pathname.startsWith(prefix))) {
+    return null;
+  }
 
   return (
     <nav

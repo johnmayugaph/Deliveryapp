@@ -67,9 +67,20 @@ Order timeouts are swept by a job, not a background thread — put
 `npm run jobs:orders` on a cron every minute or two, or orders will sit waiting
 on a merchant forever. The same job prunes spent login codes and dead sessions.
 
-Note that nothing can *accept* an order yet: the merchant queue is Phase 8, so
-an order you place will be cancelled by the timeout after eight minutes. That is
-the system working.
+### The merchant side
+
+A store's back office lives at `/merchant`. Sign in as one of the seeded
+merchants and the customer profile offers a link in:
+
+| Number | Who | Access |
+| --- | --- | --- |
+| `0917 000 1111` | Nena Bautista | Owner of Aling Nena Carinderia |
+| `0917 000 2222` | Ben Ocampo | Owner of two stores — exercises the picker |
+| `0917 000 3333` | Rosa Lim | Staff at Nena's: queue only, no prices |
+
+Note that nothing can *accept a dispatch offer* yet: the fleet app is Phase 8,
+so an order the merchant marks ready waits at "looking for a rider" until the
+sweep cancels it after twenty minutes. That is the system working.
 
 ## Scripts
 
@@ -88,7 +99,7 @@ the system working.
 
 ```
 prisma/
-  schema.prisma          the source of truth: 26 models, 16 enums
+  schema.prisma          the source of truth: 27 models, 17 enums
   seed.ts                the ONLY file that enumerates the five services
   sql/                   invariants Prisma's schema language cannot express
 src/
@@ -101,8 +112,9 @@ src/
     wallet/              the credits ledger and its pure rules
     pricing/             delivery rates and subscription-aware checkout pricing
     fleet/               dispatch, filtered by approved services
+    merchant/            store access and the order queue
     support/             unified tickets
-  tests/                 186 tests, database-free
+  tests/                 204 tests, database-free
 ```
 
 ## Money
