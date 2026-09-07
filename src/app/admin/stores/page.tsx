@@ -4,6 +4,7 @@ import { listConsoleStores } from '@/lib/admin/stores';
 import { getAllServices } from '@/lib/services/registry';
 import { prisma } from '@/lib/prisma';
 import { StoreCreateForm } from '@/components/admin/StoreCreateForm';
+import { tileSource } from '@/lib/geo/tiles';
 import { Empty, Panel, Pill, Stat, TableScroll, Td, Th } from '@/components/admin/primitives';
 
 export const dynamic = 'force-dynamic';
@@ -27,7 +28,13 @@ export default async function AdminStoresPage() {
   const [stores, services, cities] = await Promise.all([
     listConsoleStores(),
     getAllServices(),
-    prisma.city.findMany({ orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+    prisma.city.findMany({
+      where: { isActive: true },
+      orderBy: { name: 'asc' },
+      // The centroid is what the map picker opens on, so a form for a Cebu
+      // shop does not start over Manila.
+      select: { id: true, name: true, centroidLat: true, centroidLng: true },
+    }),
   ]);
 
   const notReady = stores.filter((store) => !store.readyForCustomers);
@@ -67,6 +74,7 @@ export default async function AdminStoresPage() {
       >
         <div className="px-4 py-4">
           <StoreCreateForm
+            tiles={tileSource()}
             cities={cities}
             services={services.map((service) => ({
               key: service.key,

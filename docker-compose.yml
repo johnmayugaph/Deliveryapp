@@ -80,6 +80,9 @@ services:
       SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
       SUPPORT_FACEBOOK: ${SUPPORT_FACEBOOK:-}
       SUPPORT_HOURS: ${SUPPORT_HOURS:-}
+      # The store form's map. OpenStreetMap unless set — see .env.example.
+      MAP_TILE_URL: ${MAP_TILE_URL:-}
+      MAP_TILE_ATTRIBUTION: ${MAP_TILE_ATTRIBUTION:-}
       BACKUP_STRATEGY: ${BACKUP_STRATEGY:-script}
     ports:
       # Bound to localhost, because the thing facing the internet should be a

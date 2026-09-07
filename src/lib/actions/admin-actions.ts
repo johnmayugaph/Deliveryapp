@@ -43,6 +43,11 @@ import {
   LastOwnerError,
 } from '@/lib/merchant/staff-policy';
 import { uniqueStoreSlug } from '@/lib/admin/stores';
+import {
+  isFiniteCoordinate,
+  isInPhilippines,
+  looksSwapped,
+} from '@/lib/geo/philippines';
 
 /**
  * Everything the console can change.
@@ -696,15 +701,21 @@ export async function createStoreAction(
   // Checked rather than trusted: an empty number field arrives as NaN, and a
   // store at 0,0 is in the Atlantic — every delivery fee from it would be
   // computed from the Gulf of Guinea.
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+  //
+  // The bounds come from the same module the map picker uses. They were
+  // written out here in full once, which is exactly the pair that drifts: a
+  // picker that lets somebody drop a pin the server then rejects is worse
+  // than no picker.
+  if (!isFiniteCoordinate(latitude) || !isFiniteCoordinate(longitude)) {
     return { ok: false, message: 'The shop needs coordinates.' };
   }
-  if (latitude < 4 || latitude > 21 || longitude < 116 || longitude > 127) {
+  if (!isInPhilippines({ latitude, longitude })) {
     return {
       ok: false,
-      message:
-        'Those coordinates are not in the Philippines. Check they are not ' +
-        'swapped — latitude first, then longitude.',
+      message: looksSwapped({ latitude, longitude })
+        ? 'Those look like the right numbers the wrong way round — latitude ' +
+          'first, then longitude.'
+        : 'Those coordinates are not in the Philippines.',
     };
   }
 

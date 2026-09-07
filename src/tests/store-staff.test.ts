@@ -399,9 +399,14 @@ describe('creating a partner store', () => {
     // A store at 0,0 is in the Atlantic, and every delivery fee from it would
     // be computed from the Gulf of Guinea. Swapped latitude and longitude is
     // the mistake this actually catches.
+    //
+    // Checked against the SHARED bounds rather than a second copy of the
+    // numbers: the map picker validates with the same module, and a picker
+    // that lets somebody drop a pin the server then rejects is worse than no
+    // picker. `geo.test.ts` asserts the literals are gone from here.
     const actions = codeOnly(source('src/lib/actions/admin-actions.ts'));
-    expect(actions).toMatch(/latitude < 4 \|\| latitude > 21/);
-    expect(actions).toMatch(/longitude < 116 \|\| longitude > 127/);
+    expect(actions).toMatch(/isInPhilippines\(\{ latitude, longitude \}\)/);
+    expect(actions).toMatch(/looksSwapped\(/);
   });
 
   it('names an owner in the same transaction as the store', () => {

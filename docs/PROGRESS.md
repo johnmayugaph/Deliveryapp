@@ -57,6 +57,7 @@ brief's changes already folded in.
 | 19 | The Dockerfile, compose and CI | ✅ Built, never run |
 | 20 | Support that reaches a person: threads, a public channel, a queue, an alert | ✅ Done |
 | 21 | Store staff: invite by number, a first owner from the console, an owner who cannot vanish | ✅ Done |
+| 22 | A map for the shop's pin, and two other ways to set it | ✅ Done |
 
 Between phases 11 and 12: the interface was translated to English, the product
 was named TARA, and the typeface and brand blue were set from the brand artwork.
@@ -776,6 +777,11 @@ real file later is one line in `tailwind.config.ts`.
   log. Fleet approval (`npm run fleet:approve`), plan activation
   (`npm run plan:activate`) and subscription grants (`npm run plan:comp`) are
   still CLI scripts.
+- **No address search on the map.** The picker opens on the chosen city's
+  centre and you pan or paste a link from there. Typing "Aling Nena, Tondo" and
+  having the map go there would need a geocoder — Nominatim has a usage policy
+  and a rate limit, anything better costs money — and with the city centring
+  and the paste box it earns less than it looks like it would.
 - **A store's own details cannot be edited after it is created.** The console
   can create one and set whether customers see it; the shop can set its prep
   time and open/closed. Changing a name, an address or which services a shop is
@@ -1451,3 +1457,79 @@ every escalation refused with an accurate sentence, and a legitimate handover
 completed. The demo purge still runs clean against the new guard.
 
 797 tests pass; build and lint clean.
+
+---
+
+## Phase 22 — the map picker ✅
+
+Phase 21 left the store form asking for latitude and longitude as two numbers,
+with a range check against the Philippines and a note that a map picker was
+missing. It is the field on that form that matters most and looks least like
+it: every delivery fee from a shop is measured from those two numbers, so a
+transposed pair does not fail — it charges the wrong money forever, quietly.
+And transcribing two eight-decimal numbers off a phone screen is exactly the
+task people get wrong.
+
+So `/admin/stores` now has a map, and **three ways in, all writing the same two
+fields**: click or drag the pin; paste a Google Maps or Waze link; or type the
+numbers. The number inputs are still the real form fields rather than a
+read-out beside hidden ones — a map is not an accessible way to enter a
+coordinate and must not be the only way, and that is also what keeps the form
+correct when the map is broken.
+
+The paste box exists because of how coordinates for a small shop are actually
+obtained: somebody stands outside it, drops a pin on their phone and shares the
+link. It handles a bare pair, `@lat,lng`, Google's `!3d!4d` place data,
+`?q=`/`?ll=` from Google, Waze and Apple, and `geo:` from an Android share
+sheet — and it prefers the **place** over the map centre, because a Google
+place URL carries the pin twice and the two differ once somebody has panned. A
+reversed pair is corrected rather than rejected, with the screen saying so;
+that is only safe because Philippine latitude (4–21) and longitude (116–127) do
+not overlap, so an invalid-as-given pair that is valid swapped can only be a
+swap.
+
+Tiles are OpenStreetMap by default, with `MAP_TILE_URL` for the day the volume
+stops being light. It is read on the server and passed as a prop, not through a
+`NEXT_PUBLIC_` variable that `docker build` would freeze.
+
+### What the work turned up
+
+**The map reported success with every tile failed, and only a browser found
+it.** Leaflet's `load` event fires when the visible batch has *settled* —
+loaded or errored, it does not distinguish — so `once('load') → ready` declared
+a working map to an operator staring at a grey box. Latching on the first
+`tileerror` would have been wrong the other way, since one missing tile over
+the Sulu Sea is normal. Broken now means the batch settled and nothing loaded,
+with a timeout for a tile server that accepts the connection and never answers.
+Verified by pointing the app at a dead tile host: the panel explains itself and
+names the two ways in that still work.
+
+**The pin was about fifteen metres off, which is the whole accuracy budget.**
+It started as a CSS teardrop — a rotated square with one square corner — and
+the tip of a rotated square does not land where its bounding box says, so
+`iconAnchor` was wrong. It is now an inline SVG with the tip at a known point.
+(Leaflet's own default marker is not an option: its image comes from a relative
+path no bundler resolves, which shows up as an invisible pin and no error.)
+
+**The bounds were written out twice.** Phase 21 put the Philippine range check
+inline in the server action; the picker needed the same numbers. They now live
+in one module that both read, because a picker which lets somebody drop a pin
+the server then rejects is worse than no picker.
+
+**`npm install leaflet` pruned Playwright**, which was only ever an ambient
+install in the development environment rather than a dependency. Reinstalled
+with `--no-save`: there is no e2e suite for it to belong to yet, and a
+devDependency nothing runs is dead weight. Leaflet itself is pinned exactly,
+like every other dependency here — `npm ci` in the Dockerfile is the difference
+between a reproducible image and one that picks up a new minor version at 3am.
+
+Verified in a real browser against a local tile server, so the map genuinely
+renders: choosing a city moves it, a click and a drag both fill the fields, a
+pasted place link takes the place rather than the centre, a reversed pair is
+corrected, a shortened link and a London coordinate are both refused with the
+right sentence, Enter in the paste box does not submit the form, typing a
+coordinate recentres the map — and a shop created through the whole form lands
+in the database with the picked point. Then again with the tile host dead.
+
+834 tests pass; build and lint clean. Leaflet is in its own chunk, so
+`/admin/stores` first-load JS is unchanged apart from 2 kB of picker.

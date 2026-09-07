@@ -1220,9 +1220,80 @@ is broken. The console refuses to make a menuless store visible, and the store
 list puts the not-yet-ready shops first, because those are the ones waiting on
 somebody.
 
-Coordinates are range-checked against the Philippines. A store at 0,0 is in the
-Atlantic and every delivery fee from it would be computed from the Gulf of
-Guinea; swapped latitude and longitude is the mistake this actually catches.
+### Putting the pin on the shop
+
+Coordinates are the field on that form that matters most and looks least like
+it. Every delivery fee from a shop is measured from them, so a transposed pair
+does not fail — it charges the wrong money forever, quietly. And transcribing
+two eight-decimal numbers off a phone screen is exactly the task people get
+wrong.
+
+So there is a map, and **three ways in, all writing the same two fields**:
+
+1. **Click or drag on the map.** What somebody wants.
+2. **Paste a Google Maps or Waze link.** What they actually have — the way
+   coordinates for a small shop are really obtained is that somebody stands
+   outside it, drops a pin on their phone, and shares the link.
+3. **Type the numbers.** The keyboard path, and the one that still works when
+   the map does not.
+
+The number inputs **are** the form fields, not a read-out beside hidden ones.
+That keeps the value inspectable and keyboard-editable, and it is what makes
+the form correct when the map is broken — a map is not an accessible way to
+enter a coordinate and must not be the only way.
+
+`parseCoordinateInput` in `lib/geo/philippines.ts` handles every shape a
+Philippine operator would paste: a bare pair, `@lat,lng` from a map centre,
+`!3d…!4d…` from a Google *place*, `?q=`/`?ll=` from Google, Waze and Apple, and
+`geo:` from an Android share sheet. Two details in it are the interesting ones:
+
+- **The place beats the centre.** A Google place URL carries the pin twice, and
+  the two differ once somebody has panned. `!3d!4d` is the shop; `@` is wherever
+  they were looking.
+- **A reversed pair is corrected rather than rejected**, and the screen says it
+  was. This is only safe because Philippine latitude (4–21) and longitude
+  (116–127) do not overlap, so a pair that is invalid as given and valid when
+  swapped can only be a swap. Anywhere else in the world that would be a guess.
+
+A shortened `maps.app.goo.gl` link is named for what it is. The coordinates are
+not in it and the browser cannot follow it to find out — cross-origin — so
+"no numbers found" would send somebody hunting for a typo that is not there.
+
+The bounds live in **one** module, read by both the picker and the server action
+that accepts the form. They were written out twice for a while, which is
+exactly the pair that drifts: a picker that lets somebody drop a pin the server
+then rejects is worse than no picker.
+
+### What the map costs, and what it does when it breaks
+
+Tiles come from OpenStreetMap: free, no account, no key, and better coverage of
+barangay streets than some paid providers. Their tile policy permits light use
+and a console form is about as light as it gets — but `MAP_TILE_URL` exists for
+the day that changes, because if TARA ever renders a map on a customer screen
+the volume stops being light and OSM's answer is to self-host or buy tiles.
+Better to have the seam now than to find it in a policy email. It is read on
+the **server** and passed down as a prop rather than through a `NEXT_PUBLIC_`
+variable, which would be inlined at build time and freeze whatever was set
+during `docker build`.
+
+Tiles are fetched by the **browser**, so nothing here depends on the server
+having egress. When they cannot be reached the panel says so in words, in
+place of the map, and names the two ways in that still work. Getting that right
+needed a real browser: Leaflet's `load` event fires when the visible batch has
+*settled* — loaded or errored, it does not distinguish — so the obvious
+`once('load') → ready` declared the map working with every single tile failed.
+Latching on the first `tileerror` would be wrong the other way, because one
+missing tile over the Sulu Sea is normal. Broken means the batch settled and
+**nothing** loaded. A tile server that accepts the connection and never answers
+fires neither event, so a timeout covers that too.
+
+The pin is an inline SVG whose tip is at a known point, with `iconAnchor` set to
+it. Not Leaflet's default marker, whose image is loaded from a relative path no
+bundler resolves — that shows up as an invisible pin and no error. And not a
+CSS teardrop either: the tip of a rotated square does not land where its
+bounding box says, which put the pin about fifteen metres off on screen, which
+is precisely the accuracy the control exists for.
+
 
 ### Where the audit line falls
 

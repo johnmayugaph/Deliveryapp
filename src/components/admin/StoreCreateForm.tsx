@@ -4,6 +4,8 @@ import { useActionState, useEffect, useState } from 'react';
 import type { ServiceKey } from '@prisma/client';
 import type { AdminActionResult } from '@/lib/admin/access';
 import { createStoreAction } from '@/lib/actions/admin-actions';
+import { LocationPicker } from '@/components/admin/LocationPicker';
+import type { TileSource } from '@/lib/geo/tiles';
 
 /**
  * Adding a partner shop.
@@ -16,6 +18,11 @@ import { createStoreAction } from '@/lib/actions/admin-actions';
  * The services list comes from the registry, including the verticals that have
  * not launched. A shop can be marked for MART today and starts appearing the
  * day MART is switched on, with no second visit to this screen.
+ *
+ * The coordinates are a map rather than two number fields, and that is not
+ * cosmetic: every delivery fee from this shop is measured from them, so a
+ * transposed pair does not fail — it charges the wrong money forever. See
+ * `LocationPicker`.
  */
 
 const FIELD =
@@ -24,10 +31,25 @@ const FIELD =
 export function StoreCreateForm({
   cities,
   services,
+  tiles,
 }: {
-  cities: { id: string; name: string }[];
+  cities: {
+    id: string;
+    name: string;
+    centroidLat: number | null;
+    centroidLng: number | null;
+  }[];
   services: { key: ServiceKey; displayName: string; isActive: boolean }[];
+  tiles: TileSource;
 }) {
+  const [cityId, setCityId] = useState('');
+
+  const chosen = cities.find((city) => city.id === cityId);
+  const centre =
+    chosen && chosen.centroidLat !== null && chosen.centroidLng !== null
+      ? { latitude: chosen.centroidLat, longitude: chosen.centroidLng }
+      : undefined;
+
   const [result, submit, pending] = useActionState<AdminActionResult | null, FormData>(
     async (_previous, formData) => createStoreAction(formData),
     null,
@@ -46,7 +68,16 @@ export function StoreCreateForm({
 
         <label className="block">
           <span className="text-[11px] font-semibold text-ink-muted">City</span>
-          <select name="cityId" required defaultValue="" className={FIELD}>
+          {/* Controlled, and the one reason is the map: choosing a city should
+              move it near the shop rather than leaving somebody to pan across
+              the archipelago. */}
+          <select
+            name="cityId"
+            required
+            value={cityId}
+            onChange={(event) => setCityId(event.target.value)}
+            className={FIELD}
+          >
             <option value="" disabled>
               Choose…
             </option>
@@ -70,30 +101,6 @@ export function StoreCreateForm({
           />
         </label>
 
-        <label className="block">
-          <span className="text-[11px] font-semibold text-ink-muted">Latitude</span>
-          <input
-            name="latitude"
-            required
-            type="number"
-            step="any"
-            placeholder="14.6091"
-            className={FIELD}
-          />
-        </label>
-
-        <label className="block">
-          <span className="text-[11px] font-semibold text-ink-muted">Longitude</span>
-          <input
-            name="longitude"
-            required
-            type="number"
-            step="any"
-            placeholder="120.9884"
-            className={FIELD}
-          />
-        </label>
-
         <label className="block sm:col-span-2">
           <span className="text-[11px] font-semibold text-ink-muted">
             Owner&apos;s mobile number
@@ -108,6 +115,15 @@ export function StoreCreateForm({
           />
         </label>
       </div>
+
+      {/* Its own block below the text fields rather than a cell in the grid:
+          it is a map, and squeezing it into half a row makes it useless for
+          the one thing it is for. */}
+      <LocationPicker
+        tiles={tiles}
+        {...(centre === undefined ? {} : { centre })}
+        centreKey={cityId}
+      />
 
       <fieldset>
         <legend className="text-[11px] font-semibold text-ink-muted">
