@@ -47,6 +47,14 @@ brief's changes already folded in.
 | 9 | Subscription tier: enrollment, renewal, plan screen | ✅ Built, launch gated |
 | 10 | Second vertical | ⬜ Gated on demand |
 | 11 | Notifications: outbox, inbox, SMS | ✅ Done |
+| 12 | SMS verified at the wire; web push; the admin console | ✅ Built, one gap |
+
+Between phases 11 and 12: the interface was translated to English, the product
+was named TARA, and the typeface and brand blue were set from the brand artwork.
+
+The one gap in phase 12 is not code. Neither external channel has been proved
+against its real provider, because the development environment's network policy
+blocks every SMS gateway and every push service. See **Known gaps**.
 
 ---
 
@@ -749,11 +757,6 @@ real file later is one line in `tailwind.config.ts`.
 
 ## Known gaps
 
-- **No push.** The inbox and SMS reach people; a free channel that reaches a
-  closed tab does not exist yet. It is one adapter behind
-  `NotificationChannelAdapter` — a subscription table, VAPID keys, the same
-  `deliver()` — and it should be the next thing built, because every SMS it
-  replaces is money.
 - **Notification latency is the cron interval.** Nothing on a request path waits
   for a gateway, which is right, but it means a store hears about an order up to
   one cron tick late.
@@ -771,8 +774,6 @@ real file later is one line in `tailwind.config.ts`.
   moving pin, even though partner positions are stored.
 - **No ratings.** `ratingAvg` and `ratingCount` are read by dispatch ranking but
   nothing writes them.
-- **Store membership is seeded, not managed.** There is no UI to invite staff or
-  change a role — `StoreMember` rows are written by the seed or by hand.
 - **No real SMS has ever been sent.** The adapter is now verified at the wire —
   `sms-wire.test.ts` asserts the exact bytes a gateway receives over a real
   socket, and `npm run sms:send-one` sends one real message and prints the full
@@ -781,7 +782,6 @@ real file later is one line in `tailwind.config.ts`.
   handset rings. It could not be answered from the development environment,
   whose network policy answers 403 to CONNECT for every SMS gateway. It needs a
   machine with egress and an account.
-
 - **No push subscription from a real push service.** The crypto is pinned
   byte-for-byte against the reference implementation and the whole server path
   is verified against a stand-in service over real TLS, but Chrome refuses the
