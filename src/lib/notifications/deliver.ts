@@ -8,6 +8,7 @@ import {
   retryDelayMs,
 } from '@/lib/notifications/policy';
 import { resolveChannels } from '@/lib/notifications/channels';
+import { NoPushSubscriptionsError } from '@/lib/notifications/push/channel';
 
 /**
  * The delivery pass.
@@ -26,8 +27,12 @@ export interface DeliveryPassResult {
   sent: number;
   failed: number;
   retrying: number;
+  /** Not attempted because there was nothing to attempt it against. */
+  skipped: number;
   /** Channels a message was waiting for that have no adapter configured. */
   unconfigured: NotificationChannel[];
+  /** Partial successes worth printing — a fan-out that missed some devices. */
+  notes: string[];
 }
 
 export async function deliverPending(
@@ -45,7 +50,7 @@ export async function deliverPending(
     take: options.limit ?? 100,
     include: {
       notification: {
-        include: { user: { select: { phone: true } } },
+        include: { user: { select: { id: true, phone: true } } },
       },
     },
   });
@@ -54,7 +59,9 @@ export async function deliverPending(
     sent: 0,
     failed: 0,
     retrying: 0,
+    skipped: 0,
     unconfigured: [],
+    notes: [],
   };
 
   for (const delivery of due) {
@@ -69,13 +76,21 @@ export async function deliverPending(
       continue;
     }
 
-    // Both forms were rendered when the row was written. Nothing is rendered
+    // Every form was rendered when the row was written. Nothing is rendered
     // here, so an edited template cannot rewrite a message already queued.
     const target = {
+      userId: delivery.notification.user.id,
       phone: delivery.notification.user.phone,
       title: delivery.notification.title,
       body: delivery.notification.body,
       sms: delivery.notification.smsBody,
+      href: delivery.notification.href ?? '/notifications',
+      urgency: delivery.notification.urgency,
+      // Everything about one order collapses onto one notification, so a lock
+      // screen shows the current state rather than a history of it.
+      ...(delivery.notification.relatedOrderId
+        ? { tag: delivery.notification.relatedOrderId }
+        : {}),
     };
 
     try {
@@ -92,7 +107,26 @@ export async function deliverPending(
         },
       });
       result.sent += 1;
+      if (outcome.note) {
+        result.notes.push(`${delivery.channel} ${delivery.id}: ${outcome.note}`);
+      }
     } catch (error) {
+      // Nothing to deliver to is not a failure. Somebody granted push
+      // permission and then revoked it, or the browser is gone; three attempts
+      // against a person with no subscribed device would be three rows of
+      // noise and one FAILED that reads like an outage.
+      if (error instanceof NoPushSubscriptionsError) {
+        await prisma.notificationDelivery.update({
+          where: { id: delivery.id },
+          data: {
+            status: NotificationDeliveryStatus.SKIPPED,
+            attempts: delivery.attempts + 1,
+          },
+        });
+        result.skipped += 1;
+        continue;
+      }
+
       const attempts = delivery.attempts + 1;
       const message = error instanceof Error ? error.message : String(error);
       const giveUp = attempts >= MAX_DELIVERY_ATTEMPTS;

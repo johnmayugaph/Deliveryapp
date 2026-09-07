@@ -51,6 +51,9 @@ describe('the kind policy', () => {
     }
 
     // And the ones that do not: progress a customer can see on the screen.
+    // Asserted as "no SMS" rather than as an exact list, because the exact
+    // list is not the invariant — adding a channel that costs nothing should
+    // not have to touch this test, and adding one that costs money should.
     for (const kind of [
       NotificationKind.ORDER_ACCEPTED,
       NotificationKind.ORDER_READY,
@@ -59,8 +62,62 @@ describe('the kind policy', () => {
       NotificationKind.CREDITS_GRANTED,
       NotificationKind.SUBSCRIPTION_ENDED,
     ]) {
-      expect(KIND_POLICY[kind].channels, kind).toEqual([NotificationChannel.IN_APP]);
+      expect(KIND_POLICY[kind].channels, kind).not.toContain(NotificationChannel.SMS);
     }
+  });
+
+  it('sends push for everything, because push is free', () => {
+    // The whole reason both channels exist. Withholding a free channel from a
+    // message worth writing down would need a reason, and there is not one.
+    for (const kind of Object.values(NotificationKind)) {
+      expect(KIND_POLICY[kind].channels, kind).toContain(NotificationChannel.PUSH);
+    }
+  });
+
+  it('defaults push on for both urgencies and SMS on only for operational', () => {
+    expect(CHANNEL_DEFAULTS[NotificationChannel.PUSH]).toEqual({
+      OPERATIONAL: true,
+      INFORMATIONAL: true,
+    });
+    expect(CHANNEL_DEFAULTS[NotificationChannel.SMS]).toEqual({
+      OPERATIONAL: true,
+      INFORMATIONAL: false,
+    });
+  });
+
+  it('still defers an informational push into quiet hours', () => {
+    // Free does not mean welcome at 2am. Push is not in ALWAYS_ON_CHANNELS
+    // precisely so quiet hours apply to it.
+    const oneAmManila = new Date('2026-09-06T17:00:00.000Z');
+    expect(
+      deliverableAt({
+        urgency: NotificationUrgency.INFORMATIONAL,
+        channel: NotificationChannel.PUSH,
+        now: oneAmManila,
+      }).getTime(),
+    ).toBeGreaterThan(oneAmManila.getTime());
+  });
+
+  it('lets an operational push through quiet hours', () => {
+    const oneAmManila = new Date('2026-09-06T17:00:00.000Z');
+    expect(
+      deliverableAt({
+        urgency: NotificationUrgency.OPERATIONAL,
+        channel: NotificationChannel.PUSH,
+        now: oneAmManila,
+      }).getTime(),
+    ).toBe(oneAmManila.getTime());
+  });
+
+  it('lets somebody switch push off', () => {
+    expect(ALWAYS_ON_CHANNELS).not.toContain(NotificationChannel.PUSH);
+    expect(
+      channelCarries({
+        channel: NotificationChannel.PUSH,
+        urgency: NotificationUrgency.OPERATIONAL,
+        preference: false,
+      }),
+    ).toBe(false);
   });
 });
 

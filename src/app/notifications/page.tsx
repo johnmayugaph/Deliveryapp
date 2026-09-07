@@ -12,6 +12,10 @@ import {
   openNotificationAction,
   setSmsEnabledAction,
 } from '@/lib/actions/notification-actions';
+import { forgetPushDeviceAction } from '@/lib/actions/push-actions';
+import { PushSwitch } from '@/components/notifications/PushSwitch';
+import { isPushConfigured, resolveVapidConfig } from '@/lib/notifications/push/vapid';
+import { listPushDevices } from '@/lib/notifications/push/subscriptions';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,6 +46,40 @@ const KIND_GLYPH: Readonly<Record<NotificationKind, string>> = {
   [NotificationKind.SUBSCRIPTION_ENDED]: '📄',
 };
 
+/**
+ * A recognisable name for a browser, from its user agent.
+ *
+ * Not a device-detection library: the point is only that a person can tell
+ * which row is their phone, and the order of these checks matters because
+ * every Chromium browser also claims to be Chrome and Safari.
+ */
+function describeBrowser(userAgent: string | null): string {
+  if (!userAgent) return 'Unknown browser';
+  const platform = /Android/i.test(userAgent)
+    ? 'Android'
+    : /iPhone|iPad|iPod/i.test(userAgent)
+      ? 'iPhone'
+      : /Windows/i.test(userAgent)
+        ? 'Windows'
+        : /Mac OS X/i.test(userAgent)
+          ? 'Mac'
+          : /Linux/i.test(userAgent)
+            ? 'Linux'
+            : 'Unknown device';
+  const browser = /Edg\//.test(userAgent)
+    ? 'Edge'
+    : /OPR\//.test(userAgent)
+      ? 'Opera'
+      : /Firefox\//.test(userAgent)
+        ? 'Firefox'
+        : /Chrome\//.test(userAgent)
+          ? 'Chrome'
+          : /Safari\//.test(userAgent)
+            ? 'Safari'
+            : 'Browser';
+  return `${browser} on ${platform}`;
+}
+
 function timeAgo(at: Date, now: Date): string {
   const seconds = Math.max(0, Math.round((now.getTime() - at.getTime()) / 1000));
   if (seconds < 60) return 'just now';
@@ -58,11 +96,16 @@ export default async function NotificationsPage() {
     redirect('/login?next=%2Fnotifications');
   }
 
-  const [notifications, switches] = await Promise.all([
+  // The public key is read on the server and passed down, rather than sitting
+  // in a NEXT_PUBLIC_ variable: one source for it, and no second copy to drift.
+  const pushConfigured = isPushConfigured();
+  const [notifications, switches, devices] = await Promise.all([
     listNotifications(user.id, { limit: 50 }),
     listChannelSwitches(user.id),
+    pushConfigured ? listPushDevices(user.id) : Promise.resolve([]),
   ]);
   const sms = switches.find((row) => row.channel === NotificationChannel.SMS);
+  const push = switches.find((row) => row.channel === NotificationChannel.PUSH);
   const now = new Date();
   const unread = notifications.filter((row) => row.readAt === null).length;
 
@@ -84,8 +127,54 @@ export default async function NotificationsPage() {
         </p>
       </header>
 
-      {/* The one switch a person has. The inbox itself is not optional: it is
-          the record of what we told them. */}
+      {/* Push first: it is free, it reaches a closed tab, and it is the one a
+          person should be offered. SMS is the fallback below it. The inbox
+          itself is not optional — it is the record of what we told them. */}
+      {pushConfigured ? (
+        <PushSwitch
+          vapidPublicKey={resolveVapidConfig().publicKey}
+          enabledForAccount={push?.enabled ?? true}
+        />
+      ) : null}
+
+      {/* Other browsers this account has subscribed. Only worth showing when
+          there is more than the one being used right now. */}
+      {devices.length > 1 ? (
+        <section
+          aria-labelledby="devices-heading"
+          className="mx-4 mt-4 rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5"
+        >
+          <h2 id="devices-heading" className="text-[13px] font-semibold">
+            Devices getting notifications
+          </h2>
+          <ul className="mt-2 divide-y divide-black/5">
+            {devices.map((device) => (
+              <li key={device.id} className="flex items-baseline gap-3 py-2">
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-xs font-medium">
+                    {describeBrowser(device.userAgent)}
+                  </span>
+                  <span className="mt-0.5 block text-[11px] text-ink-faint">
+                    {device.expiredAt
+                      ? 'No longer reachable'
+                      : `Last used ${device.lastSeenAt.toLocaleDateString('en-PH', {
+                          day: 'numeric',
+                          month: 'short',
+                        })}`}
+                  </span>
+                </span>
+                <form action={forgetPushDeviceAction}>
+                  <input type="hidden" name="deviceId" value={device.id} />
+                  <button type="submit" className="text-[12px] font-semibold text-brand-700">
+                    Remove
+                  </button>
+                </form>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       {sms ? (
         <section
           aria-labelledby="sms-heading"
@@ -96,7 +185,7 @@ export default async function NotificationsPage() {
           </h2>
           <p className="mt-1 text-xs leading-relaxed text-ink-muted">
             {sms.enabled
-              ? 'We text you the ones that need an answer: a new order for your store, a new job, a cancellation.'
+              ? 'A text reaches you with no app open and no permission granted, so we use it for the ones that need an answer: a new order for your store, a new job, a cancellation.'
               : 'SMS is off. Everything still arrives in this inbox; we just will not text you.'}
           </p>
           <form action={setSmsEnabledAction} className="mt-3">
@@ -144,6 +233,7 @@ export default async function NotificationsPage() {
                       </span>
                       <span className="mt-1 block text-[11px] text-ink-faint">
                         {timeAgo(notification.createdAt, now)}
+                        {channels.includes(NotificationChannel.PUSH) ? ' · pushed' : ''}
                         {channels.includes(NotificationChannel.SMS) ? ' · texted' : ''}
                       </span>
                     </span>

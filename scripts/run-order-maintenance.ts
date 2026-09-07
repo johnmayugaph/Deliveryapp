@@ -48,13 +48,17 @@ async function main() {
     );
   }
 
-  const { sent, failed, retrying, unconfigured } = notifications;
-  if (sent > 0 || failed > 0 || retrying > 0) {
+  const { sent, failed, retrying, skipped, unconfigured, notes } = notifications;
+  if (sent > 0 || failed > 0 || retrying > 0 || skipped > 0) {
     console.log(
       `Notifications: ${sent} sent` +
         (retrying > 0 ? `, ${retrying} retrying` : '') +
+        (skipped > 0 ? `, ${skipped} skipped (nothing to deliver to)` : '') +
         (failed > 0 ? `, ${failed} gave up` : ''),
     );
+  }
+  for (const note of notes) {
+    console.log(`  ${note}`);
   }
   if (unconfigured.length > 0) {
     console.log(

@@ -74,12 +74,30 @@ export async function enqueueNotification(
     preferences.map((row) => [row.channel, row.enabled] as const),
   );
 
+  /**
+   * Push needs somewhere to go.
+   *
+   * Push is on by default for every kind, so without this check every
+   * notification for every account that never granted permission would write a
+   * PENDING row for the delivery pass to pick up, attempt against nothing, and
+   * skip — which is most accounts and most notifications. Deciding it here
+   * makes it one SKIPPED row written once, and the record still says what we
+   * would have done.
+   */
+  const pushDevices = policy.channels.includes(NotificationChannel.PUSH)
+    ? await db.webPushSubscription.count({
+        where: { userId: input.userId, expiredAt: null },
+      })
+    : 0;
+
   const deliveries = policy.channels.map((channel) => {
-    const carries = channelCarries({
-      channel,
-      urgency: policy.urgency,
-      preference: preferenceByChannel.get(channel),
-    });
+    const carries =
+      channelCarries({
+        channel,
+        urgency: policy.urgency,
+        preference: preferenceByChannel.get(channel),
+      }) &&
+      (channel !== NotificationChannel.PUSH || pushDevices > 0);
     return {
       channel,
       status: carries ? ('PENDING' as const) : ('SKIPPED' as const),

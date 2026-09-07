@@ -34,59 +34,83 @@ export const KIND_POLICY: Readonly<Record<NotificationKind, KindPolicy>> = {
   // the two that justify the cost of a message.
   [NotificationKind.ORDER_SUBMITTED]: {
     urgency: NotificationUrgency.OPERATIONAL,
-    channels: [NotificationChannel.IN_APP, NotificationChannel.SMS],
+    channels: [
+      NotificationChannel.IN_APP,
+      NotificationChannel.PUSH,
+      NotificationChannel.SMS,
+    ],
   },
   [NotificationKind.DISPATCH_OFFER]: {
     urgency: NotificationUrgency.OPERATIONAL,
-    channels: [NotificationChannel.IN_APP, NotificationChannel.SMS],
+    channels: [
+      NotificationChannel.IN_APP,
+      NotificationChannel.PUSH,
+      NotificationChannel.SMS,
+    ],
   },
   // Losing an order to a timeout is worth telling a store about even though the
   // moment to act has passed: it is the only way they learn it happened.
   [NotificationKind.ORDER_LOST_TO_TIMEOUT]: {
     urgency: NotificationUrgency.OPERATIONAL,
-    channels: [NotificationChannel.IN_APP, NotificationChannel.SMS],
+    channels: [
+      NotificationChannel.IN_APP,
+      NotificationChannel.PUSH,
+      NotificationChannel.SMS,
+    ],
   },
 
   // A customer waiting on food is watching the screen; and where they are not,
   // the two moments that matter are "a rider has it" and "it is here".
   [NotificationKind.ORDER_RIDER_ASSIGNED]: {
     urgency: NotificationUrgency.INFORMATIONAL,
-    channels: [NotificationChannel.IN_APP, NotificationChannel.SMS],
+    channels: [
+      NotificationChannel.IN_APP,
+      NotificationChannel.PUSH,
+      NotificationChannel.SMS,
+    ],
   },
   [NotificationKind.ORDER_ARRIVED]: {
     urgency: NotificationUrgency.OPERATIONAL,
-    channels: [NotificationChannel.IN_APP, NotificationChannel.SMS],
+    channels: [
+      NotificationChannel.IN_APP,
+      NotificationChannel.PUSH,
+      NotificationChannel.SMS,
+    ],
   },
   // A cancellation is money and dinner both changing, so it goes out properly.
   [NotificationKind.ORDER_CANCELLED]: {
     urgency: NotificationUrgency.OPERATIONAL,
-    channels: [NotificationChannel.IN_APP, NotificationChannel.SMS],
+    channels: [
+      NotificationChannel.IN_APP,
+      NotificationChannel.PUSH,
+      NotificationChannel.SMS,
+    ],
   },
 
   // Progress worth recording, not worth paying for.
   [NotificationKind.ORDER_ACCEPTED]: {
     urgency: NotificationUrgency.INFORMATIONAL,
-    channels: [NotificationChannel.IN_APP],
+    channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
   },
   [NotificationKind.ORDER_READY]: {
     urgency: NotificationUrgency.INFORMATIONAL,
-    channels: [NotificationChannel.IN_APP],
+    channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
   },
   [NotificationKind.ORDER_PICKED_UP]: {
     urgency: NotificationUrgency.INFORMATIONAL,
-    channels: [NotificationChannel.IN_APP],
+    channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
   },
   [NotificationKind.ORDER_DELIVERED]: {
     urgency: NotificationUrgency.INFORMATIONAL,
-    channels: [NotificationChannel.IN_APP],
+    channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
   },
   [NotificationKind.CREDITS_GRANTED]: {
     urgency: NotificationUrgency.INFORMATIONAL,
-    channels: [NotificationChannel.IN_APP],
+    channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
   },
   [NotificationKind.SUBSCRIPTION_ENDED]: {
     urgency: NotificationUrgency.INFORMATIONAL,
-    channels: [NotificationChannel.IN_APP],
+    channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
   },
 };
 
@@ -98,12 +122,24 @@ export const KIND_POLICY: Readonly<Record<NotificationKind, KindPolicy>> = {
  * loses money, while a customer does not need to pay attention to "the store is
  * cooking" — and every INFORMATIONAL text we send is a peso spent to be
  * slightly annoying.
+ *
+ * Push has no such trade-off, so it carries everything. The pair together is
+ * the point: push does the volume for free, and SMS is kept for the messages
+ * that must arrive even on a phone with no browser permission granted.
  */
 export const CHANNEL_DEFAULTS: Readonly<
   Record<NotificationChannel, Readonly<Record<NotificationUrgency, boolean>>>
 > = {
   // Not a preference: the inbox is the record of what somebody was told.
   [NotificationChannel.IN_APP]: {
+    [NotificationUrgency.OPERATIONAL]: true,
+    [NotificationUrgency.INFORMATIONAL]: true,
+  },
+  // Push costs nothing per message and reaches a closed tab, so both urgencies
+  // default on. The restraint that SMS needs — is this worth a peso — does not
+  // apply; what does apply is quiet hours, which `deliverableAt` handles by
+  // deferring an informational push rather than dropping it.
+  [NotificationChannel.PUSH]: {
     [NotificationUrgency.OPERATIONAL]: true,
     [NotificationUrgency.INFORMATIONAL]: true,
   },

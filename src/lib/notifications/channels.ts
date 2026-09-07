@@ -1,29 +1,47 @@
-import { NotificationChannel } from '@prisma/client';
+import { NotificationChannel, NotificationUrgency } from '@prisma/client';
 import { resolveSmsSender, SmsDeliveryError } from '@/lib/auth/sms';
 import type { SmsSender } from '@/lib/auth/sms';
+// A plain import, but push/channel.ts takes only TYPES from this file, so the
+// cycle is erased at compile time and there is no runtime one.
+import { PushChannel } from '@/lib/notifications/push/channel';
 
 /**
  * How a notification actually leaves the building.
  *
- * One interface, one adapter per channel, so the third channel is a file rather
- * than a refactor. Push is the obvious next one: a `PushChannel` with a
- * `WebPushSubscription` table, keys from the environment, and the same
- * `deliver()` signature. Nothing above this layer would change.
+ * One interface, one adapter per channel. Push was the third, added later, and
+ * it needed no change above this layer — which was the claim this shape was
+ * chosen to make good on. The adapters live in `push/channel.ts` and here.
  */
 
 export interface DeliveryTarget {
+  /** Who it is for. Push resolves this to a set of subscribed browsers. */
+  userId: string;
   /** E.164, for channels that need a number. */
   phone: string;
   title: string;
   body: string;
   /** The short form, already rendered at enqueue time. */
   sms: string;
+  /** An in-app path for a channel whose notification can be tapped. */
+  href: string;
+  /** Set for channels that can prioritise, and for collapse decisions. */
+  urgency: NotificationUrgency;
+  /**
+   * Groups messages that supersede each other — one per order. A channel that
+   * supports collapsing shows only the newest.
+   */
+  tag?: string | undefined;
 }
 
 export interface DeliveryOutcome {
   /** The sender that handled it, for support. */
   provider: string;
   providerMessageId: string | null;
+  /**
+   * Anything worth recording that is not a failure — a fan-out that reached
+   * some devices and not others. Kept out of `lastError`, which means failed.
+   */
+  note?: string | undefined;
 }
 
 export interface NotificationChannelAdapter {
@@ -60,14 +78,21 @@ export class SmsChannel implements NotificationChannelAdapter {
 /**
  * Builds the adapter set.
  *
- * SMS resolution can throw — in production with no gateway configured, it
- * refuses rather than pretending. When it does, the channel is simply absent
- * and its deliveries stay PENDING, which is the honest state: nothing was sent
- * and the row still says so.
+ * Both external channels can refuse to be constructed — SMS in production with
+ * no gateway, push with no VAPID keys. When one does, the channel is simply
+ * absent and its deliveries stay PENDING, which is the honest state: nothing
+ * was sent and the row still says so. The moment the configuration appears,
+ * the backlog goes out.
  */
 export function resolveChannels(): Map<NotificationChannel, NotificationChannelAdapter> {
   const adapters = new Map<NotificationChannel, NotificationChannelAdapter>();
   adapters.set(NotificationChannel.IN_APP, new InAppChannel());
+
+  try {
+    adapters.set(NotificationChannel.PUSH, new PushChannel());
+  } catch {
+    // No VAPID keys. `npm run push:keys` prints what to set.
+  }
 
   try {
     adapters.set(NotificationChannel.SMS, new SmsChannel());
@@ -79,3 +104,4 @@ export function resolveChannels(): Map<NotificationChannel, NotificationChannelA
 }
 
 export { SmsDeliveryError };
+
