@@ -10,6 +10,8 @@ import { prisma } from '@/lib/prisma';
 import { formatAddressLine, listAddressBook } from '@/lib/addresses/usage';
 import { formatPhilippineMobile } from '@/lib/auth/phone';
 import { getAccessibleStores } from '@/lib/merchant/access';
+import { getLaunchedPlan } from '@/lib/subscriptions/plans';
+import { liveSubscription } from '@/lib/subscriptions/enrollment';
 import { SignOutButton } from '@/components/auth/SignOutButton';
 import { ActiveSessions } from '@/components/auth/ActiveSessions';
 
@@ -38,15 +40,18 @@ export default async function ProfilePage() {
     redirect('/login?next=%2Fprofile');
   }
 
-  const [addresses, fleetPartner, sessions, stores] = await Promise.all([
-    listAddressBook({ userId: user.id, limit: 5 }),
-    prisma.fleetPartner.findUnique({
-      where: { userId: user.id },
-      include: { serviceVerifications: { include: { service: true } } },
-    }),
-    listActiveSessions(user.id),
-    getAccessibleStores(),
-  ]);
+  const [addresses, fleetPartner, sessions, stores, plan, subscription] =
+    await Promise.all([
+      listAddressBook({ userId: user.id, limit: 5 }),
+      prisma.fleetPartner.findUnique({
+        where: { userId: user.id },
+        include: { serviceVerifications: { include: { service: true } } },
+      }),
+      listActiveSessions(user.id),
+      getAccessibleStores(),
+      getLaunchedPlan(),
+      liveSubscription(user.id),
+    ]);
 
   return (
     <main>
@@ -137,6 +142,42 @@ export default async function ProfilePage() {
           </ul>
         )}
       </section>
+
+      {/* Only shown when there is something to show: no plan launched and no
+          subscription means no row, rather than advertising a tier that does
+          not exist yet. */}
+      {plan || subscription ? (
+        <section aria-labelledby="plus-heading" className="mt-5 px-4">
+          <h2
+            id="plus-heading"
+            className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted"
+          >
+            Plan
+          </h2>
+          <Link
+            href="/plus"
+            className="mt-2 flex items-center justify-between gap-3 rounded-xl bg-surface px-4 py-3 shadow-sm ring-1 ring-black/5"
+          >
+            <span className="min-w-0">
+              <span className="block text-sm font-semibold">
+                {subscription?.plan.name ?? plan?.name}
+              </span>
+              <span className="mt-0.5 block text-[11px] text-ink-muted">
+                {subscription
+                  ? `Aktibo hanggang ${subscription.renewsAt.toLocaleDateString('en-PH', {
+                      day: 'numeric',
+                      month: 'short',
+                      year: 'numeric',
+                    })}`
+                  : 'Tingnan kung ano ang kasama'}
+              </span>
+            </span>
+            <span aria-hidden className="text-xs text-ink-faint">
+              ›
+            </span>
+          </Link>
+        </section>
+      ) : null}
 
       <section aria-labelledby="fleet-heading" className="mt-5 px-4">
         <h2

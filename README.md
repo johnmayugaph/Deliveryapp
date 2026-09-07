@@ -77,6 +77,25 @@ merchants and the customer profile offers a link in:
 | `0917 000 1111` | Nena Bautista | Owner of Aling Nena Carinderia |
 | `0917 000 2222` | Ben Ocampo | Owner of two stores — exercises the picker |
 | `0917 000 3333` | Rosa Lim | Staff at Nena's: queue only, no prices |
+| `0917 000 9999` | Ops Admin | Grants subscriptions and ledger adjustments |
+
+### The subscription tier
+
+*Deliveryapp Plus* is seeded **inactive**. `npm run plan:activate -- plus-monthly`
+turns it on everywhere — the pricing engine, `/plus` and enrollment all read that
+one flag.
+
+It cannot be **sold** yet, and that is deliberate: the app bills cash on delivery
+or credits, and credits are spendable on orders only, so neither rail can take a
+monthly fee. Paid enrollment is refused until a gateway exists. Granting works:
+
+```bash
+npm run plan:comp -- 0917 123 4567 --by 0917 000 9999 "Pilot cohort"
+npm run plan:comp -- 0917 123 4567 --cancel
+```
+
+`0917 000 9999` is the seeded ops admin. A grant must name its grantor and a
+reason — enforced by a CHECK constraint, not just by the script.
 
 ### The fleet side
 
@@ -115,6 +134,8 @@ touching by hand.
 | `npm run db:seed` | Seed |
 | `npm run jobs:orders` | Dispatch offers, order timeouts, auth housekeeping (cron) |
 | `npm run fleet:approve` | Approve or reject a fleet partner for a service |
+| `npm run plan:activate` | List plans, or launch/pull one — the whole launch switch |
+| `npm run plan:comp` | Grant or end a subscription, attributed to an admin |
 
 ## Layout
 
@@ -133,9 +154,10 @@ src/
     wallet/              the credits ledger and its pure rules
     pricing/             delivery rates and subscription-aware checkout pricing
     fleet/               dispatch, offers, and the partner's own view
+    subscriptions/       plans, enrollment, renewal, and the unbuilt charge seam
     merchant/            store access and the order queue
     support/             unified tickets
-  tests/                 233 tests, database-free
+  tests/                 260 tests, database-free
 ```
 
 ## Money

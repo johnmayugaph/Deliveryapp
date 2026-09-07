@@ -44,7 +44,7 @@ brief's changes already folded in.
 | 6 | Real authentication (OTP) | ✅ Done |
 | 7 | Merchant back office | ✅ Done |
 | 8 | Fleet partner app | ✅ Done |
-| 9 | Subscription launch decision | ⬜ Gated on data |
+| 9 | Subscription tier: enrollment, renewal, plan screen | ✅ Built, launch gated |
 | 10 | Second vertical | ⬜ Gated on demand |
 
 ---
@@ -464,17 +464,96 @@ line.
   timeline reaches twelve events at COMPLETED, and a new applicant is blocked
   from going online until the approval script is run.
 
-## Phase 9 — Subscription launch decision ⬜ Gated
+## Phase 9 — Subscription tier ✅ Built, launch still a decision
 
-The plan is seeded and inactive. Before flipping `isActive`, decide from data:
+The pricing engine already read benefits; what was missing was every way onto a
+plan, off it, and out of it. That half is now built, so launching is a decision
+rather than a project.
+
+### What landed
+
+- **`SubscriptionOrigin`** on `UserSubscription`, required with no default:
+  `PAID`, `COMPED`, `PROMOTIONAL`. Grants carry `grantedByUserId` and
+  `grantNote`.
+- **`src/lib/subscriptions/`** — `plans.ts` (read plans, describe benefits from
+  their columns), `enrollment.ts` (enroll, cancel, month-to-date usage),
+  `renewal.ts` (the term sweep), `payment.ts` (the charge seam).
+- **`/plus`** — the plan built from benefit rows, month-to-date consumption for a
+  subscriber, cancel, and an entry point on the profile.
+- **`npm run plan:activate`** — the launch switch, and the only one.
+  **`npm run plan:comp`** — grant or end a subscription, `--by` an admin, with a
+  reason.
+- **Three SQL guards**: one live subscription per person (partial unique index),
+  a grant must name its grantor, a terminal subscription must say when it ended.
+- **An ops admin in the seed** (`0917 000 9999`). Without an account holding
+  ADMIN or SUPPORT_AGENT, neither a grant nor a ledger ADJUSTMENT is possible.
+
+### The thing that decided the shape of this phase
+
+**A paid subscription cannot be created, and that is the credits constraint
+working.** The app bills cash on delivery, collected by a rider against one
+order, or credits — which are rewards we grant, spendable on orders only,
+enforced in code, in SQL triggers and in tests. Neither rail can take ₱99 a
+month. Charging it to credits would break the constraint outright and would be a
+comp wearing revenue's clothes.
+
+So `payment.ts` holds the seam with no implementation, `PAID` enrollment is
+refused at the door, and `/plus` says why instead of offering a button that
+would fail. Grants are the only way onto a plan today, which is honest: they are
+what we can actually deliver.
+
+**Launching therefore means two decisions, not one.** Flipping `isActive` turns
+the benefits on for anyone holding a subscription — useful immediately for a
+pilot cohort, staff, or goodwill. Selling it needs a payment provider first.
+
+### Still to decide before selling it
 
 - Would free delivery over ₱299 (8×/month) pay for itself at current fees?
 - Is the 2% credit-back ceiling of ₱200/month the right exposure?
 - Does ₱99/month clear the average monthly delivery-fee spend of the customers
   most likely to subscribe?
+- **Which payment provider**, and whether a paid cancellation should keep its
+  benefits to the end of the term (it should; the code names both places to
+  change).
 
-Flipping `isActive` is the entire launch mechanism — the pricing engine picks it
-up with no deploy. Which also means it should not be flipped casually.
+### A login bug this phase's verification found
+
+Signing in **500'd for anyone who submitted the code before the page hydrated**.
+A pre-hydration submission arrives as a plain form post, which Next runs with no
+request scope, so `cookies()` throws — and the session row had already been
+written by then, leaving a token nobody held in the table on every attempt.
+
+Yesterday's browser runs passed only because the script happened to wait for
+hydration; this run did not, and caught it. Three changes:
+
+1. `createSession()` resolves the cookie store **before** writing the row, and
+   throws a typed `SessionCookieUnavailableError` instead of a raw one.
+2. The login action catches it and returns "the page is still loading, try
+   again" rather than a 500.
+3. The code step's submit waits for hydration, with a `<noscript>` note saying
+   plainly that finishing a sign-in needs JavaScript — because a login *is* a
+   cookie, and that one step genuinely cannot degrade.
+
+Four tests cover it, including that no `Session` row is written when the cookie
+cannot be set. Two of them fail against the old ordering.
+
+### Verification
+
+- `npm run verify` — **260 tests** (up from 233): 23 on the subscription
+  lifecycle, 4 on the session cookie.
+- **32 end-to-end checks** against live PostgreSQL, re-runnable: the launch gate,
+  paid enrollment refused, a grant with no grantor refused in both the code and
+  the database, the one-live-subscription index, benefits applying at checkout
+  and stopping at their caps, an inactive plan granting nothing to an existing
+  subscriber, the grant term expiring with `endedAt` set to the term end, the
+  paid path going PAST_DUE then EXPIRED after grace, and cancellation freeing the
+  slot.
+- **A browser run** of the whole surface: sign-up closed with the reason,
+  a comp granted from the CLI appearing on `/plus` with month-to-date lines,
+  checkout showing *Libreng delivery −₱39* and *5% off −₱20* with the fee still
+  at full value, cancel, and the plan pulled — profile hiding the row again.
+- **The no-JavaScript path** checked separately: step one still works, step two
+  says why it cannot.
 
 ## Phase 10 — Second vertical ⬜ Gated on demand
 
@@ -504,8 +583,10 @@ is the return on this phase's design, and the thing to protect in review.
   is the single biggest gap left in the working product.
 - **Dispatch has no worker.** Offers are created by cron, so how fast a partner
   sees a job depends on how often it runs.
-- **No admin console.** Fleet approval is a CLI script; store membership and
-  service activation are seeded or edited by hand.
+- **No admin console.** Fleet approval, plan activation and subscription grants
+  are CLI scripts; store membership is seeded or edited by hand.
+- **No subscription payment rail.** A tier exists and can be granted, but not
+  sold. See Phase 9.
 - **No live location on the tracking screen.** The customer sees statuses, not a
   moving pin, even though partner positions are stored.
 - **No ratings.** `ratingAvg` and `ratingCount` are read by dispatch ranking but

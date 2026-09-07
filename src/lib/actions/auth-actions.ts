@@ -12,6 +12,7 @@ import { normalisePhilippineMobile } from '@/lib/auth/phone';
 import type { LoginFormState } from '@/lib/auth/login-state';
 import {
   createSession,
+  SessionCookieUnavailableError,
   getClientIp,
   requireCurrentUser,
   revokeOtherSessions,
@@ -83,7 +84,23 @@ export async function loginFormAction(
     return { step: 'code', phone: normaliseQuietly(rawPhone), error: checked.message };
   }
 
-  await createSession(checked.userId);
+  try {
+    await createSession(checked.userId);
+  } catch (error) {
+    // A form submitted before the page hydrated arrives without a request
+    // scope, so the cookie cannot be set. The code has already been consumed by
+    // `checkLoginCode`, so send them back for a new one rather than leaving them
+    // staring at a code that will now be refused.
+    if (error instanceof SessionCookieUnavailableError) {
+      return {
+        step: 'phone',
+        phone: normaliseQuietly(rawPhone),
+        error: 'Hindi pa tapos mag-load ang page. Subukan muli.',
+      };
+    }
+    throw error;
+  }
+
   revalidatePath('/', 'layout');
   redirect(checked.needsOnboarding ? '/welcome' : next);
 }

@@ -202,6 +202,23 @@ enum SubscriptionStatus {
   EXPIRED
 }
 
+/// How a subscription came to exist.
+///
+/// This is not decoration. A PAID subscription requires money to have changed
+/// hands, and the app has no rail for that: `Order` payments are cash-on-delivery
+/// or credits, and credits are spendable on orders only — by design, so they
+/// cannot be turned into a subscription charge. Until a gateway exists, PAID
+/// enrollment is refused at the door and the two grant origins are the only way
+/// a subscription is created.
+enum SubscriptionOrigin {
+  /// Charged to a payment method. Needs a gateway; refused without one.
+  PAID
+  /// Given by us, deliberately, to a named person. Support goodwill, staff, a pilot.
+  COMPED
+  /// Given by a campaign — a launch cohort, a referral reward.
+  PROMOTIONAL
+}
+
 /// Benefits are structured records the pricing engine reads, not marketing
 /// copy. Each type uses a documented subset of the columns on
 /// `SubscriptionBenefit`.
@@ -359,6 +376,7 @@ model User {
   sessions           Session[]
   storeMemberships   StoreMember[]
   fleetDecisions     FleetPartnerServiceVerification[] @relation("FleetVerificationDecider")
+  grantedSubscriptions UserSubscription[]              @relation("SubscriptionGrants")
 
   @@index([roles], type: Gin)
   @@index([preferredCityId])
@@ -1046,6 +1064,15 @@ model UserSubscription {
 
   status SubscriptionStatus @default(ACTIVE)
 
+  /// No default: how a subscription was obtained is never a guess.
+  origin SubscriptionOrigin
+
+  /// Who granted a COMPED or PROMOTIONAL subscription, and why. A grant with no
+  /// grantor is how comps quietly become policy.
+  grantedByUserId String?
+  grantedBy       User?   @relation("SubscriptionGrants", fields: [grantedByUserId], references: [id])
+  grantNote       String?
+
   startedAt   DateTime  @default(now())
   renewsAt    DateTime
   cancelledAt DateTime?
@@ -1056,9 +1083,13 @@ model UserSubscription {
 
   benefitUsages SubscriptionBenefitUsage[]
 
-  /// One live subscription per person; history is preserved by `endedAt`.
+  /// One live subscription per person, enforced by a partial unique index in
+  /// `prisma/sql/subscriptions.sql` — Prisma cannot express one, and an index
+  /// alone would not stop a double enrollment from a double-clicked button.
+  /// History is preserved by `endedAt`.
   @@index([userId, status])
   @@index([status, renewsAt])
+  @@index([grantedByUserId])
 }
 
 /// Tracks consumption of capped benefits within a calendar month, so

@@ -750,6 +750,87 @@ makes the seeded plan safe to leave in place.
 over ₱299 (8×/month), 5% off Kainan (₱100 cap), 2% credits back (₱200/month
 cap). It stays off until there is a decision to launch it.
 
+### Enrollment, and why it cannot be paid for yet
+
+`isActive` is the **entire launch mechanism**, and now gates in three places:
+the pricing engine, the plan screen, and `enrollInPlan()`. `npm run plan:activate
+-- <slug>` flips it; nothing else turns the tier on.
+
+**A paid subscription cannot be created.** This is not an omission, it is the
+credits constraint holding. The app has two money rails — cash a rider collects
+against a specific order, and credits, which are rewards we grant and which are
+*spendable on orders only*, enforced in the ledger, in SQL triggers, and in
+tests. Neither can bill ₱99 a month. `resolveSubscriptionCharger()` in
+`src/lib/subscriptions/payment.ts` therefore has no implementations and throws;
+`enrollInPlan({ origin: PAID })` refuses at the door, and the plan screen says
+why rather than offering a button that would fail. The alternative — a stub that
+records a charge nobody made — is the same failure mode as an SMS "sender" that
+prints to a console in production.
+
+So `UserSubscription.origin` is required, with no default:
+
+| Origin | Means | Available today |
+| --- | --- | --- |
+| `PAID` | Charged to a payment method | No — needs a gateway |
+| `COMPED` | Given deliberately to a named person | Yes |
+| `PROMOTIONAL` | Given by a campaign | Yes |
+
+A grant is **attributable**: `grantedByUserId` and `grantNote` are required for
+both grant origins, enforced by a CHECK constraint, and the granting script
+requires `--by <admin phone>` where that account holds ADMIN or SUPPORT_AGENT. A
+comp is revenue we chose not to collect, and a comp list nobody can attribute is
+how that choice stops being a choice. The seed now creates an ops admin
+(`0917 000 9999`) because without an account holding one of those roles, neither
+a grant nor a ledger ADJUSTMENT is possible at all.
+
+**One live subscription per person**, where ACTIVE and PAST_DUE both count as
+live. Checked in `enrollInPlan()` for the error message and enforced by a partial
+unique index in `prisma/sql/subscriptions.sql`, because a double-clicked button
+beats any check-then-write.
+
+### Renewal
+
+`sweepDueSubscriptions()` runs from the same cron as the order timeouts. It is
+**record-keeping, not enforcement**: the pricing engine already requires
+`renewsAt > now`, so a lapsed subscription stops conferring benefits the instant
+it lapses whether or not the cron has run. A cron that has not run for an hour
+must not hand out an hour of unpaid benefits.
+
+`decideRenewal()` is pure, and the two origins differ:
+
+- **A grant does not renew itself.** It expires at its term, and `endedAt` is set
+  to `renewsAt` — when the term ended, not when the cron noticed. Re-granting is
+  a deliberate act, the same way approving a fleet partner for a second service
+  is.
+- **A paid subscription** whose charge fails goes PAST_DUE and stays live for
+  `PAST_DUE_GRACE_DAYS` (3), so a card that fails on a Friday has the weekend to
+  be fixed. That path is unreachable today; it is written and tested anyway, so
+  the day a provider lands it is already right.
+
+### Cancelling
+
+Immediate, not at period end: every subscription that exists today is a grant, so
+there is nothing paid-for to run down. When a gateway lands, a paid cancellation
+should keep its benefits until `renewsAt`, which means setting `endedAt` to
+`renewsAt` in `cancelSubscription()` and relaxing the `endedAt: null` filter in
+`getActiveSubscription()`. Both are named in the code so the change is one search
+away.
+
+### The plan screen
+
+`/plus` is assembled from the benefit rows: `displayLabel` for the marketing
+line, and `benefitTerms()` for the mechanics under it, read off the same columns
+`applyBenefits()` compares against. The screen cannot promise a benefit checkout
+will not honour. A subscriber also sees month-to-date consumption, read from the
+`SubscriptionBenefitUsage` rows the engine writes — not a second tally that could
+disagree with the first.
+
+**A known trade-off:** pulling a plan stops benefits for existing subscribers
+immediately, because `getActiveSubscription()` requires an active plan. That is
+right while every subscription is a grant, and wrong the moment somebody has
+paid for the month — revisit it with the gateway. `/plus` marks the state
+(*"Naka-pause ang plan"*) rather than showing a plan that quietly does nothing.
+
 ---
 
 ## 7. Home screen

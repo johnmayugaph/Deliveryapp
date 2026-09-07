@@ -21,7 +21,9 @@
     "db:seed": "tsx prisma/seed.ts",
     "verify": "npm run typecheck && npm run test",
     "jobs:orders": "tsx scripts/run-order-maintenance.ts",
-    "fleet:approve": "tsx scripts/approve-fleet-partner.ts"
+    "fleet:approve": "tsx scripts/approve-fleet-partner.ts",
+    "plan:activate": "tsx scripts/activate-plan.ts",
+    "plan:comp": "tsx scripts/grant-subscription.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

@@ -11,6 +11,10 @@ import { ALL_STATUS_TIMEOUTS } from '@/lib/orders/transitions';
 import { grantCredit, refundToCredits } from '@/lib/wallet/ledger';
 import { pruneSessions, pruneVerifications } from '@/lib/auth/prune';
 import {
+  sweepDueSubscriptions,
+  type RenewalOutcome,
+} from '@/lib/subscriptions/renewal';
+import {
   expireDispatchOffers,
   fanOutDispatchOffers,
   type FanOutResult,
@@ -252,6 +256,7 @@ export async function runMaintenance(): Promise<{
   expiredOffers: number;
   dispatched: FanOutResult[];
   expired: ExpiredOrderResult[];
+  subscriptions: RenewalOutcome[];
   prunedVerifications: number;
   prunedSessions: number;
 }> {
@@ -261,8 +266,19 @@ export async function runMaintenance(): Promise<{
   const expiredOffers = await expireDispatchOffers();
   const dispatched = await fanOutDispatchOffers();
   const expired = await expireStaleOrders();
+  // Subscriptions are swept after the order work: a lapsed subscription already
+  // grants nothing (the pricing engine checks `renewsAt`), so this is
+  // record-keeping and can wait behind anything a customer is watching.
+  const subscriptions = await sweepDueSubscriptions();
   const prunedVerifications = await pruneVerifications();
   const prunedSessions = await pruneSessions();
 
-  return { expiredOffers, dispatched, expired, prunedVerifications, prunedSessions };
+  return {
+    expiredOffers,
+    dispatched,
+    expired,
+    subscriptions,
+    prunedVerifications,
+    prunedSessions,
+  };
 }

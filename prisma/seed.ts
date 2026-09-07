@@ -591,6 +591,24 @@ async function seedUsers() {
     },
   });
 
+  // An operations account. Two things in the app require a named human rather
+  // than "the system": a ledger ADJUSTMENT, and granting a subscription. Both
+  // constraints are enforced in SQL, so without an account holding one of these
+  // roles neither is possible at all.
+  await prisma.user.upsert({
+    where: { phone: '+639170009999' },
+    create: {
+      phone: '+639170009999',
+      fullName: 'Ops Admin',
+      displayName: 'Ops',
+      roles: [UserRole.ADMIN, UserRole.SUPPORT_AGENT],
+      preferredCityId: 'city_manila',
+      phoneVerifiedAt: new Date(),
+      onboardedAt: new Date(),
+    },
+    update: { roles: [UserRole.ADMIN, UserRole.SUPPORT_AGENT] },
+  });
+
   // Credits accounts. Balances stay at zero here: the ledger is the only way to
   // move a balance, and a seed has no business writing that column directly.
   for (const user of [juan, maria]) {
@@ -675,7 +693,10 @@ async function seedUsers() {
     });
   }
 
-  console.log(`  users: 2 (maria holds ${maria.roles.length} roles), fleet partners: 1`);
+  console.log(
+    `  users: 3 (maria holds ${maria.roles.length} roles, plus an ops admin), ` +
+      'fleet partners: 1',
+  );
 }
 
 async function main() {

@@ -81,12 +81,45 @@ async function getUserAgent(): Promise<string | undefined> {
 }
 
 /**
+ * Raised when a session cannot be started because there is no request to attach
+ * the cookie to.
+ *
+ * This is reachable: a login form submitted BEFORE the page hydrates is
+ * delivered as a plain form post, and Next runs the action without a request
+ * scope, so `cookies()` throws. Signing in is the one flow that cannot
+ * degrade gracefully — its entire output is a cookie — so the honest response
+ * is to say "the page is still loading, try again" rather than to appear to
+ * succeed.
+ */
+export class SessionCookieUnavailableError extends Error {
+  constructor() {
+    super(
+      'No request scope, so the session cookie cannot be set. A login form ' +
+        'submitted before the page hydrated arrives this way.',
+    );
+    this.name = 'SessionCookieUnavailableError';
+  }
+}
+
+/**
  * Starts a session and sets the cookie.
  *
  * Called only after a code has been verified. Returns nothing useful on
  * purpose: the token exists in the cookie and in no variable a caller might log.
+ *
+ * The cookie store is resolved FIRST, before the row is written. Doing it the
+ * other way round left an unusable `Session` row behind on every pre-hydration
+ * submission — a token nobody holds, sitting in the table until the pruner
+ * reached it.
  */
 export async function createSession(userId: string): Promise<void> {
+  let cookieStore: Awaited<ReturnType<typeof cookies>>;
+  try {
+    cookieStore = await cookies();
+  } catch {
+    throw new SessionCookieUnavailableError();
+  }
+
   const token = generateSessionToken();
   const clientIp = await getClientIp();
 
@@ -100,7 +133,6 @@ export async function createSession(userId: string): Promise<void> {
     },
   });
 
-  const cookieStore = await cookies();
   cookieStore.set(SESSION_COOKIE, token, {
     httpOnly: true, // not readable by script, so XSS cannot lift it
     sameSite: 'lax', // survives a normal link click, blocks cross-site POSTs

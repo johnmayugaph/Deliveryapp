@@ -4,10 +4,11 @@
  *
  *     npm run jobs:orders
  *
- * Does four things, in order: closes dispatch offers nobody answered, offers
+ * Does five things, in order: closes dispatch offers nobody answered, offers
  * waiting orders to their best candidates, expires orders that have waited too
  * long in a state their lifecycle declares a timeout for (refunding any credits
- * they consumed), and prunes spent login codes and dead sessions.
+ * they consumed), ends subscriptions whose term has run out, and prunes spent
+ * login codes and dead sessions.
  *
  * Dispatch has no background worker, so how quickly a partner sees an offer is
  * bounded by how often this runs. Every minute or two is right.
@@ -18,8 +19,14 @@ import { prisma } from '../src/lib/prisma';
 import { formatCentavos } from '../src/lib/money';
 
 async function main() {
-  const { expiredOffers, dispatched, expired, prunedVerifications, prunedSessions } =
-    await runMaintenance();
+  const {
+    expiredOffers,
+    dispatched,
+    expired,
+    subscriptions,
+    prunedVerifications,
+    prunedSessions,
+  } = await runMaintenance();
 
   if (expiredOffers > 0) {
     console.log(`Expired ${expiredOffers} unanswered dispatch offer(s).`);
@@ -30,6 +37,13 @@ async function main() {
     } else {
       console.log(`${result.orderNumber}: offered to ${result.offersCreated} partner(s).`);
     }
+  }
+
+  for (const result of subscriptions) {
+    console.log(
+      `Subscription ${result.subscriptionId} (${result.origin}): ` +
+        `${result.fromStatus} -> ${result.toStatus} — ${result.reason}`,
+    );
   }
 
   if (prunedVerifications > 0 || prunedSessions > 0) {

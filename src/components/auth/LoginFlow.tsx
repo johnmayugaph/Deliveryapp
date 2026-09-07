@@ -12,9 +12,17 @@ import { formatPhilippineMobile, maskPhilippineMobile } from '@/lib/auth/phone';
  * which means the form posts and works before hydration attaches. That is not
  * theoretical here: this app targets low-end Android phones on patchy mobile
  * data, and a `useState`-driven version loses whatever was typed before the
- * JavaScript arrived while leaving the submit button disabled. The countdown
- * below is the only part that needs JavaScript, and its absence just means the
- * server enforces the cooldown instead of the button.
+ * JavaScript arrived while leaving the submit button disabled.
+ *
+ * The SECOND step is the exception, and it is not a choice. A pre-hydration
+ * submission is delivered as a plain form post, which Next runs without a
+ * request scope — so `cookies()` throws and no session can be set. Sending a
+ * code degrades fine; finishing a login cannot, because a login IS a cookie. So
+ * the code step's submit waits for hydration, and the server still refuses
+ * gracefully if one gets through (see `SessionCookieUnavailableError`).
+ *
+ * The countdown needs JavaScript too, and its absence just means the server
+ * enforces the cooldown instead of the button.
  *
  * A login and a signup are the same request, and the screen never says which
  * one happened, so there is nothing here that reveals whether a number already
@@ -27,6 +35,10 @@ export function LoginFlow({ redirectTo }: { redirectTo: string }) {
   );
 
   const [cooldown, setCooldown] = useState(0);
+
+  // False until the client has hydrated. Gates only the code step's submit.
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => setHydrated(true), []);
 
   // Start the countdown whenever the server reports one.
   useEffect(() => {
@@ -122,9 +134,19 @@ export function LoginFlow({ redirectTo }: { redirectTo: string }) {
 
       {error}
 
+      {/* Without JavaScript the submit above never enables, because the post
+          it would make cannot set a cookie. Say that plainly instead of
+          leaving a dead button. */}
+      <noscript>
+        <p className="mb-2 rounded-lg bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-900">
+          Kailangan ng JavaScript para matapos ang sign-in. I-on ito o gamitin
+          ang ibang browser.
+        </p>
+      </noscript>
+
       <button
         type="submit"
-        disabled={isPending}
+        disabled={isPending || !hydrated}
         className="w-full rounded-xl bg-brand-700 px-4 py-3.5 text-sm font-bold text-white transition-colors hover:bg-brand-800 disabled:cursor-not-allowed disabled:bg-ink-faint"
       >
         {isPending ? 'Checking…' : 'Magpatuloy'}
