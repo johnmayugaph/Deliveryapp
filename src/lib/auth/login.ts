@@ -4,6 +4,7 @@ import { requestLoginCode, verifyLoginCode } from '@/lib/auth/otp';
 import { THROTTLE_MESSAGES, VERIFY_FAILURE_MESSAGES } from '@/lib/auth/otp-policy';
 import { ensureWallet } from '@/lib/wallet/ledger';
 import { SIGN_IN_REFUSED_MESSAGE, signInIsPermitted } from '@/lib/demo/policy';
+import { verifyLoginChallenge, type CaptchaVerifier } from '@/lib/auth/captcha';
 
 /**
  * The login flow's orchestration, as plain functions.
@@ -24,6 +25,10 @@ export type SendCodeResult =
 export async function sendLoginCode(input: {
   rawPhone: string;
   clientIp?: string | undefined;
+  /** The CAPTCHA token from the form, when this deployment asks for one. */
+  captchaToken?: string | undefined;
+  /** Injected by tests. */
+  captchaVerifier?: CaptchaVerifier | null;
 }): Promise<SendCodeResult> {
   let phone: string;
   try {
@@ -33,6 +38,27 @@ export async function sendLoginCode(input: {
       return { ok: false, message: 'Enter your mobile number, e.g. 0917 123 4567.' };
     }
     throw error;
+  }
+
+  /**
+   * The CAPTCHA is checked BEFORE the number is looked at any further, and
+   * before anything is written or sent.
+   *
+   * Order matters for two reasons. It is the only ordering in which a refused
+   * request costs nothing — no row, no gateway call, no peso — and it is the
+   * only one that keeps the no-enumeration property: a bot that fails the
+   * check learns nothing about the number it tried, because nothing about the
+   * number was consulted.
+   */
+  const challenge = await verifyLoginChallenge({
+    token: input.captchaToken,
+    clientIp: input.clientIp,
+    ...(input.captchaVerifier === undefined
+      ? {}
+      : { verifier: input.captchaVerifier }),
+  });
+  if (!challenge.allowed) {
+    return { ok: false, message: challenge.message };
   }
 
   const outcome = await requestLoginCode({ rawPhone: phone, clientIp: input.clientIp });

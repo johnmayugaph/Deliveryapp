@@ -4,6 +4,7 @@ import { useActionState, useEffect, useState } from 'react';
 import { loginFormAction } from '@/lib/actions/auth-actions';
 import { INITIAL_LOGIN_STATE, type LoginFormState } from '@/lib/auth/login-state';
 import { formatPhilippineMobile, maskPhilippineMobile } from '@/lib/auth/phone';
+import { CaptchaField } from '@/components/auth/CaptchaField';
 
 /**
  * Phone entry, then code entry.
@@ -27,8 +28,20 @@ import { formatPhilippineMobile, maskPhilippineMobile } from '@/lib/auth/phone';
  * A login and a signup are the same request, and the screen never says which
  * one happened, so there is nothing here that reveals whether a number already
  * has an account.
+ *
+ * The CAPTCHA, where one is configured, appears on BOTH steps — because both
+ * steps can send a text. "Resend code" is the same server call as "send the
+ * code" with the number already filled in, so exempting it would leave the
+ * bypass wide open and cost exactly as much per request.
  */
-export function LoginFlow({ redirectTo }: { redirectTo: string }) {
+export function LoginFlow({
+  redirectTo,
+  captchaSiteKey,
+}: {
+  redirectTo: string;
+  /** Absent when this deployment has no CAPTCHA configured. */
+  captchaSiteKey?: string | undefined;
+}) {
   const [state, formAction, isPending] = useActionState<LoginFormState, FormData>(
     loginFormAction,
     INITIAL_LOGIN_STATE,
@@ -86,6 +99,8 @@ export function LoginFlow({ redirectTo }: { redirectTo: string }) {
           />
         </div>
 
+        {captchaSiteKey ? <CaptchaField siteKey={captchaSiteKey} /> : null}
+
         {error}
 
         <button
@@ -131,6 +146,10 @@ export function LoginFlow({ redirectTo }: { redirectTo: string }) {
           className="mt-2 w-full rounded-xl bg-surface-sunken px-3 py-3 text-center text-2xl font-semibold tracking-[0.35em] tabular-nums ring-1 ring-black/5 focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
       </div>
+
+      {/* Here for the resend below, which is the same server call as "send
+          the code" and costs the same peso. */}
+      {captchaSiteKey ? <CaptchaField siteKey={captchaSiteKey} /> : null}
 
       {error}
 

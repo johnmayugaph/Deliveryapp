@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/session';
 import { safeNextPath } from '@/lib/auth/login';
+import { isCaptchaConfigured } from '@/lib/auth/captcha';
 import { Wordmark } from '@/components/brand/Wordmark';
 import { LoginFlow } from '@/components/auth/LoginFlow';
 
@@ -25,6 +26,10 @@ export default async function LoginPage({
     redirect(user.onboardedAt === null ? '/welcome' : safeNextPath(next));
   }
 
+  const captchaSiteKey = isCaptchaConfigured()
+    ? process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY
+    : undefined;
+
   return (
     <main className="px-4 py-10">
       <header>
@@ -36,7 +41,14 @@ export default async function LoginPage({
       </header>
 
       <div className="mt-6 rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5">
-        <LoginFlow redirectTo={safeNextPath(next)} />
+        <LoginFlow
+          redirectTo={safeNextPath(next)}
+          /* Read here, at request time, rather than inlined into the client
+             bundle — so rotating the key pair is a restart rather than a
+             rebuild. Passed only when BOTH halves are set: a site key with no
+             secret would render a widget whose token nothing checks. */
+          {...(captchaSiteKey === undefined ? {} : { captchaSiteKey })}
+        />
       </div>
 
       {/* The one route out for somebody whose number is gone. Quiet, because

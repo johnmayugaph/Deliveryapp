@@ -4,6 +4,7 @@ import { requireAdmin } from '@/lib/admin/access';
 import { deliveryHealth, demoDataPresence } from '@/lib/admin/queries';
 import { resolveChannels } from '@/lib/notifications/channels';
 import { isPushConfigured } from '@/lib/notifications/push/vapid';
+import { captchaIsHalfConfigured, isCaptchaConfigured } from '@/lib/auth/captcha';
 import { requeueDeliveryAction } from '@/lib/actions/admin-actions';
 import { ReasonForm } from '@/components/admin/ReasonForm';
 import {
@@ -132,6 +133,23 @@ export default async function AdminHealthPage() {
         </div>
       ) : null}
 
+      {captchaIsHalfConfigured() ? (
+        <div className="rounded-xl bg-red-50 px-4 py-3 text-xs leading-relaxed text-red-900 ring-1 ring-red-200">
+          <p className="font-semibold">
+            The CAPTCHA has one key, not two — so it is doing nothing.
+          </p>
+          <p className="mt-1">
+            <code>TURNSTILE_SECRET_KEY</code> and{' '}
+            <code>NEXT_PUBLIC_TURNSTILE_SITE_KEY</code> are both required. With
+            only one set the login screen deliberately behaves as though no
+            CAPTCHA were configured, because the alternative — a widget nobody
+            can solve, or a token nobody checks — would lock every customer out
+            rather than let a few extra requests through. The rate limits are
+            still in force. Set the other half.
+          </p>
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Sent" value={String(totals.sent)} />
         <Stat label="Queued" value={String(totals.pending)} note="waiting for the next pass" />
@@ -200,6 +218,15 @@ export default async function AdminHealthPage() {
             label="Cron"
             value="jobs:orders"
             note="delivers the outbox on every run"
+          />
+          <Stat
+            label="Login CAPTCHA"
+            value={isCaptchaConfigured() ? 'On' : 'Off'}
+            note={
+              isCaptchaConfigured()
+                ? 'Turnstile, checked before any code is sent'
+                : 'rate limits only — every request past them costs a peso'
+            }
           />
         </div>
       </Panel>

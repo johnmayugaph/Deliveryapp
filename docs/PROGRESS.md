@@ -1054,3 +1054,51 @@ notification bell would be; a coming-soon tap returns the honest line and holds
 it across a reload; and tile → service → store → menu → add to cart → cart bar
 → `/checkout` → `/login?next=%2Fcheckout` works end to end with the cart
 intact afterwards. 528 tests pass; build and lint clean.
+
+## Phase 16 — a CAPTCHA on the login screen
+
+The last unbuilt item on the pre-launch list that was about money rather than
+paperwork. Three rate limits guarded the code request and held against a
+careless script; they did not hold against somebody with a list of numbers and
+a few hundred addresses, and every request through costs a peso.
+
+Cloudflare Turnstile now sits in front of `sendLoginCode()`, behind the same
+kind of interface the SMS gateway has. Free at any volume, silent for a normal
+browser, and no advertising profile of the person signing in.
+
+**Checked before anything is spent** — before the number is examined further,
+before a row is written, before the gateway is called. That ordering is the
+only one where a refusal costs nothing, and the only one that keeps the
+no-enumeration property: a bot that fails the check learns nothing about the
+number it tried.
+
+**The design decision worth arguing about** is that this fails OPEN when
+Cloudflare cannot be reached, against the instinct everywhere else in this
+codebase. A missing or rejected token is refused — that is evidence. An
+unreachable verifier is evidence of nothing but somebody else's outage, and
+failing closed on it would stop every customer in the country ordering dinner
+to prevent an attacker spending SMS credit that three independent limits still
+cap. The CAPTCHA is a cost control; the security boundary is the code sent to a
+phone somebody holds. There is a test asserting the asymmetry so that tidying
+it into consistency is a failing build.
+
+Half a key pair reads as "off", not as a lockout, and the console says so in
+red — a secret with no site key renders no widget, so nobody could produce a
+token and nobody could sign in.
+
+**The honest price**: the first login step was built to work before the page
+hydrated, and a CAPTCHA cannot be. With a pair configured, signing in needs
+JavaScript, and the screen says so instead of showing a button that will be
+refused.
+
+**Verified**: 24 checks including wire-level assertions of the exact bytes
+Cloudflare would receive (method, content type, secret, token, `remoteip`, and
+the percent-encoding of a token containing `+` and `/`) and every response
+shape siteverify can give. Then the whole path through the real login form
+against a local stand-in — no token, a forged token and an expired token all
+refused **with no code row written and no SMS attempted**, a good token
+reaching the code step, our own bad secret letting the person through — and the
+half-a-pair case confirmed not to lock anybody out. No real token has been
+checked against Cloudflare: this environment has no route to it.
+
+552 tests pass; build and lint clean.

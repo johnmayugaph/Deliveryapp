@@ -1306,6 +1306,91 @@ anonymous tap is attributed to the default city. The per-city breakdown is only
 as good as the accounts column — which is the column the console already tells
 you to trust.
 
+## The CAPTCHA on the login screen
+
+Three rate limits already guard the code request — three per number per fifteen
+minutes, twelve per address per hour, a forty-five second resend cooldown — and
+they hold against a careless script. What they do not hold against is somebody
+with a list of numbers and a few hundred addresses, and **every request that
+gets through costs a peso of ours**.
+
+So Cloudflare Turnstile sits in front of `sendLoginCode()`, behind the same kind
+of interface the SMS gateway has (`src/lib/auth/captcha/`). Free at any volume,
+silent for a normal browser — which matters on a low-end handset over patchy
+mobile data, where "click the six squares containing a bus" is a reason to give
+up on ordering — and it builds no advertising profile of the person signing in.
+
+**It is a cost control, not an authentication control.** The boundary on an
+account is the six-digit code sent to a phone somebody physically holds; a
+CAPTCHA does not strengthen that by a bit. Every decision below follows from
+keeping that straight.
+
+### Checked before anything is spent
+
+The verification happens before the number is looked at any further, before a
+row is written and before the gateway is called. That ordering is the only one
+where a refused request costs nothing, and the only one that preserves the
+no-enumeration property: a bot that fails the check learns nothing about the
+number it tried, because nothing about the number was consulted.
+
+### The asymmetry, which is the whole design
+
+| What happened | Answer |
+| --- | --- |
+| No CAPTCHA configured | **Allowed** — the rate limits carry the load, exactly as before |
+| Token checks out | **Allowed** |
+| Token missing, or rejected by Cloudflare | **Refused** |
+| Verifier unreachable, timed out, 5xx, or *our* secret rejected | **Allowed**, and logged loudly |
+
+The last row is a deliberate decision to fail **open**, against this codebase's
+usual instinct, and it is asserted in a test so that "tidying" it into
+consistency is a failing build. Failing closed would mean an outage at
+Cloudflare stops every customer in the country ordering dinner, every rider
+earning and every store selling — to prevent an attacker from spending SMS
+credit that three independent limits still cap. That trades a bounded cost for
+an unbounded one. Nobody reaches an account without the code.
+
+`missing-input-secret` and `invalid-input-secret` are treated as unavailability
+rather than rejection for the same reason: those are *our* misconfiguration, and
+refusing every customer over it would be loud in the log and invisible on the
+screen.
+
+### Both keys, or none
+
+`isCaptchaConfigured()` requires `TURNSTILE_SECRET_KEY` **and**
+`NEXT_PUBLIC_TURNSTILE_SITE_KEY`. Half a pair is a deployment where the widget
+never renders and nobody can produce a token — reading that as "configured"
+would lock out every customer, so it reads as "off" and the console says so in
+red. The site key is read at request time rather than inlined into the client
+bundle, so rotating the pair is a restart rather than a rebuild.
+
+### The widget, and what it costs
+
+Rendered explicitly rather than by the script's own DOM scan, because that scan
+runs once on load and would never find the second step's widget. It appears on
+**both** steps: "resend code" is the same server call as "send the code" with
+the number already filled in, so exempting it would leave the bypass open at
+identical cost per request.
+
+The honest price of switching this on: the first login step was built to work
+before the page has hydrated, and a CAPTCHA cannot be — it is JavaScript by
+construction. With a pair configured, signing in needs JavaScript, and both the
+`<noscript>` note and the script-failed message say so rather than presenting a
+button that will be refused.
+
+### Verified
+
+Wire tests run the adapter against a real HTTP server on a loopback socket and
+assert the bytes Cloudflare would receive — method, content type, `secret`,
+`response`, `remoteip`, and the percent-encoding of a token containing `+` and
+`/` — plus every response shape siteverify can answer with. Then the whole path
+was driven through the real login form against a local stand-in: no token, a
+forged token and an expired token are all refused **with no `PhoneVerification`
+row written and no SMS attempted**, a good token reaches the code step, and a
+rejected secret lets the person through. What none of it establishes is
+Cloudflare's own behaviour — this environment has no route to
+`challenges.cloudflare.com`, so no real token has ever been checked from here.
+
 ## Demo data, and why it cannot be allowed to matter
 
 `prisma/seed.ts` writes six accounts and three stores so a fresh clone has

@@ -62,7 +62,14 @@ export async function loginFormAction(
   const wantsNewCode = intent === 'resend' || rawCode.length === 0;
 
   if (wantsNewCode) {
-    const sent = await sendLoginCode({ rawPhone, clientIp: await getClientIp() });
+    // Turnstile posts its token under this exact field name; the widget adds
+    // the hidden input itself, so nothing in the form declares it.
+    const captchaToken = String(formData.get('cf-turnstile-response') ?? '');
+    const sent = await sendLoginCode({
+      rawPhone,
+      clientIp: await getClientIp(),
+      captchaToken,
+    });
     if (sent.ok) {
       return { step: 'code', phone: sent.phone, notice: 'Code sent.' };
     }
