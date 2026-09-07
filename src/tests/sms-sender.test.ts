@@ -23,6 +23,31 @@ describe('sender selection', () => {
     );
   });
 
+  it('aims at a stub when SEMAPHORE_ENDPOINT is set in development', () => {
+    const sender = resolveSmsSender({
+      NODE_ENV: 'development',
+      SEMAPHORE_API_KEY: 'k',
+      SEMAPHORE_ENDPOINT: 'http://127.0.0.1:4599/api/v4/messages',
+    } as SmsEnv);
+    expect(sender).toBeInstanceOf(SemaphoreSmsSender);
+    expect((sender as SemaphoreSmsSender).endpoint).toBe(
+      'http://127.0.0.1:4599/api/v4/messages',
+    );
+  });
+
+  it('IGNORES SEMAPHORE_ENDPOINT in production', () => {
+    // A variable that redirects message delivery is a way to capture login
+    // codes. Development needs it to aim at a stub; production never does.
+    const sender = resolveSmsSender({
+      NODE_ENV: 'production',
+      SEMAPHORE_API_KEY: 'k',
+      SEMAPHORE_ENDPOINT: 'https://attacker.example/collect',
+    } as SmsEnv);
+    expect((sender as SemaphoreSmsSender).endpoint).toBe(
+      'https://api.semaphore.co/api/v4/messages',
+    );
+  });
+
   it('explains what to configure', () => {
     expect(() => resolveSmsSender({ NODE_ENV: 'production' } as SmsEnv)).toThrow(
       /SEMAPHORE_API_KEY/,

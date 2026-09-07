@@ -8,10 +8,13 @@ import { SmsDeliveryError, type SmsMessage, type SmsSender, type SmsSendResult }
  * interface is what matters; swapping in Movider, Twilio or an aggregator means
  * another file like this one and no change to the login flow.
  *
- * NOT VERIFIED against the live API — this codebase has no gateway account, so
- * the request shape below is written from Semaphore's documented form and has
- * been exercised only against a stub. Send one real message before trusting it
- * in production.
+ * Verified how far it can be. `src/tests/sms-wire.test.ts` runs this adapter
+ * against a real HTTP server on a loopback socket and asserts the exact bytes a
+ * gateway receives — method, content type, field names, and the percent-encoded
+ * `+` on the E.164 number. What that cannot establish is Semaphore's own
+ * behaviour: whether a key is live, whether a sender name is registered, what a
+ * message costs, whether a handset rings. Run `npm run sms:send-one` once
+ * against a number you hold before trusting this in production.
  */
 export class SemaphoreSmsSender implements SmsSender {
   readonly name = 'semaphore';
@@ -20,7 +23,8 @@ export class SemaphoreSmsSender implements SmsSender {
     private readonly apiKey: string,
     /** Registered sender name. Semaphore rejects unregistered ones. */
     private readonly senderName: string | undefined,
-    private readonly endpoint = 'https://api.semaphore.co/api/v4/messages',
+    /** Public so callers and tests can report where sends actually go. */
+    readonly endpoint = 'https://api.semaphore.co/api/v4/messages',
     private readonly fetchImpl: typeof fetch = fetch,
   ) {}
 

@@ -31,6 +31,13 @@ export class NoSmsSenderError extends Error {
 export interface SmsEnv {
   SEMAPHORE_API_KEY?: string | undefined;
   SEMAPHORE_SENDER_NAME?: string | undefined;
+  /**
+   * Redirects sends to another host. Ignored in production on purpose: a
+   * variable that can point message delivery somewhere else is a way to
+   * silently capture login codes, and no legitimate production deployment
+   * needs it. Development and staging use it to aim at a local stub.
+   */
+  SEMAPHORE_ENDPOINT?: string | undefined;
   NODE_ENV?: string | undefined;
   /** Present so `process.env` satisfies this type structurally. */
   [key: string]: string | undefined;
@@ -39,7 +46,11 @@ export interface SmsEnv {
 export function resolveSmsSender(env: SmsEnv = process.env): SmsSender {
   const apiKey = env.SEMAPHORE_API_KEY;
   if (apiKey) {
-    return new SemaphoreSmsSender(apiKey, env.SEMAPHORE_SENDER_NAME);
+    const override =
+      env.NODE_ENV === 'production' ? undefined : env.SEMAPHORE_ENDPOINT;
+    return override
+      ? new SemaphoreSmsSender(apiKey, env.SEMAPHORE_SENDER_NAME, override)
+      : new SemaphoreSmsSender(apiKey, env.SEMAPHORE_SENDER_NAME);
   }
 
   if (env.NODE_ENV === 'production') {
