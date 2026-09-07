@@ -17,3 +17,7 @@ npm-debug.log*
 .vscode/
 *.tsbuildinfo
 next-env.d.ts
+
+# Local database dumps. Never committed: a dump is every customer's phone
+# number and home address in one file.
+backups/

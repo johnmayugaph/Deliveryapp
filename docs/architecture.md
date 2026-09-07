@@ -1306,6 +1306,113 @@ anonymous tap is attributed to the default city. The per-city breakdown is only
 as good as the accounts column — which is the column the console already tells
 you to trust.
 
+## Backups
+
+The honest position first, because it decides everything else. **The real
+backup is a feature of wherever the database is hosted.** Point-in-time
+recovery on a managed Postgres restores to the second and survives this machine
+catching fire. Turn it on. Nothing in this repository replaces it, and code
+that shipped a `pg_dump` loop while implying otherwise would be worse than no
+backup code at all.
+
+What `src/lib/backup/` and the two scripts add is the part a managed host does
+not give you:
+
+- **a portable dump** you can take off the platform — the answer to "the
+  provider suspended our account" and "we are moving hosts";
+- **a restore drill**, because a dump nobody has restored is a hope. This is the
+  step almost nobody builds and the only one that proves the rest;
+- **a record** of when a backup last succeeded, so "are backups running" is a
+  question the console answers rather than a belief somebody holds.
+
+### `npm run db:backup`
+
+`pg_dump --format=custom --serializable-deferrable`, so the dump is one
+consistent moment even while orders are being placed, and restorable
+selectively — which is what a real recovery usually needs.
+
+The connection details go into the child's **environment, never argv**:
+`pg_dump postgresql://tara:hunter2@host/db` puts the database password in `ps`
+output for every process on the machine. There is a test asserting it stays out
+of the command line.
+
+Then it reads the archive's own table of contents back with `pg_restore --list`,
+which catches a truncated write, a full disk, and a dump that failed halfway
+with a zero exit somewhere in a pipe. A `BackupRun` row is written before the
+dump starts, so a failure leaves a trace — a table of only successes cannot
+answer "when did this start going wrong" — and old dumps are pruned, but only
+files matching our own naming pattern, so a directory somebody also keeps notes
+in does not lose them.
+
+**Encryption is optional and warned about.** With `BACKUP_ENCRYPTION_KEY` set
+the dump is AES-256-GCM with a per-file salt and IV; without it the script says
+plainly that the file will contain every customer's phone number and home
+address in plaintext. Optional rather than mandatory because an encrypted
+backup whose key is lost is not a backup — that trade is the operator's to
+make, not ours. GCM rather than CBC because it authenticates: a single flipped
+byte fails to decrypt rather than restoring a plausible-looking database, which
+is asserted in a test.
+
+### `npm run db:restore-check`
+
+The step that makes the rest worth having. It restores the newest dump into a
+**brand-new scratch database**, never over the live one, and asks four
+questions:
+
+1. Are the tables all there?
+2. Did the data come back? A *difference* in row counts is expected and
+   reported without alarm — the dump is a snapshot and the business keeps
+   taking orders. A table that holds rows live and none in the copy is a
+   failure, and that is the thing a row count can actually catch.
+3. **Does the credits ledger still add up to the wallet balances, in the
+   restored copy?** That is the invariant the whole financial side rests on,
+   and checking it against the restored data catches a dump that lost
+   transactions while keeping a plausible row count.
+4. Are the append-only triggers still present? They live in `prisma/sql`, so a
+   restore into a fresh database legitimately needs `npm run prisma:guards`
+   afterwards — and the check says so, because a restored database that works
+   and cannot be trusted is the worse outcome.
+
+The scratch database is dropped whatever happened.
+
+### What the console claims, and what it admits
+
+`backupPosture()` has three answers, and the middle one is why it exists rather
+than an `if` on the health page:
+
+| `BACKUP_STRATEGY` | The console says |
+| --- | --- |
+| unset | Red: nothing is declared, and this data exists nowhere else |
+| `host` | Calm: the provider is responsible, **and this application cannot see whether that is true** |
+| `script` | Last backup, its age, whether one has ever been restored — red past 36 hours |
+
+Thirty-six hours rather than twenty-four: a daily cron at 02:00 is 24 hours old
+at 01:59 the next night through nobody's fault, and a check that goes red every
+night before the run is a check people learn to ignore.
+
+A deployment relying on its host's PITR is doing the right thing, and stating
+the limit is the whole point — a green tick this code cannot justify is worse
+than no tick.
+
+### A bug worth recording
+
+The first version attached the child process's `close` listener *after* reading
+its stdout to completion. For a small database the child has already exited by
+then, `close` has already fired, and it does not fire again — so the script
+hung, then exited silently with status 0, leaving a `BackupRun` row that said
+"not ok" with no error beside a dump file that was perfectly fine. It failed
+only on the encrypted path at first, purely because that path was fast enough
+to lose the race. The subscription now happens before the read, and a test
+asserts that ordering.
+
+### Verified
+
+52 checks on the pure parts, and then the whole thing run for real against
+Postgres 16: a plaintext dump and an encrypted dump both taken, both read back,
+both restored into a scratch database with the ledger checked and the triggers
+found, retention pruning five of seven, and three failure modes confirmed to
+fail — the wrong key, no key, and a dump with one byte flipped in the middle.
+
 ## Error monitoring
 
 Before this, a page that started failing was discovered when a customer said

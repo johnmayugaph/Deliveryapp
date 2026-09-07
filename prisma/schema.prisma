@@ -1847,3 +1847,52 @@ model ErrorReport {
   @@index([resolvedAt, lastSeenAt])
   @@index([alertedAt])
 }
+
+// -----------------------------------------------------------------------------
+// 16. Backups
+// -----------------------------------------------------------------------------
+
+/// One attempt at taking a backup, successful or not.
+///
+/// The row exists so that "are backups running" is a question the console can
+/// answer instead of a belief somebody holds. A cron that stopped working six
+/// weeks ago looks exactly like a cron that is working, right up until the
+/// morning somebody needs the dump.
+///
+/// Note the ordering: this row is written AFTER the dump completes, so it is
+/// not inside the dump it describes. That is correct — a backup history that
+/// restores along with the data would tell you about backups taken before the
+/// restore point and nothing since.
+model BackupRun {
+  id String @id @default(cuid())
+
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+
+  /// False for an attempt that failed. Failures are kept: a table of only
+  /// successes cannot answer "when did this start going wrong".
+  ok Boolean @default(false)
+
+  /// Name only, never a full path — a path is deployment-specific and often
+  /// says more about the host than anybody needs in a database.
+  fileName  String?
+  sizeBytes Int?
+  /// SHA-256 of the file as written, so a later restore can prove it is the
+  /// same bytes rather than assuming.
+  checksum  String?
+  encrypted Boolean @default(false)
+
+  /// Redacted, like every other error message in this database.
+  error String?
+
+  /// When somebody actually restored this dump and checked it. A backup that
+  /// has never been restored is a hope, not a backup — `npm run
+  /// db:restore-check` is what sets this.
+  verifiedAt DateTime?
+  /// What the check found: table and row counts, and whether the ledger still
+  /// adds up in the restored copy.
+  verifyNote String?
+
+  @@index([ok, startedAt])
+  @@index([startedAt])
+}

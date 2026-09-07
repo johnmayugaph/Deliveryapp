@@ -5,6 +5,7 @@ import { deliveryHealth, demoDataPresence } from '@/lib/admin/queries';
 import { resolveChannels } from '@/lib/notifications/channels';
 import { isPushConfigured } from '@/lib/notifications/push/vapid';
 import { captchaIsHalfConfigured, isCaptchaConfigured } from '@/lib/auth/captcha';
+import { backupState } from '@/lib/backup/queries';
 import { requeueDeliveryAction } from '@/lib/actions/admin-actions';
 import { ReasonForm } from '@/components/admin/ReasonForm';
 import {
@@ -36,7 +37,11 @@ export const dynamic = 'force-dynamic';
 export default async function AdminHealthPage() {
   await requireAdmin();
 
-  const [health, demo] = await Promise.all([deliveryHealth(), demoDataPresence()]);
+  const [health, demo, backups] = await Promise.all([
+    deliveryHealth(),
+    demoDataPresence(),
+    backupState(),
+  ]);
   // Asked of the same function the cron uses, so this reports what would
   // actually happen on the next pass rather than a separate guess at it.
   const configured = resolveChannels();
@@ -201,6 +206,77 @@ export default async function AdminHealthPage() {
             ))}
           </tbody>
         </TableScroll>
+      </Panel>
+
+      <Panel
+        title="Backups"
+        description="The credits ledger and the order history exist nowhere else. This panel says what this application can actually see — which is less than you might want."
+        action={
+          <Pill tone={backups.posture.alarming ? 'bad' : backups.posture.verifiable ? 'good' : 'warn'}>
+            {backups.posture.strategy === 'none'
+              ? 'Not declared'
+              : backups.posture.strategy === 'host'
+                ? 'Host-managed'
+                : 'From the script'}
+          </Pill>
+        }
+      >
+        <div className="space-y-3 px-4 py-3">
+          <p
+            className={`text-xs leading-relaxed ${
+              backups.posture.alarming ? 'font-semibold text-red-800' : 'text-ink-muted'
+            }`}
+          >
+            {backups.posture.headline}
+          </p>
+
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Stat
+              label="Last backup"
+              value={backups.lastSuccessAt ? manilaTime(backups.lastSuccessAt) : 'Never'}
+              note={
+                backups.sizeBytes === null
+                  ? undefined
+                  : `${(backups.sizeBytes / 1_048_576).toFixed(1)} MB`
+              }
+            />
+            <Stat
+              label="Restored and checked"
+              value={backups.lastVerifiedAt ? manilaTime(backups.lastVerifiedAt) : 'Never'}
+              note={backups.lastVerifiedAt ? undefined : 'npm run db:restore-check'}
+            />
+            <Stat
+              label="Encrypted"
+              value={
+                backups.encrypted === null ? '—' : backups.encrypted ? 'Yes' : 'No'
+              }
+              note={
+                backups.encrypted === false
+                  ? 'set BACKUP_ENCRYPTION_KEY'
+                  : undefined
+              }
+            />
+            <Stat
+              label="Failed since"
+              value={String(backups.failuresSinceSuccess)}
+              note="attempts since the last success"
+            />
+          </div>
+
+          {backups.lastFailure && backups.failuresSinceSuccess > 0 ? (
+            <p className="rounded-lg bg-red-50 px-2.5 py-2 text-[11px] leading-relaxed text-red-900">
+              Last failure {manilaTime(backups.lastFailure.startedAt)}:{' '}
+              {backups.lastFailure.error ?? 'no reason recorded'}
+            </p>
+          ) : null}
+
+          <p className="text-[11px] leading-relaxed text-ink-faint">
+            Whatever this says, the thing that actually saves you is
+            point-in-time recovery on the database host — it survives this
+            machine, and this application cannot see whether it is switched on.
+            The dump is the copy you can take somewhere else.
+          </p>
+        </div>
       </Panel>
 
       <Panel

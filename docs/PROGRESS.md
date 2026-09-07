@@ -1161,3 +1161,53 @@ with the right source, secrets redacted, three hits of one page grouped as
 row. The cron alerted once per fault and a second pass alerted nobody again.
 
 594 tests pass; build and lint clean.
+
+## Phase 18 — backups, and the drill that proves them
+
+The honest part first: the real backup is the database host's point-in-time
+recovery, and nothing in this repository replaces it. What was missing is
+everything around it.
+
+`npm run db:backup` takes a portable `pg_dump` — the answer to "the provider
+suspended our account" and "we are moving hosts" — with the connection details
+in the child's environment rather than argv, because a password on a command
+line is visible in `ps` to every process on the machine. It reads the archive
+back with `pg_restore --list` rather than trusting an exit code, records the
+attempt in `BackupRun` before it starts so failures leave a trace, prunes old
+dumps but only files matching its own naming pattern, and encrypts with
+AES-256-GCM when `BACKUP_ENCRYPTION_KEY` is set — warning loudly when it is
+not, because a dump is every customer's phone number and home address in one
+file designed to be copied elsewhere.
+
+`npm run db:restore-check` is the part that makes the rest worth having. It
+restores into a brand-new scratch database, never over the live one, and checks
+that the tables are there, that no table came back empty, that **the credits
+ledger still adds up to the wallet balances in the restored copy** — which
+catches a dump that lost transactions while keeping a plausible row count — and
+that the append-only triggers survived. A count that merely *changed* is
+reported without alarm, since the dump is a snapshot and the business keeps
+taking orders.
+
+The console now states a posture rather than a number: unset is red, `host` is
+calm and says explicitly that this application cannot see whether the provider
+is really doing it, and `script` reports the age and whether anything has ever
+been restored. A green tick this code cannot justify is worse than no tick.
+
+**Two bugs worth recording.** The first version attached the child process's
+`close` listener after reading its stdout, so for a small database the event
+had already fired and the promise never settled: the script hung and exited
+silently with status 0, leaving a "not ok" row with no error next to a perfectly
+good dump. It failed only on the encrypted path, purely by losing the race
+faster. The second: the restore check read row counts from
+`pg_stat_user_tables.n_live_tup`, an estimate that reads zero on a freshly
+restored database — so it cheerfully reported that a table with nine rows had
+two. A verification tool that prints nonsense is how people learn to ignore it.
+Both are now asserted in tests.
+
+**Verified** for real against Postgres 16: plaintext and encrypted dumps taken
+and read back, both restored into a scratch database with the ledger checked
+and the triggers found, retention pruning five of seven, and three failure
+modes confirmed to fail — wrong key, no key, and one byte flipped in the middle
+of an encrypted dump.
+
+646 tests pass; build and lint clean.
