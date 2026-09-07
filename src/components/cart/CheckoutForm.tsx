@@ -134,9 +134,9 @@ export function CheckoutForm({
   if (cart.lines.length === 0) {
     return (
       <p className="px-4 py-8 text-sm text-ink-muted">
-        Walang laman ang cart mo.{' '}
+        Your cart is empty.{' '}
         <Link href="/" className="font-semibold text-brand-700 underline">
-          Maghanap ng makakain
+          Find something to eat
         </Link>
         .
       </p>
@@ -245,7 +245,7 @@ export function CheckoutForm({
         className="rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5"
       >
         <h2 id="tip-heading" className="text-[13px] font-semibold">
-          Tip para sa rider
+          Tip for the rider
         </h2>
         <div className="mt-2 flex gap-2">
           {TIP_OPTIONS.map((option) => (
@@ -260,7 +260,7 @@ export function CheckoutForm({
                   : 'bg-surface-sunken text-ink-muted hover:bg-brand-50'
               }`}
             >
-              {option === 0 ? 'Wala' : formatCentavos(option)}
+              {option === 0 ? 'None' : formatCentavos(option)}
             </button>
           ))}
         </div>
@@ -272,7 +272,7 @@ export function CheckoutForm({
         className="rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5"
       >
         <h2 id="payment-heading" className="text-[13px] font-semibold">
-          Bayad
+          Payment
         </h2>
         <div className="mt-2 space-y-1.5">
           {paymentMethods.map((method) => (
@@ -309,7 +309,7 @@ export function CheckoutForm({
               className="accent-brand-600"
             />
             <span className="text-xs">
-              Gamitin ang credits ko
+              Use my credits
               <span className="ml-1 text-ink-muted tabular-nums">
                 ({formatCentavos(spendableCreditsCentavos)})
               </span>
@@ -319,8 +319,8 @@ export function CheckoutForm({
 
         {creditsShort ? (
           <p role="alert" className="mt-2 text-[11px] leading-relaxed text-rose-700">
-            Kulang ang credits mo ng {formatCentavos(quote!.creditShortfallCentavos)}. Wala
-            kang maila-load na pera — piliin ang cash on delivery.
+            You are {formatCentavos(quote!.creditShortfallCentavos)} short of credits, and
+            you cannot load money — choose cash on delivery.
           </p>
         ) : null}
       </section>
@@ -331,7 +331,7 @@ export function CheckoutForm({
         className="rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5"
       >
         <h2 id="notes-heading" className="text-[13px] font-semibold">
-          Para sa store
+          For the store
         </h2>
         <label className="mt-2 flex cursor-pointer items-center gap-2.5">
           <input
@@ -340,16 +340,16 @@ export function CheckoutForm({
             onChange={(event) => setIncludeCutlery(event.target.checked)}
             className="accent-brand-600"
           />
-          <span className="text-xs">Isama ang kubyertos</span>
+          <span className="text-xs">Include cutlery</span>
         </label>
         <label className="mt-2 block">
-          <span className="sr-only">Note para sa store</span>
+          <span className="sr-only">Note for the store</span>
           <textarea
             value={merchantNotes}
             onChange={(event) => setMerchantNotes(event.target.value)}
             maxLength={500}
             rows={2}
-            placeholder="Halimbawa: walang sibuyas"
+            placeholder="For example: no onions"
             className="mt-1 w-full rounded-lg bg-surface-sunken px-2.5 py-2 text-xs ring-1 ring-black/5 focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
         </label>
@@ -362,7 +362,7 @@ export function CheckoutForm({
         className="rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5"
       >
         <h2 id="total-heading" className="text-[13px] font-semibold">
-          Kabuuan
+          Total
         </h2>
 
         {quoteError ? (
@@ -409,8 +409,8 @@ export function CheckoutForm({
 
             {quote.price.creditBackCentavos > 0 ? (
               <p className="mt-1.5 text-[11px] text-emerald-700">
-                Makakakuha ka ng {formatCentavos(quote.price.creditBackCentavos)} credits
-                pagkatapos ng order.
+                You will get {formatCentavos(quote.price.creditBackCentavos)} in credits
+                after this order.
               </p>
             ) : null}
           </dl>
@@ -432,10 +432,10 @@ export function CheckoutForm({
         className="w-full rounded-xl bg-brand-700 px-4 py-3.5 text-sm font-bold text-white transition-colors hover:bg-brand-800 disabled:cursor-not-allowed disabled:bg-ink-faint"
       >
         {isPlacing
-          ? 'Ipinapadala…'
+          ? 'Placing…'
           : quote
-            ? `Mag-order · ${formatCentavos(quote.price.totalCentavos)}`
-            : 'Mag-order'}
+            ? `Place order · ${formatCentavos(quote.price.totalCentavos)}`
+            : 'Place order'}
       </button>
     </div>
   );

@@ -27,9 +27,9 @@ export default async function FleetJobPage() {
   if (!job) {
     return (
       <main className="px-4 py-10 text-center">
-        <p className="text-sm text-ink-muted">Wala kang hawak na order ngayon.</p>
+        <p className="text-sm text-ink-muted">You are not holding an order right now.</p>
         <Link href="/fleet" className="mt-3 inline-block text-sm font-semibold text-brand-700">
-          Tingnan ang offers
+          See the offers
         </Link>
       </main>
     );

@@ -42,7 +42,7 @@ export default async function MerchantStoreLayout({
           <div className="min-w-0">
             {memberships.length > 1 ? (
               <Link href="/merchant" className="text-[11px] font-semibold text-brand-700">
-                ← Mga store
+                ← Your stores
               </Link>
             ) : (
               <Link href="/" className="text-[11px] font-semibold text-brand-700">

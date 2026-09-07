@@ -1,10 +1,14 @@
 # Deliveryapp
 
-A multi-service delivery app for the Philippine market: **Kainan** (food),
-**Tindahan** (mart), **Padala** (parcel), **Pabili**, and **Sakay** (rides) —
-one product, not five apps sharing a login.
+A multi-service delivery app for the Philippine market: **Food**, **Mart**,
+**Parcel**, **Errands**, and **Rides** — one product, not five apps sharing a
+login.
 
-Only Kainan is live. The other four exist in the database as coming-soon
+The interface is in English. Service names live in the `Service` table, so
+renaming a vertical — or shipping a Filipino build — is a row edit, not a code
+change.
+
+Only Food is live. The other four exist in the database as coming-soon
 records so the home screen can show them greyed out, which measures demand
 before any of them costs engineering time.
 
@@ -116,8 +120,8 @@ reason — enforced by a CHECK constraint, not just by the script.
 ### The fleet side
 
 A partner's app lives at `/fleet`. Maria (`0918 987 6543`) is seeded as both a
-customer and a fleet partner on one account — approved for Kainan, pending for
-Sakay, which is the per-service model in action.
+customer and a fleet partner on one account — approved for Food, pending for
+Rides, which is the per-service model in action.
 
 Any other account can apply at `/fleet/apply`. Approval is **not** self-service;
 approve from the command line:

@@ -56,7 +56,7 @@ export async function loginFormAction(
     return { step: 'phone' };
   }
   if (rawPhone.length === 0) {
-    return { step: 'phone', error: 'Ilagay ang mobile number mo, hal. 0917 123 4567.' };
+    return { step: 'phone', error: 'Enter your mobile number, e.g. 0917 123 4567.' };
   }
 
   const wantsNewCode = intent === 'resend' || rawCode.length === 0;
@@ -64,7 +64,7 @@ export async function loginFormAction(
   if (wantsNewCode) {
     const sent = await sendLoginCode({ rawPhone, clientIp: await getClientIp() });
     if (sent.ok) {
-      return { step: 'code', phone: sent.phone, notice: 'Pinadala na ang code.' };
+      return { step: 'code', phone: sent.phone, notice: 'Code sent.' };
     }
     // A throttle refusal keeps them on the code step — the previous code is
     // probably still valid, so sending them back would be unhelpful.
@@ -95,7 +95,7 @@ export async function loginFormAction(
       return {
         step: 'phone',
         phone: normaliseQuietly(rawPhone),
-        error: 'Hindi pa tapos mag-load ang page. Subukan muli.',
+        error: 'The page has not finished loading. Try again.',
       };
     }
     throw error;
@@ -124,10 +124,10 @@ export async function completeOnboardingAction(
   const trimmed = fullName.trim().replace(/\s+/g, ' ');
 
   if (trimmed.length < 2) {
-    return { status: 'error', message: 'Ilagay ang pangalan mo.' };
+    return { status: 'error', message: 'Enter your name.' };
   }
   if (trimmed.length > 80) {
-    return { status: 'error', message: 'Masyadong mahaba ang pangalan.' };
+    return { status: 'error', message: 'That name is too long.' };
   }
 
   await prisma.user.update({
@@ -157,7 +157,7 @@ export async function completeOnboardingFormAction(
 ): Promise<OnboardingState | null> {
   const fullName = formData.get('fullName');
   if (typeof fullName !== 'string') {
-    return { status: 'error', message: 'Ilagay ang pangalan mo.' };
+    return { status: 'error', message: 'Enter your name.' };
   }
   return (await completeOnboardingAction(fullName)) ?? null;
 }

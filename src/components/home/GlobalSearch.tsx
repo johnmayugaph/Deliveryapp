@@ -8,8 +8,8 @@
 export function GlobalSearch({ activeServiceNames }: { activeServiceNames: string[] }) {
   const placeholder =
     activeServiceNames.length > 0
-      ? `Maghanap sa ${activeServiceNames.join(', ')}`
-      : 'Maghanap';
+      ? `Search ${activeServiceNames.join(', ')}`
+      : 'Search';
 
   return (
     <div className="bg-surface px-4 pb-4">

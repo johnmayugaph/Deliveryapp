@@ -184,7 +184,7 @@ export async function expireStaleOrders(
                 href: '/credits',
                 context: {
                   creditsCentavos: refunded,
-                  creditsReason: `Refund para sa ${order.orderNumber}.`,
+                  creditsReason: `Refund for ${order.orderNumber}.`,
                   orderNumber: order.orderNumber,
                 },
                 dedupeKey: `credits-refund:${order.id}`,
@@ -270,7 +270,7 @@ export async function completeOrder(input: {
           href: '/credits',
           context: {
             creditsCentavos: creditBackCentavos,
-            creditsReason: `Credits back sa order ${order.orderNumber}.`,
+            creditsReason: `Credits back on order ${order.orderNumber}.`,
             orderNumber: order.orderNumber,
           },
           dedupeKey: `credits-back:${order.id}`,

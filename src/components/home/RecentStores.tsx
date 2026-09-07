@@ -23,7 +23,7 @@ export function RecentStores({
         id="recent-heading"
         className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted"
       >
-        {hasOrderHistory ? 'Order again' : 'Popular malapit sa iyo'}
+        {hasOrderHistory ? 'Order again' : 'Popular near you'}
       </h2>
       <ul className="mt-2.5 space-y-2">
         {stores.map((store) => (

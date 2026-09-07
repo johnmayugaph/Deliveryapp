@@ -14,11 +14,11 @@ import { formatCentavos } from '@/lib/money';
 export const dynamic = 'force-dynamic';
 
 const STATUS_LABELS: Record<VerificationStatus, string> = {
-  [VerificationStatus.NOT_SUBMITTED]: 'Hindi pa nag-apply',
-  [VerificationStatus.PENDING]: 'Hinihintay',
+  [VerificationStatus.NOT_SUBMITTED]: 'Not applied',
+  [VerificationStatus.PENDING]: 'Pending',
   [VerificationStatus.APPROVED]: 'Approved',
-  [VerificationStatus.REJECTED]: 'Tinanggihan',
-  [VerificationStatus.SUSPENDED]: 'Suspendido',
+  [VerificationStatus.REJECTED]: 'Rejected',
+  [VerificationStatus.SUSPENDED]: 'Suspended',
 };
 
 const STATUS_CLASSES: Record<VerificationStatus, string> = {
@@ -64,10 +64,10 @@ export default async function FleetProfilePage() {
         className="rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5"
       >
         <h2 id="approvals-heading" className="text-[13px] font-semibold">
-          Mga approval
+          Approvals
         </h2>
         <p className="mt-0.5 text-[11px] text-ink-muted">
-          Bawat service ay hiwalay na desisyon.
+          Each service is a separate decision.
         </p>
         <ul className="mt-2 space-y-1.5">
           {verifications.map((row) => (
@@ -118,14 +118,14 @@ export default async function FleetProfilePage() {
           Record
         </h2>
         <dl className="mt-2 space-y-1.5 text-xs">
-          <Row label="Kita ngayong linggo" value={formatCentavos(earnings.weekCentavos)} />
-          <Row label="Jobs ngayong linggo" value={String(earnings.weekJobs)} />
-          <Row label="Lahat ng tapos" value={String(earnings.lifetimeJobs)} />
+          <Row label="Earned this week" value={formatCentavos(earnings.weekCentavos)} />
+          <Row label="Jobs this week" value={String(earnings.weekJobs)} />
+          <Row label="Jobs all time" value={String(earnings.lifetimeJobs)} />
           <Row
             label="Acceptance rate"
             value={
               acceptanceRate === null
-                ? 'Wala pang offer'
+                ? 'No offers yet'
                 : `${Math.round(acceptanceRate * 100)}% (${tallies.accepted}/${decided})`
             }
           />
@@ -133,15 +133,15 @@ export default async function FleetProfilePage() {
             label="Rating"
             value={
               earnings.ratingCount === 0
-                ? 'Wala pang rating'
+                ? 'No ratings yet'
                 : `${earnings.ratingAvg.toFixed(1)} (${earnings.ratingCount})`
             }
           />
         </dl>
         {tallies.superseded > 0 ? (
           <p className="mt-2 text-[11px] leading-relaxed text-ink-faint">
-            {tallies.superseded} offer ang nauna nang nakuha ng iba. Hindi ito
-            binibilang laban sa iyo.
+            {tallies.superseded} offers were taken by somebody closer. Those do
+            not count against you.
           </p>
         ) : null}
       </section>
@@ -151,14 +151,14 @@ export default async function FleetProfilePage() {
         className="rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5"
       >
         <h2 id="vehicle-heading" className="text-[13px] font-semibold">
-          Sasakyan
+          Vehicle
         </h2>
         <p className="mt-1 text-xs capitalize text-ink-muted">
           {partner.vehicleType.toLowerCase().replace(/_/g, ' ')}
           {partner.vehiclePlate ? ` · ${partner.vehiclePlate}` : ''}
         </p>
         <p className="mt-2 text-[11px] text-ink-faint">
-          Kontakin ang support para magpalit ng sasakyan.
+          Contact support to change vehicles.
         </p>
       </section>
     </main>

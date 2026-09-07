@@ -70,7 +70,7 @@ export function LoginFlow({ redirectTo }: { redirectTo: string }) {
             Mobile number
           </label>
           <p className="mt-0.5 text-[11px] text-ink-muted">
-            Padadalhan ka namin ng anim na numerong code.
+            We will text you a six-digit code.
           </p>
           <input
             id="phone"
@@ -93,7 +93,7 @@ export function LoginFlow({ redirectTo }: { redirectTo: string }) {
           disabled={isPending}
           className="w-full rounded-xl bg-brand-700 px-4 py-3.5 text-sm font-bold text-white transition-colors hover:bg-brand-800 disabled:cursor-not-allowed disabled:bg-ink-faint"
         >
-          {isPending ? 'Sending…' : 'Ipadala ang code'}
+          {isPending ? 'Sending…' : 'Send the code'}
         </button>
       </form>
     );
@@ -113,7 +113,7 @@ export function LoginFlow({ redirectTo }: { redirectTo: string }) {
           Code
         </label>
         <p className="mt-0.5 text-[11px] text-ink-muted">
-          Pinadala sa {maskPhilippineMobile(phone)}.
+          Sent to {maskPhilippineMobile(phone)}.
         </p>
         <input
           id="code"
@@ -139,8 +139,7 @@ export function LoginFlow({ redirectTo }: { redirectTo: string }) {
           leaving a dead button. */}
       <noscript>
         <p className="mb-2 rounded-lg bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-900">
-          Kailangan ng JavaScript para matapos ang sign-in. I-on ito o gamitin
-          ang ibang browser.
+          Finishing sign-in needs JavaScript. Turn it on, or use another browser.
         </p>
       </noscript>
 
@@ -149,7 +148,7 @@ export function LoginFlow({ redirectTo }: { redirectTo: string }) {
         disabled={isPending || !hydrated}
         className="w-full rounded-xl bg-brand-700 px-4 py-3.5 text-sm font-bold text-white transition-colors hover:bg-brand-800 disabled:cursor-not-allowed disabled:bg-ink-faint"
       >
-        {isPending ? 'Checking…' : 'Magpatuloy'}
+        {isPending ? 'Checking…' : 'Continue'}
       </button>
 
       <div className="flex items-center justify-between text-xs">
@@ -159,7 +158,7 @@ export function LoginFlow({ redirectTo }: { redirectTo: string }) {
           value="change-number"
           className="font-semibold text-brand-700"
         >
-          ← Ibang number
+          ← Different number
         </button>
         <button
           type="submit"
@@ -173,8 +172,8 @@ export function LoginFlow({ redirectTo }: { redirectTo: string }) {
       </div>
 
       <p className="pt-1 text-[11px] leading-relaxed text-ink-faint">
-        Hindi namin tatanungin ang code mo sa call, chat, o email. Ikaw lang ang
-        dapat makaalam nito.
+        We will never ask for your code by call, chat or email. Only you should
+        know it.
       </p>
       <p className="text-[11px] text-ink-faint tabular-nums">
         {formatPhilippineMobile(phone)}

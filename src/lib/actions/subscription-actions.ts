@@ -23,7 +23,7 @@ export async function cancelSubscriptionAction(): Promise<{ error?: string }> {
     await cancelSubscription({ userId: user.id, reason: 'Cancelled by the customer' });
   } catch (error) {
     if (error instanceof NotSubscribedError) {
-      return { error: 'Wala kang aktibong plan.' };
+      return { error: 'You have no active plan.' };
     }
     throw error;
   }

@@ -85,8 +85,8 @@ export function benefitTerms(
       }
       terms.push(
         benefit.monthlyUsageCap === null
-          ? 'Walang limitasyon kada buwan'
-          : `${benefit.monthlyUsageCap}x kada buwan`,
+          ? 'No monthly limit'
+          : `${benefit.monthlyUsageCap}x a month`,
       );
       break;
     case BenefitType.DISCOUNT_PERCENT:
@@ -94,17 +94,17 @@ export function benefitTerms(
         terms.push(`${formatBasisPoints(benefit.percentBasisPoints)} off`);
       }
       if (benefit.maxDiscountCentavos !== null) {
-        terms.push(`Hanggang ${formatCentavos(benefit.maxDiscountCentavos)} kada order`);
+        terms.push(`Up to ${formatCentavos(benefit.maxDiscountCentavos)} per order`);
       }
       break;
     case BenefitType.CREDIT_BACK_PERCENT:
       if (benefit.percentBasisPoints !== null) {
-        terms.push(`${formatBasisPoints(benefit.percentBasisPoints)} pabalik na credits`);
+        terms.push(`${formatBasisPoints(benefit.percentBasisPoints)} back in credits`);
       }
       if (benefit.monthlyCeilingCentavos !== null) {
-        terms.push(`Hanggang ${formatCentavos(benefit.monthlyCeilingCentavos)} kada buwan`);
+        terms.push(`Up to ${formatCentavos(benefit.monthlyCeilingCentavos)} a month`);
       }
-      terms.push('Dumarating pagkatapos ng order');
+      terms.push('Arrives after the order');
       break;
   }
   return terms;
@@ -125,7 +125,7 @@ export function benefitScopeLabel(
   displayNameByKey: ReadonlyMap<ServiceKey, string>,
 ): string {
   if (benefit.serviceKeys.length === 0) {
-    return 'Lahat ng service';
+    return 'Every service';
   }
   return benefit.serviceKeys
     .map((key) => displayNameByKey.get(key) ?? key)

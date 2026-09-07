@@ -29,7 +29,7 @@ export async function sendLoginCode(input: {
     phone = normalisePhilippineMobile(input.rawPhone);
   } catch (error) {
     if (error instanceof InvalidPhoneNumberError) {
-      return { ok: false, message: 'Ilagay ang mobile number mo, hal. 0917 123 4567.' };
+      return { ok: false, message: 'Enter your mobile number, e.g. 0917 123 4567.' };
     }
     throw error;
   }
@@ -47,7 +47,7 @@ export async function sendLoginCode(input: {
   }
 
   if (!outcome.ok) {
-    return { ok: false, message: 'Hindi napadala ang code. Subukan muli maya-maya.' };
+    return { ok: false, message: 'The code could not be sent. Try again in a moment.' };
   }
 
   return { ok: true, phone: outcome.phone, expiresAt: outcome.expiresAt };
@@ -73,12 +73,12 @@ export async function checkLoginCode(input: {
   try {
     phone = normalisePhilippineMobile(input.rawPhone);
   } catch {
-    return { ok: false, message: 'Ilagay muli ang number mo.' };
+    return { ok: false, message: 'Enter your number again.' };
   }
 
   const digits = input.code.replace(/\D/g, '');
   if (digits.length !== 6) {
-    return { ok: false, message: 'Anim na numero ang code.' };
+    return { ok: false, message: 'The code is six digits.' };
   }
 
   const result = await verifyLoginCode({ rawPhone: phone, code: digits });
@@ -97,7 +97,7 @@ export async function checkLoginCode(input: {
 
   if (user.isBlocked) {
     // Say nothing about why. Support handles it.
-    return { ok: false, message: 'Hindi ma-access ang account na ito. Kontakin ang support.' };
+    return { ok: false, message: 'This account cannot be accessed. Contact support.' };
   }
 
   // Every account has a credits ledger from the start, so nothing later has to

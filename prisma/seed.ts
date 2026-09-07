@@ -41,7 +41,7 @@ const FOOD_LAUNCH_CITIES = ['city_manila', 'city_quezon', 'city_makati'];
 const SERVICES = [
   {
     key: ServiceKey.FOOD,
-    displayName: 'Kainan',
+    displayName: 'Food',
     tagline: 'Food delivery',
     icon: 'utensils',
     description: 'Order from restaurants and karinderya near you, delivered hot.',
@@ -57,8 +57,8 @@ const SERVICES = [
   },
   {
     key: ServiceKey.MART,
-    displayName: 'Tindahan',
-    tagline: 'Grocery at sari-sari',
+    displayName: 'Mart',
+    tagline: 'Groceries and sari-sari',
     icon: 'shopping-basket',
     description: 'Groceries and sari-sari staples, shopped for you and delivered.',
     intentGroup: IntentGroup.EAT,
@@ -73,7 +73,7 @@ const SERVICES = [
   },
   {
     key: ServiceKey.PARCEL,
-    displayName: 'Padala',
+    displayName: 'Parcel',
     tagline: 'Same-day parcel',
     icon: 'package',
     description: 'Send a parcel across the city on the same day.',
@@ -89,8 +89,8 @@ const SERVICES = [
   },
   {
     key: ServiceKey.PABILI,
-    displayName: 'Pabili',
-    tagline: 'Ipamili mo sa amin',
+    displayName: 'Errands',
+    tagline: 'We buy it for you',
     icon: 'clipboard-list',
     description: 'Tell us what to buy and where. We shop it and bring it over.',
     intentGroup: IntentGroup.GET,
@@ -105,8 +105,8 @@ const SERVICES = [
   },
   {
     key: ServiceKey.RIDE,
-    displayName: 'Sakay',
-    tagline: 'Motorcycle at car',
+    displayName: 'Rides',
+    tagline: 'Motorcycle or car',
     icon: 'bike',
     description: 'Get a ride to where you need to be.',
     intentGroup: IntentGroup.GO,
@@ -153,17 +153,17 @@ async function seedFaq() {
   const categories = [
     {
       slug: 'general-account',
-      title: 'Account at app',
+      title: 'Account and app',
       serviceType: null,
       sortOrder: 0,
       articles: [
         {
-          question: 'Paano ko babaguhin ang delivery address ko?',
+          question: 'How do I change my delivery address?',
           answer:
             'Tap the location at the top of the home screen. Your saved addresses are shared across every service, so an address you save for food is ready for a parcel pickup too.',
         },
         {
-          question: 'Puwede ba akong maging rider at customer sa isang account?',
+          question: 'Can I be a rider and a customer on one account?',
           answer:
             'Yes. One account holds both roles. Switch between ordering and accepting jobs from your Profile.',
         },
@@ -171,17 +171,17 @@ async function seedFaq() {
     },
     {
       slug: 'food-orders',
-      title: 'Kainan',
+      title: 'Food',
       serviceType: ServiceKey.FOOD,
       sortOrder: 10,
       articles: [
         {
-          question: 'Bakit hindi pa tinatanggap ng store ang order ko?',
+          question: 'Why has the store not accepted my order yet?',
           answer:
             'Restaurants confirm orders themselves. If nobody confirms within a few minutes we cancel and return anything you paid to your Credits.',
         },
         {
-          question: 'Puwede ko bang kanselahin ang order?',
+          question: 'Can I cancel an order?',
           answer:
             'You can cancel any time before the store starts preparing. After that, message us from the order and we will sort it out.',
         },
@@ -189,17 +189,17 @@ async function seedFaq() {
     },
     {
       slug: 'credits-rewards',
-      title: 'Credits at rewards',
+      title: 'Credits and rewards',
       serviceType: null,
       sortOrder: 20,
       articles: [
         {
-          question: 'Ano ang Credits?',
+          question: 'What are Credits?',
           answer:
             'Credits are rewards we give you — promos, referral bonuses, and refunds. You spend them on orders inside the app.',
         },
         {
-          question: 'Puwede ba akong mag-load ng Credits o mag-withdraw?',
+          question: 'Can I load Credits or withdraw them?',
           answer:
             'No. Credits are not an e-wallet. You cannot top them up with your own money, send them to another person, or cash them out. They are only spendable on orders here.',
         },
@@ -239,14 +239,14 @@ async function seedSubscriptionPlan() {
     create: {
       name: 'Deliveryapp Plus',
       slug: 'plus-monthly',
-      tagline: 'Libreng delivery at credits pabalik',
+      tagline: 'Free delivery and credits back',
       monthlyPriceCentavos: 9900, // ₱99/month
       isActive: false, // stays off until we decide to launch
       sortOrder: 0,
     },
     update: {
       name: 'Deliveryapp Plus',
-      tagline: 'Libreng delivery at credits pabalik',
+      tagline: 'Free delivery and credits back',
       monthlyPriceCentavos: 9900,
       sortOrder: 0,
     },
@@ -256,7 +256,7 @@ async function seedSubscriptionPlan() {
   const benefits = [
     {
       type: BenefitType.FREE_DELIVERY,
-      displayLabel: 'Libreng delivery sa ₱299 pataas, 8x kada buwan',
+      displayLabel: 'Free delivery over ₱299, 8x a month',
       // Applies to every active service; empty means "all".
       serviceKeys: [],
       minimumOrderCentavos: 29900,
@@ -268,7 +268,7 @@ async function seedSubscriptionPlan() {
     },
     {
       type: BenefitType.DISCOUNT_PERCENT,
-      displayLabel: '5% off sa Kainan',
+      displayLabel: '5% off Food',
       // Scoped to food only. Scoping is data, which is why adding MART later
       // needs a row edit rather than a code change.
       serviceKeys: [ServiceKey.FOOD],
@@ -281,7 +281,7 @@ async function seedSubscriptionPlan() {
     },
     {
       type: BenefitType.CREDIT_BACK_PERCENT,
-      displayLabel: '2% credits pabalik, hanggang ₱200 kada buwan',
+      displayLabel: '2% back in credits, up to ₱200 a month',
       serviceKeys: [],
       percentBasisPoints: 200, // 2.00%
       monthlyCeilingCentavos: 20000, // ₱200/month
@@ -385,7 +385,7 @@ async function seedStores() {
       menu: [
         { name: 'Adobong Manok with Rice', category: 'Rice meals', priceCentavos: 12500 },
         { name: 'Sinigang na Baboy', category: 'Rice meals', priceCentavos: 15000 },
-        { name: 'Pancit Bihon (Bilao, small)', category: 'Pang-handa', priceCentavos: 35000 },
+        { name: 'Pancit Bihon (Bilao, small)', category: 'Party trays', priceCentavos: 35000 },
         { name: 'Extra Rice', category: 'Add-ons', priceCentavos: 2000 },
       ],
     },
@@ -402,9 +402,9 @@ async function seedStores() {
       ratingCount: 268,
       serviceKeys: [ServiceKey.FOOD],
       menu: [
-        { name: 'Pork BBQ (3 sticks)', category: 'Inihaw', priceCentavos: 15000 },
-        { name: 'Chicken Inasal', category: 'Inihaw', priceCentavos: 18000 },
-        { name: 'Isaw ng Manok (5 sticks)', category: 'Inihaw', priceCentavos: 10000 },
+        { name: 'Pork BBQ (3 sticks)', category: 'Grilled', priceCentavos: 15000 },
+        { name: 'Chicken Inasal', category: 'Grilled', priceCentavos: 18000 },
+        { name: 'Isaw ng Manok (5 sticks)', category: 'Grilled', priceCentavos: 10000 },
         { name: 'Softdrinks in Can', category: 'Drinks', priceCentavos: 4500 },
       ],
     },
@@ -423,9 +423,9 @@ async function seedStores() {
       // orderable there without a data migration.
       serviceKeys: [ServiceKey.FOOD, ServiceKey.MART],
       menu: [
-        { name: 'Pandesal (12 pcs)', category: 'Tinapay', priceCentavos: 6000 },
-        { name: 'Ensaymada', category: 'Tinapay', priceCentavos: 3500 },
-        { name: 'Ube Cheese Pandesal (6 pcs)', category: 'Tinapay', priceCentavos: 9000 },
+        { name: 'Pandesal (12 pcs)', category: 'Bread', priceCentavos: 6000 },
+        { name: 'Ensaymada', category: 'Bread', priceCentavos: 3500 },
+        { name: 'Ube Cheese Pandesal (6 pcs)', category: 'Bread', priceCentavos: 9000 },
       ],
     },
   ];
@@ -525,8 +525,8 @@ async function seedPromotions() {
   const promotions = [
     {
       id: 'promo_free_delivery_launch',
-      title: 'Libreng delivery ngayong linggo',
-      subtitle: 'Sa unang order mo sa Kainan, ₱0 delivery fee.',
+      title: 'Free delivery this week',
+      subtitle: 'No delivery fee on your first Food order.',
       serviceKeys: [ServiceKey.FOOD],
       cityIds: FOOD_LAUNCH_CITIES,
       sortOrder: 0,
@@ -534,7 +534,7 @@ async function seedPromotions() {
     },
     {
       id: 'promo_referral',
-      title: 'Mag-invite, kumita ng credits',
+      title: 'Invite a friend, earn credits',
       subtitle: 'Get ₱50 in credits for every friend who completes their first order.',
       serviceKeys: [],
       cityIds: [],

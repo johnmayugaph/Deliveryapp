@@ -29,9 +29,9 @@ export default async function LoginPage({
         <p className="text-[11px] font-semibold uppercase tracking-wide text-brand-700">
           Deliveryapp
         </p>
-        <h1 className="mt-1 text-2xl font-bold">Mag-sign in</h1>
+        <h1 className="mt-1 text-2xl font-bold">Sign in</h1>
         <p className="mt-1 text-sm text-ink-muted">
-          Number mo lang ang kailangan. Walang password.
+          Just your number. No password.
         </p>
       </header>
 

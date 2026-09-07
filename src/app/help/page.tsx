@@ -32,7 +32,7 @@ export default async function HelpPage() {
       <header className="bg-surface px-4 pb-4 pt-5">
         <h1 className="text-xl font-bold">Help</h1>
         <p className="mt-0.5 text-xs text-ink-muted">
-          Isang help section para sa lahat ng service.
+          One help section for every service.
         </p>
       </header>
 

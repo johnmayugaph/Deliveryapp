@@ -33,7 +33,7 @@ export interface QueueCardOrder {
 /** "3m" / "1h 12m" — a kitchen reads elapsed time, not a timestamp. */
 function formatWaiting(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 1) return 'ngayon lang';
+  if (minutes < 1) return 'just now';
   if (minutes < 60) return `${minutes}m`;
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
@@ -117,7 +117,7 @@ export function OrderCard({
 
       {order.merchantNotes || order.includeCutlery ? (
         <p className="mt-2 rounded-lg bg-surface-sunken px-2 py-1.5 text-[11px] text-ink-muted">
-          {order.includeCutlery ? 'May kubyertos. ' : ''}
+          {order.includeCutlery ? 'Cutlery. ' : ''}
           {order.merchantNotes ?? ''}
         </p>
       ) : null}
@@ -137,14 +137,14 @@ export function OrderCard({
         <div className="mt-3 rounded-lg bg-rose-50 p-2.5">
           <label className="block text-[11px] font-semibold text-rose-900">
             Bakit tinanggihan?
-            <span className="block font-normal text-rose-800">Makikita ito ng customer.</span>
+            <span className="block font-normal text-rose-800">The customer sees this.</span>
             <input
               type="text"
               value={reason}
               onChange={(event) => setReason(event.target.value)}
               maxLength={200}
               autoFocus
-              placeholder="Halimbawa: wala nang adobo"
+              placeholder="For example: out of adobo"
               className="mt-1.5 w-full rounded-lg bg-white px-2 py-1.5 text-xs font-normal ring-1 ring-rose-200 focus:outline-none focus:ring-2 focus:ring-rose-400"
             />
           </label>
@@ -155,7 +155,7 @@ export function OrderCard({
               onClick={() => run(() => rejectOrderAction(order.id, reason))}
               className="flex-1 rounded-lg bg-rose-600 px-2 py-2 text-xs font-bold text-white disabled:bg-ink-faint"
             >
-              {isPending ? '…' : 'Tanggihan'}
+              {isPending ? '…' : 'Reject'}
             </button>
             <button
               type="button"
@@ -163,7 +163,7 @@ export function OrderCard({
               onClick={() => setRejecting(false)}
               className="flex-1 rounded-lg bg-white px-2 py-2 text-xs font-semibold ring-1 ring-rose-200"
             >
-              Huwag na
+              Keep it
             </button>
           </div>
         </div>
@@ -176,7 +176,7 @@ export function OrderCard({
               onClick={() => run(() => acceptOrderAction(order.id))}
               className="flex-1 rounded-lg bg-brand-700 px-3 py-2.5 text-xs font-bold text-white transition-colors hover:bg-brand-800 disabled:bg-ink-faint"
             >
-              {isPending ? '…' : 'Tanggapin'}
+              {isPending ? '…' : 'Accept'}
             </button>
           ) : null}
 
@@ -187,7 +187,7 @@ export function OrderCard({
               onClick={() => run(() => startPreparingAction(order.id))}
               className="flex-1 rounded-lg bg-brand-700 px-3 py-2.5 text-xs font-bold text-white transition-colors hover:bg-brand-800 disabled:bg-ink-faint"
             >
-              {isPending ? '…' : 'Ginagawa na'}
+              {isPending ? '…' : 'Start cooking'}
             </button>
           ) : null}
 
@@ -198,7 +198,7 @@ export function OrderCard({
               onClick={() => run(() => markReadyAction(order.id))}
               className="flex-1 rounded-lg bg-emerald-700 px-3 py-2.5 text-xs font-bold text-white transition-colors hover:bg-emerald-800 disabled:bg-ink-faint"
             >
-              {isPending ? '…' : 'Handa na'}
+              {isPending ? '…' : 'Ready'}
             </button>
           ) : null}
 
@@ -209,7 +209,7 @@ export function OrderCard({
               onClick={() => setRejecting(true)}
               className="rounded-lg bg-surface-sunken px-3 py-2.5 text-xs font-semibold text-rose-700 ring-1 ring-black/5 transition-colors hover:bg-rose-50"
             >
-              Tanggihan
+              Reject
             </button>
           ) : null}
 

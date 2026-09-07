@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
  * Join the fleet.
  *
  * The service list comes from the registry, including the coming-soon ones: a
- * partner can apply for Padala before it launches, which means the verification
+ * partner can apply for Parcel before it launches, which means the verification
  * queue is warm on the day it does.
  */
 export default async function FleetApplyPage() {
@@ -27,9 +27,9 @@ export default async function FleetApplyPage() {
       <Link href="/profile" className="text-[11px] font-semibold text-brand-700">
         ← Profile
       </Link>
-      <h1 className="mt-2 text-xl font-bold">Maging fleet partner</h1>
+      <h1 className="mt-2 text-xl font-bold">Become a fleet partner</h1>
       <p className="mt-1 text-sm text-ink-muted">
-        Isang account lang ang kailangan — puwede kang customer at rider sa
+        One account is enough — you can be a customer and a rider on the
         parehong number.
       </p>
 

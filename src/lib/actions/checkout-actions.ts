@@ -98,11 +98,11 @@ export async function cancelOrderAction(
           to: cancellationStatusForActor(OrderActor.CUSTOMER),
           actor: OrderActor.CUSTOMER,
           actorUserId: user.id,
-          reason: trimmed || 'Kinansela ng customer.',
+          reason: trimmed || 'Cancelled by the customer.',
         },
         tx,
       );
-      return refundOrderCredits({ orderId, reason: 'Kinansela ang order' }, tx);
+      return refundOrderCredits({ orderId, reason: 'Order cancelled' }, tx);
     });
 
     revalidatePath('/orders');
@@ -146,5 +146,5 @@ function toUserMessage(error: unknown): string {
   }
 
   console.error('checkout action failed:', error);
-  return 'Hindi natuloy. Subukan mo muli maya-maya.';
+  return 'That did not go through. Try again in a moment.';
 }

@@ -20,10 +20,10 @@ export function WelcomeForm() {
     <form action={formAction} className="space-y-4">
       <div>
         <label htmlFor="fullName" className="block text-[13px] font-semibold">
-          Pangalan
+          Name
         </label>
         <p className="mt-0.5 text-[11px] text-ink-muted">
-          Ito ang makikita ng rider at ng store.
+          This is what the rider and the store see.
         </p>
         <input
           id="fullName"
@@ -51,7 +51,7 @@ export function WelcomeForm() {
         disabled={isPending}
         className="w-full rounded-xl bg-brand-700 px-4 py-3.5 text-sm font-bold text-white transition-colors hover:bg-brand-800 disabled:cursor-not-allowed disabled:bg-ink-faint"
       >
-        {isPending ? 'Saving…' : 'Simulan'}
+        {isPending ? 'Saving…' : 'Start'}
       </button>
     </form>
   );

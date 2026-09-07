@@ -96,7 +96,7 @@ export function OfferCard({ offer }: { offer: OfferCardData }) {
           }
           className="flex-1 rounded-lg bg-brand-700 px-3 py-2.5 text-xs font-bold text-white transition-colors hover:bg-brand-800 disabled:bg-ink-faint"
         >
-          {isPending ? '…' : 'Tanggapin'}
+          {isPending ? '…' : 'Accept'}
         </button>
         <button
           type="button"
@@ -111,7 +111,7 @@ export function OfferCard({ offer }: { offer: OfferCardData }) {
           }
           className="rounded-lg bg-surface-sunken px-3 py-2.5 text-xs font-semibold ring-1 ring-black/5 transition-colors hover:bg-rose-50"
         >
-          Hindi
+          Pass
         </button>
       </div>
     </li>

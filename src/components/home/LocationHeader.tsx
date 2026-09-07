@@ -4,7 +4,7 @@ import Link from 'next/link';
  * Current delivery location with a tap-to-change control.
  *
  * Reads from the shared address book, so whatever the customer picks here is
- * the same record a Padala pickup will offer later.
+ * the same record a Parcel pickup will offer later.
  */
 export function LocationHeader({
   addressLabel,

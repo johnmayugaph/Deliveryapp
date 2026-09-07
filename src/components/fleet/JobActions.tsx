@@ -15,16 +15,16 @@ import { statusPresentation } from '@/lib/orders/status-presentation';
  * status for the same reason.
  */
 const ACTION_LABELS: Partial<Record<OrderStatus, string>> = {
-  [OrderStatus.RIDER_AT_PICKUP]: 'Nandito na ako sa pickup',
-  [OrderStatus.SHOPPING_IN_PROGRESS]: 'Namimili na',
-  [OrderStatus.AWAITING_BUDGET_APPROVAL]: 'Ipa-approve ang budget',
-  [OrderStatus.PASSENGER_ONBOARD]: 'Nakasakay na',
-  [OrderStatus.PICKED_UP]: 'Nakuha na ang order',
-  [OrderStatus.IN_TRANSIT]: 'Papunta na',
-  [OrderStatus.ARRIVED_AT_DROPOFF]: 'Nandito na sa dropoff',
-  [OrderStatus.DELIVERED]: 'Nadeliver na',
-  [OrderStatus.DROPPED_OFF]: 'Nakarating na',
-  [OrderStatus.FAILED_DELIVERY]: 'Hindi na-deliver',
+  [OrderStatus.RIDER_AT_PICKUP]: 'I am at the pickup',
+  [OrderStatus.SHOPPING_IN_PROGRESS]: 'Shopping now',
+  [OrderStatus.AWAITING_BUDGET_APPROVAL]: 'Send the budget for approval',
+  [OrderStatus.PASSENGER_ONBOARD]: 'Passenger on board',
+  [OrderStatus.PICKED_UP]: 'I have the order',
+  [OrderStatus.IN_TRANSIT]: 'On my way',
+  [OrderStatus.ARRIVED_AT_DROPOFF]: 'I am at the dropoff',
+  [OrderStatus.DELIVERED]: 'Delivered',
+  [OrderStatus.DROPPED_OFF]: 'Dropped off',
+  [OrderStatus.FAILED_DELIVERY]: 'Could not deliver',
 };
 
 /** The step that moves the job forward, as opposed to ending it badly. */
@@ -86,7 +86,7 @@ export function JobActions({
         </button>
       ) : (
         <p className="rounded-xl bg-surface px-3 py-3 text-center text-xs text-ink-muted shadow-sm ring-1 ring-black/5">
-          Walang susunod na hakbang. I-refresh o kontakin ang support.
+          No next step. Refresh, or contact support.
         </p>
       )}
 
@@ -115,7 +115,7 @@ export function JobActions({
                 onChange={(event) => setReason(event.target.value)}
                 maxLength={200}
                 autoFocus
-                placeholder="Halimbawa: nasiraan ng motor"
+                placeholder="For example: my motorcycle broke down"
                 className="mt-1.5 w-full rounded-lg bg-white px-2 py-1.5 text-xs font-normal ring-1 ring-rose-200 focus:outline-none focus:ring-2 focus:ring-rose-400"
               />
             </label>
@@ -145,7 +145,7 @@ export function JobActions({
                 onClick={() => setAbandoning(false)}
                 className="flex-1 rounded-lg bg-white px-2 py-2 text-xs font-semibold ring-1 ring-rose-200"
               >
-                Huwag na
+                Keep going
               </button>
             </div>
           </div>
@@ -156,7 +156,7 @@ export function JobActions({
             onClick={() => setAbandoning(true)}
             className="w-full rounded-xl bg-surface px-3 py-2.5 text-xs font-semibold text-rose-700 shadow-sm ring-1 ring-black/5 transition-colors hover:bg-rose-50"
           >
-            Hindi ko kayang tapusin
+            I cannot finish this
           </button>
         )
       ) : null}

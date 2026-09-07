@@ -44,7 +44,7 @@ const KIND_GLYPH: Readonly<Record<NotificationKind, string>> = {
 
 function timeAgo(at: Date, now: Date): string {
   const seconds = Math.max(0, Math.round((now.getTime() - at.getTime()) / 1000));
-  if (seconds < 60) return 'ngayon lang';
+  if (seconds < 60) return 'just now';
   const minutes = Math.round(seconds / 60);
   if (minutes < 60) return `${minutes}m`;
   const hours = Math.round(minutes / 60);
@@ -70,17 +70,17 @@ export default async function NotificationsPage() {
     <main className="pb-4">
       <header className="bg-surface px-4 pb-3 pt-5 shadow-sm">
         <div className="flex items-baseline justify-between gap-3">
-          <h1 className="text-xl font-bold">Mga abiso</h1>
+          <h1 className="text-xl font-bold">Notifications</h1>
           {unread > 0 ? (
             <form action={markAllReadAction}>
               <button type="submit" className="text-[12px] font-semibold text-brand-700">
-                Markahan lahat na nabasa
+                Mark all as read
               </button>
             </form>
           ) : null}
         </div>
         <p className="mt-0.5 text-[11px] text-ink-muted">
-          Isang inbox para sa lahat — order, store, at fleet.
+          One inbox for everything — orders, store and fleet.
         </p>
       </header>
 
@@ -96,8 +96,8 @@ export default async function NotificationsPage() {
           </h2>
           <p className="mt-1 text-xs leading-relaxed text-ink-muted">
             {sms.enabled
-              ? 'Nakaka-text kami para sa mga mahalaga: bagong order sa store mo, bagong job, at kanselasyon.'
-              : 'Naka-off ang SMS. Nasa inbox pa rin lahat, pero hindi ka namin i-te-text.'}
+              ? 'We text you the ones that need an answer: a new order for your store, a new job, a cancellation.'
+              : 'SMS is off. Everything still arrives in this inbox; we just will not text you.'}
           </p>
           <form action={setSmsEnabledAction} className="mt-3">
             <input type="hidden" name="enabled" value={sms.enabled ? 'false' : 'true'} />
@@ -105,7 +105,7 @@ export default async function NotificationsPage() {
               type="submit"
               className="rounded-xl bg-surface-sunken px-3 py-2 text-[13px] font-semibold"
             >
-              {sms.enabled ? 'I-off ang SMS' : 'I-on ang SMS'}
+              {sms.enabled ? 'Turn SMS off' : 'Turn SMS on'}
             </button>
           </form>
         </section>
@@ -113,7 +113,7 @@ export default async function NotificationsPage() {
 
       {notifications.length === 0 ? (
         <p className="px-4 py-8 text-sm text-ink-muted">
-          Wala pang abiso. Dito lalabas ang updates sa mga order mo.
+          No notifications yet. Updates about your orders show up here.
         </p>
       ) : (
         <ul className="mt-4 divide-y divide-black/5">
@@ -144,12 +144,12 @@ export default async function NotificationsPage() {
                       </span>
                       <span className="mt-1 block text-[11px] text-ink-faint">
                         {timeAgo(notification.createdAt, now)}
-                        {channels.includes(NotificationChannel.SMS) ? ' · na-text' : ''}
+                        {channels.includes(NotificationChannel.SMS) ? ' · texted' : ''}
                       </span>
                     </span>
                     {notification.readAt === null ? (
                       <span
-                        aria-label="Hindi pa nabasa"
+                        aria-label="Unread"
                         className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-brand-600"
                       />
                     ) : null}
@@ -163,7 +163,7 @@ export default async function NotificationsPage() {
 
       <p className="px-4 pt-5 text-[11px] text-ink-faint">
         <Link href="/help" className="font-semibold text-brand-700">
-          Help at support
+          Help and support
         </Link>
       </p>
     </main>

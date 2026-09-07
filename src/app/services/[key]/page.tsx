@@ -59,8 +59,8 @@ export default async function ServicePage({
         </h1>
         <p className="mt-2 text-sm text-ink-muted">{service.description}</p>
         <p className="mt-4 rounded-xl bg-surface p-4 text-sm shadow-sm ring-1 ring-black/5">
-          Hindi pa available ang {service.displayName}. Sasabihan ka namin kapag
-          bukas na.
+          {service.displayName} is not available yet. We will tell you when it
+          opens.
         </p>
         <Link href="/" className="mt-4 inline-block text-sm font-semibold text-brand-700">
           ← Home
@@ -94,14 +94,14 @@ export default async function ServicePage({
 
       {detailsSpec.status !== 'IMPLEMENTED' ? (
         <p className="mx-4 mt-4 rounded-xl bg-surface p-4 text-sm text-ink-muted shadow-sm ring-1 ring-black/5">
-          Aktibo na ang service na ito, pero hindi pa handa ang checkout flow.
+          This service is active, but its checkout flow is not built yet.
         </p>
       ) : null}
 
       {service.requiresMerchant ? (
         stores.length === 0 ? (
           <p className="px-4 py-8 text-sm text-ink-muted">
-            Wala pang store sa lugar mo.
+            No stores in your area yet.
           </p>
         ) : (
           <ul className="divide-y divide-black/5">
@@ -138,7 +138,7 @@ export default async function ServicePage({
         )
       ) : (
         <p className="px-4 py-8 text-sm text-ink-muted">
-          Walang store list ang service na ito — direkta ka nang mag-book.
+          This service has no store list — you book it directly.
         </p>
       )}
     </main>

@@ -19,10 +19,10 @@ export default async function MerchantHomePage() {
   if (memberships.length === 0) {
     return (
       <main className="px-4 py-10">
-        <h1 className="text-xl font-bold">Walang store</h1>
+        <h1 className="text-xl font-bold">No stores</h1>
         <p className="mt-2 text-sm text-ink-muted">
-          Hindi pa nakakabit ang account mo sa kahit anong store. Kontakin ang
-          support kung ito ay mali.
+          Your account is not attached to any store yet. Contact support if
+          that is wrong.
         </p>
         <Link href="/" className="mt-4 inline-block text-sm font-semibold text-brand-700">
           ← Home
@@ -46,7 +46,7 @@ export default async function MerchantHomePage() {
 
   return (
     <main className="px-4 py-8">
-      <h1 className="text-xl font-bold">Mga store mo</h1>
+      <h1 className="text-xl font-bold">Your stores</h1>
       <ul className="mt-4 space-y-2">
         {withCounts.map(({ membership, queue }) => {
           const needsDecision =
@@ -66,7 +66,7 @@ export default async function MerchantHomePage() {
                 </span>
                 {needsDecision > 0 ? (
                   <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-900 tabular-nums">
-                    {needsDecision} bago
+                    {needsDecision} new
                   </span>
                 ) : null}
                 <span aria-hidden className="shrink-0 text-xs text-ink-faint">

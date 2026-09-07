@@ -201,14 +201,14 @@ const FOOD_LIFECYCLE: ServiceLifecycle = {
       status: OrderStatus.PENDING_MERCHANT_ACCEPTANCE,
       afterSeconds: 8 * 60,
       to: OrderStatus.CANCELLED_BY_SYSTEM,
-      reason: 'Hindi nakasagot ang store sa loob ng 8 minuto.',
+      reason: 'The store did not answer within 8 minutes.',
     },
     {
       // Dispatch searched and found nobody.
       status: OrderStatus.AWAITING_RIDER_ASSIGNMENT,
       afterSeconds: 20 * 60,
       to: OrderStatus.CANCELLED_BY_SYSTEM,
-      reason: 'Wala kaming nakitang available na rider.',
+      reason: 'We could not find an available rider.',
     },
   ],
   permittedActors: {
@@ -261,7 +261,7 @@ const MART_LIFECYCLE: ServiceLifecycle = {
       status: OrderStatus.AWAITING_RIDER_ASSIGNMENT,
       afterSeconds: 20 * 60,
       to: OrderStatus.CANCELLED_BY_SYSTEM,
-      reason: 'Wala kaming nakitang available na rider.',
+      reason: 'We could not find an available rider.',
     },
   ],
   permittedActors: {
@@ -310,7 +310,7 @@ const PARCEL_LIFECYCLE: ServiceLifecycle = {
       status: OrderStatus.AWAITING_RIDER_ASSIGNMENT,
       afterSeconds: 20 * 60,
       to: OrderStatus.CANCELLED_BY_SYSTEM,
-      reason: 'Wala kaming nakitang available na rider.',
+      reason: 'We could not find an available rider.',
     },
   ],
   permittedActors: {
@@ -361,14 +361,14 @@ const PABILI_LIFECYCLE: ServiceLifecycle = {
       status: OrderStatus.AWAITING_RIDER_ASSIGNMENT,
       afterSeconds: 20 * 60,
       to: OrderStatus.CANCELLED_BY_SYSTEM,
-      reason: 'Wala kaming nakitang available na rider.',
+      reason: 'We could not find an available rider.',
     },
     {
       // A partner cannot stand in a shop indefinitely waiting for a reply.
       status: OrderStatus.AWAITING_BUDGET_APPROVAL,
       afterSeconds: 10 * 60,
       to: OrderStatus.CANCELLED_BY_SYSTEM,
-      reason: 'Hindi na-approve ang budget sa loob ng 10 minuto.',
+      reason: 'The budget was not approved within 10 minutes.',
     },
   ],
   permittedActors: {
@@ -417,7 +417,7 @@ const RIDE_LIFECYCLE: ServiceLifecycle = {
       status: OrderStatus.AWAITING_RIDER_ASSIGNMENT,
       afterSeconds: 20 * 60,
       to: OrderStatus.CANCELLED_BY_SYSTEM,
-      reason: 'Wala kaming nakitang available na rider.',
+      reason: 'We could not find an available rider.',
     },
   ],
   permittedActors: {

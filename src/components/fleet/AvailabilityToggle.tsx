@@ -62,7 +62,7 @@ export function AvailabilityToggle({
 
         if (!position) {
           setError(
-            'Kailangan ng lokasyon para mag-online. Payagan ang location sa browser mo.',
+            'Going online needs your location. Allow it in your browser.',
           );
           return;
         }
@@ -94,7 +94,7 @@ export function AvailabilityToggle({
         {isPending ? '…' : isOnline ? 'Online' : 'Offline'}
       </button>
       <p className="mt-1 text-[10px] text-ink-faint">
-        {isOnline ? 'Tap para mag-offline' : canGoOnline ? 'Tap para mag-online' : 'Hintayin ang approval'}
+        {isOnline ? 'Tap to go offline' : canGoOnline ? 'Tap to go online' : 'Waiting on approval'}
       </p>
       {error ? (
         <p role="alert" className="mt-1 max-w-[11rem] text-[10px] leading-snug text-rose-700">

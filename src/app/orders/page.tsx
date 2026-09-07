@@ -34,13 +34,13 @@ export default async function OrdersPage() {
       <header className="bg-surface px-4 pb-4 pt-5">
         <h1 className="text-xl font-bold">Orders</h1>
         <p className="mt-0.5 text-xs text-ink-muted">
-          Lahat ng orders mo — pagkain, padala, sakay — sa isang listahan.
+          Every order you have made — food, parcels, rides — in one list.
         </p>
       </header>
 
       {orders.length === 0 ? (
         <p className="px-4 py-8 text-sm text-ink-muted">
-          Wala pa kayong order. Simulan mo sa{' '}
+          No orders yet. Start with{' '}
           <Link href="/" className="font-semibold text-brand-700 underline">
             home
           </Link>

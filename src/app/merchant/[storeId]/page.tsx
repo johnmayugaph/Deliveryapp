@@ -51,20 +51,20 @@ export default async function MerchantQueuePage({
       <OrderLiveRefresh isActive intervalMs={20_000} />
 
       <section aria-label="Today" className="grid grid-cols-3 gap-2 px-4 py-3">
-        <Stat label="Tapos ngayon" value={String(summary.completedToday)} />
-        <Stat label="Kinansela" value={String(summary.cancelledToday)} />
-        <Stat label="Benta" value={formatCentavos(summary.revenueTodayCentavos)} />
+        <Stat label="Done today" value={String(summary.completedToday)} />
+        <Stat label="Cancelled" value={String(summary.cancelledToday)} />
+        <Stat label="Sales" value={formatCentavos(summary.revenueTodayCentavos)} />
       </section>
 
       {!access.store.isOpen ? (
         <p className="mx-4 mb-2 rounded-xl bg-rose-50 px-3 py-2.5 text-xs text-rose-800">
-          Sarado ang store. Walang bagong order na papasok hangga&apos;t hindi mo binuksan.
+          The store is closed. No new orders arrive until you open it.
         </p>
       ) : null}
 
       {queue.totalLive === 0 ? (
         <p className="px-4 py-10 text-center text-sm text-ink-muted">
-          Walang order sa ngayon.
+          No orders right now.
         </p>
       ) : (
         <div className="space-y-5 px-4 pb-8">

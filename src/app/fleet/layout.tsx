@@ -56,7 +56,7 @@ export default async function FleetLayout({ children }: { children: React.ReactN
               {partner.vehicleType.toLowerCase().replace(/_/g, ' ')}
               {partner.enabledServices.length > 0
                 ? ` · ${partner.enabledServices.length} service${partner.enabledServices.length === 1 ? '' : 's'}`
-                : ' · walang approved service'}
+                : ' · no approved service'}
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-2">

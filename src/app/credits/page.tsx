@@ -23,7 +23,7 @@ const TYPE_LABELS: Readonly<Record<WalletTransactionType, string>> = {
   [WalletTransactionType.PROMO_CREDIT]: 'Promo credit',
   [WalletTransactionType.REFUND]: 'Refund',
   [WalletTransactionType.REFERRAL_BONUS]: 'Referral bonus',
-  [WalletTransactionType.ORDER_PAYMENT]: 'Ginamit sa order',
+  [WalletTransactionType.ORDER_PAYMENT]: 'Spent on an order',
   [WalletTransactionType.ADJUSTMENT]: 'Adjustment',
 };
 
@@ -47,8 +47,8 @@ export default async function CreditsPage() {
           {formatCentavos(balanceCentavos)}
         </p>
         <p className="mt-2 text-xs leading-relaxed text-white/80">
-          Rewards galing sa amin — promos, referral bonus, at refunds. Puwede mong
-          gamitin sa kahit anong order sa app.
+          Rewards from us — promos, referral bonuses and refunds. Spend them on any
+          order in the app.
         </p>
       </header>
 
@@ -59,13 +59,13 @@ export default async function CreditsPage() {
         className="mx-4 mt-4 rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5"
       >
         <h2 id="credits-rules" className="text-[13px] font-semibold">
-          Paano gumagana ang Credits
+          How Credits work
         </h2>
         <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-ink-muted">
-          <li>• Hindi ito e-wallet. Wala kang maila-load na sariling pera dito.</li>
-          <li>• Hindi puwedeng ipadala sa iba o i-transfer.</li>
-          <li>• Hindi puwedeng i-withdraw o i-cash out.</li>
-          <li>• Gamitin sa orders sa app na ito — iyon lang.</li>
+          <li>• This is not an e-wallet. You cannot load your own money into it.</li>
+          <li>• It cannot be sent to another person or transferred.</li>
+          <li>• It cannot be withdrawn or cashed out.</li>
+          <li>• Spend it on orders in this app — that is all.</li>
         </ul>
       </section>
 
@@ -79,7 +79,7 @@ export default async function CreditsPage() {
 
         {transactions.length === 0 ? (
           <p className="px-4 py-6 text-sm text-ink-muted">
-            Wala pang credits activity.
+            No credits activity yet.
           </p>
         ) : (
           <ul className="mt-2 divide-y divide-black/5">

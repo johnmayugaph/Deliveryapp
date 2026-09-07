@@ -54,62 +54,62 @@ const serviceName = (context: NotificationContext) => context.serviceName ?? 'De
 
 export const NOTIFICATION_TEMPLATES: Readonly<Record<NotificationKind, Template>> = {
   [NotificationKind.ORDER_SUBMITTED]: (context) => ({
-    title: 'Bagong order',
-    body: `May bagong ${serviceName(context)} order na naghihintay ng sagot mo${orderRef(context)}.`,
-    sms: `Bagong order sa Deliveryapp${orderRef(context)}. Tanggapin o tanggihan sa loob ng 8 minuto, kung hindi ay makansela ito.`,
+    title: 'New order',
+    body: `A new ${serviceName(context)} order is waiting for your answer${orderRef(context)}.`,
+    sms: `New Deliveryapp order${orderRef(context)}. Accept or reject within 8 minutes, or it is cancelled.`,
   }),
 
   [NotificationKind.ORDER_ACCEPTED]: (context) => ({
-    title: 'Tinanggap ang order mo',
-    body: `${context.storeName ?? 'Ang store'} ay tinanggap ang order mo at inihahanda na.`,
-    sms: `Tinanggap na ng store ang order mo${orderRef(context)}.`,
+    title: 'Your order was accepted',
+    body: `${context.storeName ?? 'The store'} accepted your order and is preparing it.`,
+    sms: `The store accepted your order${orderRef(context)}.`,
   }),
 
   [NotificationKind.ORDER_READY]: (context) => ({
-    title: 'Handa na ang order mo',
-    body: 'Handa na ito at hinahanap na namin ang rider.',
-    sms: `Handa na ang order mo${orderRef(context)}. Hinahanap na namin ang rider.`,
+    title: 'Your order is ready',
+    body: 'It is ready, and we are finding a rider.',
+    sms: `Your order is ready${orderRef(context)}. We are finding a rider.`,
   }),
 
   [NotificationKind.ORDER_RIDER_ASSIGNED]: (context) => ({
-    title: 'May rider na',
-    body: 'Papunta na sa store ang rider para kunin ang order mo.',
-    sms: `May rider na ang order mo${orderRef(context)}.`,
+    title: 'A rider is on it',
+    body: 'The rider is on the way to the store to collect your order.',
+    sms: `A rider is on your order${orderRef(context)}.`,
   }),
 
   [NotificationKind.ORDER_PICKED_UP]: (context) => ({
-    title: 'Nakuha na ang order mo',
-    body: 'Papunta na sa iyo ang rider.',
-    sms: `Nakuha na ng rider ang order mo${orderRef(context)}. Papunta na.`,
+    title: 'Your order was collected',
+    body: 'The rider is on the way to you.',
+    sms: `The rider collected your order${orderRef(context)} and is on the way.`,
   }),
 
   [NotificationKind.ORDER_ARRIVED]: (context) => ({
-    title: 'Nasa labas na ang rider',
-    body: 'Nandiyan na ang rider mo sa dropoff.',
-    sms: `Nasa labas na ang rider mo${orderRef(context)}.`,
+    title: 'Your rider is outside',
+    body: 'Your rider is at the dropoff.',
+    sms: `Your rider is outside${orderRef(context)}.`,
   }),
 
   [NotificationKind.ORDER_DELIVERED]: (context) => ({
-    title: 'Nadeliver na',
-    body: `Tapos na ang ${serviceName(context)} order mo. Salamat!`,
-    sms: `Nadeliver na ang order mo${orderRef(context)}. Salamat!`,
+    title: 'Delivered',
+    body: `Your ${serviceName(context)} order is complete. Thank you!`,
+    sms: `Your order was delivered${orderRef(context)}. Thank you!`,
   }),
 
   [NotificationKind.ORDER_CANCELLED]: (context) => ({
-    title: 'Kinansela ang order',
+    title: 'Order cancelled',
     body: [
-      `Kinansela ang ${serviceName(context)} order mo${orderRef(context)}.`,
-      context.reason ? `Dahilan: ${context.reason}.` : null,
+      `Your ${serviceName(context)} order was cancelled${orderRef(context)}.`,
+      context.reason ? `Reason: ${context.reason}.` : null,
       context.amountCentavos
-        ? `Ibinalik namin ang ${formatCentavos(context.amountCentavos)} sa Credits mo.`
+        ? `We returned ${formatCentavos(context.amountCentavos)} to your Credits.`
         : null,
     ]
       .filter(Boolean)
       .join(' '),
     sms: [
-      `Kinansela ang order mo${orderRef(context)}.`,
+      `Your order was cancelled${orderRef(context)}.`,
       context.amountCentavos
-        ? `${formatCentavos(context.amountCentavos)} ang ibinalik sa Credits mo.`
+        ? `${formatCentavos(context.amountCentavos)} went back to your Credits.`
         : null,
     ]
       .filter(Boolean)
@@ -117,44 +117,44 @@ export const NOTIFICATION_TEMPLATES: Readonly<Record<NotificationKind, Template>
   }),
 
   [NotificationKind.ORDER_LOST_TO_TIMEOUT]: (context) => ({
-    title: 'Nawala ang isang order',
-    body: `Hindi nasagot sa oras ang order${orderRef(context)}, kaya kinansela ito at naibalik ang bayad sa customer.`,
-    sms: `Nakansela ang order${orderRef(context)} dahil hindi ito nasagot sa oras.`,
+    title: 'An order was lost',
+    body: `Order${orderRef(context)} was not answered in time, so it was cancelled and the customer refunded.`,
+    sms: `Order${orderRef(context)} was cancelled because it was not answered in time.`,
   }),
 
   [NotificationKind.DISPATCH_OFFER]: (context) => ({
-    title: 'May job para sa iyo',
+    title: 'A job for you',
     body: [
-      context.earningsCentavos ? `${formatCentavos(context.earningsCentavos)}` : 'May job',
-      context.distanceLabel ? `· ${context.distanceLabel} papunta sa pickup` : null,
+      context.earningsCentavos ? `${formatCentavos(context.earningsCentavos)}` : 'A job',
+      context.distanceLabel ? `· ${context.distanceLabel} to the pickup` : null,
       context.storeName ? `· ${context.storeName}` : null,
     ]
       .filter(Boolean)
       .join(' '),
     sms: [
-      'May bagong job sa Deliveryapp',
+      'New Deliveryapp job',
       context.earningsCentavos ? ` — ${formatCentavos(context.earningsCentavos)}` : '',
-      context.secondsToAnswer ? `, ${context.secondsToAnswer}s para sagutin.` : '.',
+      context.secondsToAnswer ? `, ${context.secondsToAnswer}s to answer.` : '.',
     ].join(''),
   }),
 
   [NotificationKind.CREDITS_GRANTED]: (context) => ({
-    title: 'May bagong credits ka',
+    title: 'New credits',
     body: [
       context.creditsCentavos
-        ? `${formatCentavos(context.creditsCentavos)} ang dumating sa Credits mo.`
-        : 'May dumating na credits.',
+        ? `${formatCentavos(context.creditsCentavos)} arrived in your Credits.`
+        : 'Credits arrived.',
       context.creditsReason ?? null,
     ]
       .filter(Boolean)
       .join(' '),
-    sms: `May ${context.creditsCentavos ? formatCentavos(context.creditsCentavos) : ''} credits ka sa Deliveryapp.`,
+    sms: `You have ${context.creditsCentavos ? formatCentavos(context.creditsCentavos) : ''} in Deliveryapp credits.`,
   }),
 
   [NotificationKind.SUBSCRIPTION_ENDED]: (context) => ({
-    title: 'Tapos na ang plan mo',
-    body: `Tapos na ang ${context.planName ?? 'plan'} mo, kaya wala na munang benefits sa checkout.`,
-    sms: `Tapos na ang ${context.planName ?? 'plan'} mo sa Deliveryapp.`,
+    title: 'Your plan has ended',
+    body: `Your ${context.planName ?? 'plan'} has ended, so no benefits apply at checkout for now.`,
+    sms: `Your Deliveryapp ${context.planName ?? 'plan'} has ended.`,
   }),
 };
 

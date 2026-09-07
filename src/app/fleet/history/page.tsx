@@ -27,7 +27,7 @@ export default async function FleetHistoryPage() {
     return (
       <main>
         <p className="px-4 py-10 text-center text-sm text-ink-muted">
-          Wala pang tapos na job.
+          No finished jobs yet.
         </p>
       </main>
     );

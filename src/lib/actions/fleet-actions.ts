@@ -63,14 +63,14 @@ export async function setAvailabilityAction(input: {
     const partner = await requireFleetPartner();
 
     if (partner.isSuspended) {
-      return { ok: false, message: 'Suspendido ang account mo. Kontakin ang support.' };
+      return { ok: false, message: 'Your account is suspended. Contact support.' };
     }
 
     if (input.isOnline) {
       if (partner.enabledServices.length === 0) {
         return {
           ok: false,
-          message: 'Wala pang approved na service ka. Hintayin ang approval bago mag-online.',
+          message: 'No service is approved yet. Wait for approval before going online.',
         };
       }
       const { latitude, longitude } = input;
@@ -82,7 +82,7 @@ export async function setAvailabilityAction(input: {
         Math.abs(latitude) > 90 ||
         Math.abs(longitude) > 180
       ) {
-        return { ok: false, message: 'Kailangan ng lokasyon para mag-online.' };
+        return { ok: false, message: 'Going online needs your location.' };
       }
 
       await prisma.fleetPartner.update({
@@ -118,7 +118,7 @@ export async function updateLocationAction(input: {
   try {
     const partner = await requireFleetPartner();
     if (!Number.isFinite(input.latitude) || !Number.isFinite(input.longitude)) {
-      return { ok: false, message: 'Hindi mabasa ang lokasyon.' };
+      return { ok: false, message: 'Could not read your location.' };
     }
     await prisma.fleetPartner.update({
       where: { id: partner.id },
@@ -160,13 +160,13 @@ export async function acceptOfferAction(offerId: string): Promise<FleetActionRes
     // Scoped to this partner: an offer id belonging to somebody else is simply
     // not found, rather than an error that confirms it exists.
     if (!offer || offer.fleetPartnerId !== partner.id) {
-      return { ok: false, message: 'Wala na ang offer na ito.' };
+      return { ok: false, message: 'That offer is gone.' };
     }
     if (offer.status !== DispatchOfferStatus.PENDING) {
-      return { ok: false, message: 'Nasagot na ang offer na ito.' };
+      return { ok: false, message: 'That offer has already been answered.' };
     }
     if (offer.expiresAt <= now) {
-      return { ok: false, message: 'Nag-expire na ang offer.' };
+      return { ok: false, message: 'That offer has expired.' };
     }
 
     const existing = await prisma.order.findFirst({
@@ -190,7 +190,7 @@ export async function acceptOfferAction(offerId: string): Promise<FleetActionRes
     if (existing) {
       return {
         ok: false,
-        message: `May hawak ka pang order (${existing.orderNumber}). Tapusin muna ito.`,
+        message: `You are still holding order ${existing.orderNumber}. Finish it first.`,
       };
     }
 
@@ -248,7 +248,7 @@ export async function declineOfferAction(offerId: string): Promise<FleetActionRe
       data: { status: DispatchOfferStatus.DECLINED, respondedAt: new Date() },
     });
     if (count === 0) {
-      return { ok: false, message: 'Wala na ang offer na ito.' };
+      return { ok: false, message: 'That offer is gone.' };
     }
 
     await recomputeAcceptanceRate(partner.id);
@@ -282,13 +282,13 @@ export async function advanceJobAction(
       select: { id: true, assignedRiderId: true, serviceType: true, status: true },
     });
     if (!order || order.assignedRiderId !== partner.id) {
-      return { ok: false, message: 'Hindi sa iyo ang order na ito.' };
+      return { ok: false, message: 'That order is not yours.' };
     }
 
     const lifecycle = getLifecycle(order.serviceType);
     const permitted = (lifecycle.transitions[order.status] ?? []).includes(to);
     if (!permitted) {
-      return { ok: false, message: 'Nagbago na ang order. I-refresh.' };
+      return { ok: false, message: 'The order has changed. Refresh.' };
     }
 
     const updated = await transitionOrder({
@@ -331,7 +331,7 @@ export async function abandonJobAction(
 ): Promise<FleetActionResult> {
   const trimmed = reason.trim();
   if (trimmed.length < 3) {
-    return { ok: false, message: 'Ilagay ang dahilan.' };
+    return { ok: false, message: 'Give a reason.' };
   }
 
   try {
@@ -341,7 +341,7 @@ export async function abandonJobAction(
       select: { id: true, assignedRiderId: true, serviceType: true, status: true },
     });
     if (!order || order.assignedRiderId !== partner.id) {
-      return { ok: false, message: 'Hindi sa iyo ang order na ito.' };
+      return { ok: false, message: 'That order is not yours.' };
     }
 
     const lifecycle = getLifecycle(order.serviceType);
@@ -358,7 +358,7 @@ export async function abandonJobAction(
             orderId,
             to: OrderStatus.AWAITING_RIDER_ASSIGNMENT,
             actor: OrderActor.SYSTEM,
-            reason: `Ibinalik sa dispatch: ${trimmed}`,
+            reason: `Handed back to dispatch: ${trimmed}`,
           },
           tx,
         );
@@ -414,12 +414,12 @@ export async function applyToFleetAction(input: {
     return { ok: false, message: 'Pumili ng kahit isang service.' };
   }
   if (!(Object.values(VehicleType) as string[]).includes(input.vehicleType)) {
-    return { ok: false, message: 'Pumili ng sasakyan.' };
+    return { ok: false, message: 'Choose a vehicle.' };
   }
 
   const existing = await prisma.fleetPartner.findUnique({ where: { userId: user.id } });
   if (existing) {
-    return { ok: false, message: 'Naka-apply ka na.' };
+    return { ok: false, message: 'You have already applied.' };
   }
 
   await prisma.$transaction(async (tx) => {
@@ -500,21 +500,21 @@ function toFleetMessage(error: unknown): string {
   if (error instanceof Error) {
     switch (error.name) {
       case 'NotAFleetPartnerError':
-        return 'Hindi ka pa fleet partner.';
+        return 'You are not a fleet partner yet.';
       case 'NotAuthenticatedError':
-        return 'Mag-sign in muli.';
+        return 'Sign in again.';
       case 'OnboardingIncompleteError':
-        return 'Kumpletuhin muna ang account mo.';
+        return 'Finish setting up your account first.';
       case 'IllegalTransitionError':
-        return 'Nagbago na ang order. I-refresh.';
+        return 'The order has changed. Refresh.';
       case 'UnauthorizedTransitionError':
-        return 'Hindi ito kayang gawin ng rider para sa order na ito.';
+        return 'A rider cannot do that to this order.';
       case 'MissingTransitionReasonError':
-        return 'Kailangan ng dahilan.';
+        return 'A reason is required.';
       case 'OrderNotFoundError':
-        return 'Hindi na mahanap ang order.';
+        return 'That order is gone.';
     }
   }
   console.error('fleet action failed:', error);
-  return 'Hindi natuloy. Subukan muli.';
+  return 'That did not go through. Try again.';
 }

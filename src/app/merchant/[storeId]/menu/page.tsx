@@ -39,8 +39,8 @@ export default async function MerchantMenuPage({
     <main className="pb-8">
       <p className="px-4 py-3 text-xs text-ink-muted">
         {items.length} item{items.length === 1 ? '' : 's'}
-        {unavailable > 0 ? ` · ${unavailable} wala ngayon` : ''}
-        {canEditPrice ? '' : ' · Staff: hindi puwedeng magbago ng presyo'}
+        {unavailable > 0 ? ` · ${unavailable} unavailable` : ''}
+        {canEditPrice ? '' : ' · Staff: cannot change prices'}
       </p>
 
       {Array.from(byCategory.entries()).map(([category, categoryItems]) => (

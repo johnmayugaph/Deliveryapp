@@ -47,7 +47,7 @@ export function AddToCartControls({
         </button>
         {replacedStore ? (
           <p role="status" className="mt-1 max-w-[9rem] text-[10px] leading-tight text-amber-700">
-            Pinalitan ang cart mo mula {replacedStore}.
+            Your cart from {replacedStore} was replaced.
           </p>
         ) : null}
       </div>

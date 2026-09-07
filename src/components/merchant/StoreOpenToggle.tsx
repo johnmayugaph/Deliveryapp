@@ -39,7 +39,7 @@ export function StoreOpenToggle({ storeId, isOpen }: { storeId: string; isOpen: 
         {isPending ? '…' : isOpen ? 'Bukas' : 'Sarado'}
       </button>
       <p className="mt-1 text-[10px] text-ink-faint">
-        {isOpen ? 'Tap para isara' : 'Tap para buksan'}
+        {isOpen ? 'Tap to close' : 'Tap to open'}
       </p>
       {error ? (
         <p role="alert" className="mt-1 max-w-[8rem] text-[10px] text-rose-700">

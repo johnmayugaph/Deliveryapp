@@ -99,13 +99,13 @@ export default async function OrderDetailPage({
         </div>
         {dropoff ? (
           <p className="mt-3 text-xs text-ink-muted">
-            Papunta sa {dropoff.line1}
+            Going to {dropoff.line1}
             {dropoff.barangay ? `, ${dropoff.barangay}` : ''}, {dropoff.cityName}
           </p>
         ) : null}
         {order.etaAt && isLive ? (
           <p className="mt-1 text-xs font-semibold text-brand-700">
-            Tinatayang dating{' '}
+            Estimated arrival{' '}
             {order.etaAt.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })}
           </p>
         ) : null}
@@ -159,7 +159,7 @@ export default async function OrderDetailPage({
         </ol>
         {!isTerminal(order.serviceType, order.status) && forwardStates.length > 0 ? (
           <p className="mt-2 text-[11px] text-ink-faint">
-            Susunod: {forwardStates.map((state) => statusPresentation(state).label).join(' / ')}
+            Next: {forwardStates.map((state) => statusPresentation(state).label).join(' / ')}
           </p>
         ) : null}
       </section>
@@ -169,7 +169,7 @@ export default async function OrderDetailPage({
           id="fees-heading"
           className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted"
         >
-          Bayad
+          Payment
         </h2>
         <dl className="mt-2 rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5">
           {feeLines.map((line) => (
@@ -199,7 +199,7 @@ export default async function OrderDetailPage({
           href={`/help?orderId=${order.id}`}
           className="flex items-center justify-between rounded-xl bg-surface px-3 py-3 shadow-sm ring-1 ring-black/5"
         >
-          <span className="text-sm font-semibold">May problema sa order na ito?</span>
+          <span className="text-sm font-semibold">Something wrong with this order?</span>
           <span aria-hidden className="text-xs text-ink-faint">
             ›
           </span>

@@ -32,22 +32,22 @@ export interface MerchantStage {
 export const MERCHANT_STAGES: readonly MerchantStage[] = [
   {
     key: 'needs-decision',
-    title: 'Bago',
-    blurb: 'Naghihintay ng sagot mo.',
+    title: 'New',
+    blurb: 'Waiting for your answer.',
     statuses: [OrderStatus.PENDING_MERCHANT_ACCEPTANCE],
     isUrgent: true,
   },
   {
     key: 'preparing',
-    title: 'Inihahanda',
-    blurb: 'Tinanggap na, ginagawa pa.',
+    title: 'Preparing',
+    blurb: 'Accepted, still cooking.',
     statuses: [OrderStatus.MERCHANT_ACCEPTED, OrderStatus.PREPARING],
     isUrgent: false,
   },
   {
     key: 'awaiting-pickup',
-    title: 'Hinihintay ang rider',
-    blurb: 'Handa na, hindi pa nakuha.',
+    title: 'Waiting for a rider',
+    blurb: 'Ready, not collected yet.',
     statuses: [
       OrderStatus.READY_FOR_PICKUP,
       OrderStatus.AWAITING_RIDER_ASSIGNMENT,

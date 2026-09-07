@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic';
  * The shared address book.
  *
  * One book, every vertical. An address saved while ordering food is immediately
- * available as a Padala pickup — which is why `isPickupCapable` is a property of
+ * available as a Parcel pickup — which is why `isPickupCapable` is a property of
  * the address rather than something a parcel flow would ask for again.
  */
 export default async function AddressesPage() {
@@ -23,13 +23,13 @@ export default async function AddressesPage() {
         </Link>
         <h1 className="mt-2 text-xl font-bold">Mga address</h1>
         <p className="mt-0.5 text-xs text-ink-muted">
-          Isang address book para sa lahat ng service.
+          One address book for every service.
         </p>
       </header>
 
       {addresses.length === 0 ? (
         <p className="px-4 py-8 text-sm text-ink-muted">
-          Wala pang saved address.
+          No saved addresses yet.
         </p>
       ) : (
         <ul className="mt-2 divide-y divide-black/5">

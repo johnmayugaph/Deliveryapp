@@ -12,7 +12,7 @@ export function ServiceTileGrid({ groups }: { groups: ServiceGroup[] }) {
   if (groups.length === 0) {
     return (
       <p className="px-4 py-6 text-sm text-ink-muted">
-        Wala pang available na service sa lugar mo. Babalikan ka namin.
+        No service is available in your area yet. We will come back to you.
       </p>
     );
   }

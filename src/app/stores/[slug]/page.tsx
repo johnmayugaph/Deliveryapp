@@ -85,11 +85,11 @@ export default async function StorePage({
           </ul>
         ) : (
           <p className="mt-2 rounded-lg bg-surface-sunken px-2 py-1.5 text-[11px] text-ink-muted">
-            Hindi pa available ang store na ito sa app.
+            This store is not available in the app yet.
           </p>
         )}
         {!store.isOpen ? (
-          <p className="mt-2 text-xs font-semibold text-rose-700">Sarado ngayon</p>
+          <p className="mt-2 text-xs font-semibold text-rose-700">Closed right now</p>
         ) : null}
       </header>
 

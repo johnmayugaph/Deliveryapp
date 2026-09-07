@@ -35,7 +35,7 @@ export function CancelOrderButton({ orderId }: { orderId: string }) {
         onClick={() => setIsConfirming(true)}
         className="w-full rounded-xl bg-surface px-3 py-3 text-sm font-semibold text-rose-700 shadow-sm ring-1 ring-black/5 transition-colors hover:bg-rose-50"
       >
-        Kanselahin ang order
+        Cancel this order
       </button>
     );
   }
@@ -44,7 +44,7 @@ export function CancelOrderButton({ orderId }: { orderId: string }) {
     <div className="rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5">
       <p className="text-sm font-semibold">Sigurado ka?</p>
       <p className="mt-1 text-xs text-ink-muted">
-        Hindi na ito maibabalik. Ang credits na ginamit mo ay ibabalik sa credits mo.
+        This cannot be undone. Any credits you spent go back to your credits.
       </p>
       <label className="mt-2 block">
         <span className="sr-only">Bakit kinansela</span>
@@ -78,8 +78,8 @@ export function CancelOrderButton({ orderId }: { orderId: string }) {
                 // to go and check.
                 setRefundNotice(
                   result.refundedCentavos > 0
-                    ? `Kinansela. Ibinalik ang ${formatCentavos(result.refundedCentavos)} sa credits mo.`
-                    : 'Kinansela ang order.',
+                    ? `Cancelled. ${formatCentavos(result.refundedCentavos)} went back to your credits.`
+                    : 'Order cancelled.',
                 );
                 router.refresh();
               } else {
@@ -89,7 +89,7 @@ export function CancelOrderButton({ orderId }: { orderId: string }) {
           }}
           className="flex-1 rounded-lg bg-rose-600 px-3 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-rose-700 disabled:bg-ink-faint"
         >
-          {isPending ? 'Kinakansela…' : 'Oo, kanselahin'}
+          {isPending ? 'Cancelling…' : 'Yes, cancel it'}
         </button>
         <button
           type="button"
@@ -97,7 +97,7 @@ export function CancelOrderButton({ orderId }: { orderId: string }) {
           onClick={() => setIsConfirming(false)}
           className="flex-1 rounded-lg bg-surface-sunken px-3 py-2.5 text-xs font-semibold transition-colors hover:bg-brand-50"
         >
-          Huwag na
+          Keep it
         </button>
       </div>
     </div>

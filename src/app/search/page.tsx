@@ -47,7 +47,7 @@ export default async function SearchPage({
               defaultValue={query}
               autoComplete="off"
               className="w-full bg-transparent text-sm text-ink placeholder:text-ink-faint focus:outline-none"
-              placeholder="Maghanap"
+              placeholder="Search"
             />
           </div>
         </form>
@@ -55,11 +55,11 @@ export default async function SearchPage({
 
       {query.length < 2 ? (
         <p className="px-4 py-8 text-sm text-ink-muted">
-          Mag-type ng kahit dalawang letra para maghanap.
+          Type at least two letters to search.
         </p>
       ) : resultsWithService.length === 0 ? (
         <p className="px-4 py-8 text-sm text-ink-muted">
-          Walang nahanap para sa &ldquo;{query}&rdquo;.
+          Nothing found for &ldquo;{query}&rdquo;.
         </p>
       ) : (
         <ul className="divide-y divide-black/5">

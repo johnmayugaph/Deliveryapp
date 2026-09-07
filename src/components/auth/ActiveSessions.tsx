@@ -15,7 +15,7 @@ import type { ActiveSessionSummary } from '@/lib/auth/session';
 
 /** Enough of a user-agent string to recognise a device, without parsing it fully. */
 function describeDevice(userAgent: string | null): string {
-  if (!userAgent) return 'Hindi kilalang device';
+  if (!userAgent) return 'Unknown device';
   if (/iPhone|iPad|iPod/i.test(userAgent)) return 'iPhone o iPad';
   if (/Android/i.test(userAgent)) return 'Android';
   if (/Macintosh|Mac OS X/i.test(userAgent)) return 'Mac';
@@ -41,7 +41,7 @@ export function ActiveSessions({ sessions }: { sessions: ActiveSessionSummary[] 
         id="sessions-heading"
         className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted"
       >
-        Naka-sign in sa
+        Signed in on
       </h2>
       <ul className="mt-2 space-y-1.5">
         {sessions.map((session) => (
@@ -54,12 +54,12 @@ export function ActiveSessions({ sessions }: { sessions: ActiveSessionSummary[] 
                 {describeDevice(session.userAgent)}
                 {session.isCurrent ? (
                   <span className="ml-1.5 rounded-full bg-brand-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-brand-800">
-                    Ito
+                    This one
                   </span>
                 ) : null}
               </span>
               <span className="mt-0.5 block text-[11px] text-ink-faint">
-                Huling gamit{' '}
+                Last used{' '}
                 {session.lastSeenAt.toLocaleDateString('en-PH', {
                   day: 'numeric',
                   month: 'short',
@@ -81,13 +81,13 @@ export function ActiveSessions({ sessions }: { sessions: ActiveSessionSummary[] 
           onClick={() =>
             startTransition(async () => {
               const { revoked } = await signOutEverywhereAction();
-              setNotice(`Nag-sign out sa ${revoked} pang device.`);
+              setNotice(`Signed out of ${revoked} other device.`);
               router.refresh();
             })
           }
           className="mt-2 text-xs font-semibold text-brand-700 disabled:text-ink-faint"
         >
-          {isPending ? 'Signing out…' : `Mag-sign out sa ${others} pang device`}
+          {isPending ? 'Signing out…' : `Sign out of ${others} other device`}
         </button>
       ) : null}
     </section>

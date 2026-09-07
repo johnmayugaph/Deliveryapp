@@ -127,7 +127,7 @@ export function MenuRow({
                 : 'bg-surface-sunken text-ink-faint hover:bg-brand-50'
             }`}
           >
-            {item.isAvailable ? 'Meron' : 'Wala'}
+            {item.isAvailable ? 'In stock' : 'Out'}
           </button>
         </span>
       </div>

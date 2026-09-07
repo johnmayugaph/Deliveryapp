@@ -47,8 +47,8 @@ export default async function FleetOffersPage() {
       <OrderLiveRefresh isActive={partner.isOnline && !activeJob} intervalMs={10_000} />
 
       <section aria-label="Earnings" className="grid grid-cols-3 gap-2 px-4 py-3">
-        <Stat label="Kita ngayon" value={formatCentavos(earnings.todayCentavos)} />
-        <Stat label="Jobs ngayon" value={String(earnings.todayJobs)} />
+        <Stat label="Earned today" value={formatCentavos(earnings.todayCentavos)} />
+        <Stat label="Jobs today" value={String(earnings.todayJobs)} />
         <Stat
           label="Acceptance"
           value={acceptanceRate === null ? '—' : `${Math.round(acceptanceRate * 100)}%`}
@@ -61,7 +61,7 @@ export default async function FleetOffersPage() {
           className="mx-4 mb-3 flex items-center justify-between rounded-xl bg-brand-700 px-4 py-3 text-white shadow-sm"
         >
           <span className="min-w-0">
-            <span className="block text-sm font-bold">May hawak kang order</span>
+            <span className="block text-sm font-bold">You are holding an order</span>
             <span className="mt-0.5 block text-[11px] text-white/85">
               {activeJob.order.orderNumber} · {activeJob.service.displayName}
             </span>
@@ -72,30 +72,30 @@ export default async function FleetOffersPage() {
 
       {partner.isSuspended ? (
         <p className="mx-4 rounded-xl bg-rose-50 px-3 py-2.5 text-xs text-rose-800">
-          Suspendido ang account mo. Kontakin ang support.
+          Your account is suspended. Contact support.
         </p>
       ) : partner.enabledServices.length === 0 ? (
         <div className="mx-4 rounded-xl bg-amber-50 px-3 py-3 text-xs text-amber-900">
-          <p className="font-semibold">Hinihintay pa ang approval mo.</p>
+          <p className="font-semibold">Your approval is still pending.</p>
           <p className="mt-1 leading-relaxed">
-            Walang offer na darating hangga&apos;t wala kang approved na service.{' '}
+            No offers will arrive until a service is approved.{' '}
             <Link href="/fleet/profile" className="font-semibold underline">
-              Tingnan ang status
+              See your status
             </Link>
             .
           </p>
         </div>
       ) : !partner.isOnline ? (
         <p className="px-4 py-10 text-center text-sm text-ink-muted">
-          Offline ka. Mag-online para makatanggap ng offers.
+          You are offline. Go online to receive offers.
         </p>
       ) : activeJob ? (
         <p className="px-4 py-8 text-center text-sm text-ink-muted">
-          Walang bagong offer habang may hawak kang order.
+          No new offers while you are holding an order.
         </p>
       ) : offers.length === 0 ? (
         <p className="px-4 py-10 text-center text-sm text-ink-muted">
-          Walang offer sa ngayon. Manatiling online.
+          No offers right now. Stay online.
         </p>
       ) : (
         <ul className="space-y-2 px-4 pb-6">

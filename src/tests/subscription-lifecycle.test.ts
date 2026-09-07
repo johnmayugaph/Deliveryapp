@@ -197,7 +197,7 @@ describe('benefit terms, read off the columns', () => {
     const terms = benefitTerms(
       benefit({ type: BenefitType.FREE_DELIVERY, minimumOrderCentavos: 0 }),
     );
-    expect(terms.join(' · ')).toMatch(/Walang limitasyon/);
+    expect(terms.join(' · ')).toMatch(/No monthly limit/);
   });
 
   it('states the percentage and the per-order ceiling for a discount', () => {
@@ -222,7 +222,7 @@ describe('benefit terms, read off the columns', () => {
     );
     expect(terms.join(' · ')).toContain('2%');
     expect(terms.join(' · ')).toContain('₱200.00');
-    expect(terms.join(' · ')).toMatch(/pagkatapos/);
+    expect(terms.join(' · ')).toMatch(/after the order/);
   });
 
   it('formats basis points without inventing precision', () => {
@@ -232,10 +232,10 @@ describe('benefit terms, read off the columns', () => {
   });
 
   it('distinguishes "every service" from a list of one', () => {
-    const names = new Map([[ServiceKey.FOOD, 'Kainan']]);
-    expect(benefitScopeLabel(benefit({ serviceKeys: [] }), names)).toBe('Lahat ng service');
+    const names = new Map([[ServiceKey.FOOD, 'Food']]);
+    expect(benefitScopeLabel(benefit({ serviceKeys: [] }), names)).toBe('Every service');
     expect(benefitScopeLabel(benefit({ serviceKeys: [ServiceKey.FOOD] }), names)).toBe(
-      'Kainan',
+      'Food',
     );
   });
 });

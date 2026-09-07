@@ -202,7 +202,7 @@ describe('guards', () => {
         from: OrderStatus.PREPARING,
         to: OrderStatus.CANCELLED_BY_CUSTOMER,
         actor: OrderActor.CUSTOMER,
-        reason: 'Nagbago ang isip',
+        reason: 'Changed my mind',
       }),
     ).not.toThrow();
   });

@@ -21,7 +21,7 @@ export async function NotificationBell({
   return (
     <Link
       href="/notifications"
-      aria-label={unread > 0 ? `${unread} bagong abiso` : 'Mga abiso'}
+      aria-label={unread > 0 ? `${unread} unread notifications` : 'Notifications'}
       className={`relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-base ${
         tone === 'dark' ? 'bg-white/15 text-white' : 'bg-surface-sunken text-ink'
       }`}

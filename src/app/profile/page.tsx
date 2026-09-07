@@ -114,10 +114,10 @@ export default async function ProfilePage() {
           </Link>
         </div>
         <p className="mt-1 text-[11px] text-ink-faint">
-          Isang address book para sa lahat ng service.
+          One address book for every service.
         </p>
         {addresses.length === 0 ? (
-          <p className="mt-2 text-sm text-ink-muted">Wala pang saved address.</p>
+          <p className="mt-2 text-sm text-ink-muted">No saved addresses yet.</p>
         ) : (
           <ul className="mt-2 space-y-2">
             {addresses.map((address) => (
@@ -150,18 +150,18 @@ export default async function ProfilePage() {
           id="inbox-heading"
           className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted"
         >
-          Mga abiso
+          Notifications
         </h2>
         <Link
           href="/notifications"
           className="mt-2 flex items-center justify-between gap-3 rounded-xl bg-surface px-4 py-3 shadow-sm ring-1 ring-black/5"
         >
           <span className="min-w-0">
-            <span className="block text-sm font-semibold">Inbox at SMS</span>
+            <span className="block text-sm font-semibold">Inbox and SMS</span>
             <span className="mt-0.5 block text-[11px] text-ink-muted">
               {unreadCount > 0
-                ? `${unreadCount} hindi pa nabasa`
-                : 'Lahat ng update sa isang lugar'}
+                ? `${unreadCount} unread`
+                : 'Every update in one place'}
             </span>
           </span>
           {unreadCount > 0 ? (
@@ -202,7 +202,7 @@ export default async function ProfilePage() {
                       month: 'short',
                       year: 'numeric',
                     })}`
-                  : 'Tingnan kung ano ang kasama'}
+                  : 'See what is included'}
               </span>
             </span>
             <span aria-hidden className="text-xs text-ink-faint">
@@ -230,7 +230,7 @@ export default async function ProfilePage() {
                 <span className="mt-0.5 block text-[11px] text-ink-muted">
                   {fleetPartner.enabledServices.length > 0
                     ? `Approved sa ${fleetPartner.enabledServices.length} service`
-                    : 'Hinihintay ang approval'}
+                    : 'Awaiting approval'}
                   {fleetPartner.isOnline ? ' · online' : ''}
                 </span>
               </span>
@@ -239,7 +239,7 @@ export default async function ProfilePage() {
               </span>
             </Link>
             <p className="mt-1.5 text-[11px] text-ink-faint">
-              Approved sa isang service ay hindi approved sa lahat.
+              Approved for one service is not approved for all of them.
             </p>
           </>
         ) : (
@@ -248,9 +248,9 @@ export default async function ProfilePage() {
             className="mt-2 flex items-center justify-between rounded-xl bg-surface px-3 py-3 shadow-sm ring-1 ring-black/5 transition-colors hover:bg-brand-50/40"
           >
             <span className="min-w-0">
-              <span className="block text-sm font-semibold">Maging fleet partner</span>
+              <span className="block text-sm font-semibold">Become a fleet partner</span>
               <span className="mt-0.5 block text-[11px] text-ink-muted">
-                Kumita sa paghahatid — parehong account lang.
+                Earn by delivering — same account.
               </span>
             </span>
             <span aria-hidden className="text-xs text-ink-faint">
@@ -267,7 +267,7 @@ export default async function ProfilePage() {
           href="/help"
           className="flex items-center justify-between rounded-xl bg-surface px-3 py-3 shadow-sm ring-1 ring-black/5"
         >
-          <span className="text-sm font-semibold">Help at support</span>
+          <span className="text-sm font-semibold">Help and support</span>
           <span aria-hidden className="text-xs text-ink-faint">
             ›
           </span>

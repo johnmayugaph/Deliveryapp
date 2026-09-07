@@ -26,11 +26,11 @@ export default async function WelcomePage() {
     <main className="px-4 py-10">
       <header>
         <p className="text-[11px] font-semibold uppercase tracking-wide text-brand-700">
-          Bagong account
+          New account
         </p>
-        <h1 className="mt-1 text-2xl font-bold">Kumusta!</h1>
+        <h1 className="mt-1 text-2xl font-bold">Welcome!</h1>
         <p className="mt-1 text-sm text-ink-muted">
-          Verified na ang {formatPhilippineMobile(user.phone)}. Ano ang pangalan mo?
+          We verified {formatPhilippineMobile(user.phone)}. What should we call you?
         </p>
       </header>
 

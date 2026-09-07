@@ -78,7 +78,7 @@ export async function rejectOrderAction(
 ): Promise<MerchantActionResult> {
   const trimmed = reason.trim();
   if (trimmed.length < 3) {
-    return { ok: false, message: 'Ilagay ang dahilan — makikita ito ng customer.' };
+    return { ok: false, message: 'Give a reason — the customer sees it.' };
   }
 
   try {
@@ -97,7 +97,7 @@ export async function rejectOrderAction(
         tx,
       );
       // Credits spent on an order that will never arrive go straight back.
-      await refundOrderCredits({ orderId, reason: 'Tinanggihan ng store' }, tx);
+      await refundOrderCredits({ orderId, reason: 'Rejected by the store' }, tx);
       return updated;
     });
 
@@ -154,7 +154,7 @@ export async function markReadyAction(orderId: string): Promise<MerchantActionRe
           orderId,
           to: OrderStatus.AWAITING_RIDER_ASSIGNMENT,
           actor: OrderActor.SYSTEM,
-          reason: 'Handa na ang order; hinahanap ang rider.',
+          reason: 'Ready for pickup; finding a rider.',
         },
         tx,
       );
@@ -179,7 +179,7 @@ export async function addPrepMinutesAction(
 ): Promise<MerchantActionResult> {
   const added = Math.floor(minutes);
   if (!Number.isInteger(added) || added < 1 || added > 60) {
-    return { ok: false, message: 'Sa pagitan ng 1 at 60 minuto.' };
+    return { ok: false, message: 'Between 1 and 60 minutes.' };
   }
 
   try {
@@ -205,7 +205,7 @@ export async function addPrepMinutesAction(
         toStatus: order.status,
         actor: OrderActor.MERCHANT,
         actorUserId: access.user.id,
-        reason: `Dinagdagan ng ${added} minuto ang paghahanda.`,
+        reason: `Added ${added} minutes to the prep time.`,
       },
     });
 
@@ -247,7 +247,7 @@ export async function setPreparationMinutesAction(
 ): Promise<StoreSettingsResult> {
   const value = Math.floor(minutes);
   if (!Number.isInteger(value) || value < 1 || value > 180) {
-    return { ok: false, message: 'Sa pagitan ng 1 at 180 minuto.' };
+    return { ok: false, message: 'Between 1 and 180 minutes.' };
   }
 
   try {
@@ -278,7 +278,7 @@ export async function setItemAvailabilityAction(
       data: { isAvailable },
     });
     if (count === 0) {
-      return { ok: false, message: 'Wala sa menu mo ang item na ito.' };
+      return { ok: false, message: 'That item is not on your menu.' };
     }
     revalidatePath(`/merchant/${storeId}/menu`);
     revalidatePath(`/stores/${access.store.slug}`);
@@ -302,7 +302,7 @@ export async function setItemPriceAction(
 ): Promise<StoreSettingsResult> {
   const price = Math.floor(priceCentavos);
   if (!Number.isInteger(price) || price < 100 || price > 10_000_00) {
-    return { ok: false, message: 'Sa pagitan ng ₱1 at ₱10,000.' };
+    return { ok: false, message: 'Between ₱1 and ₱10,000.' };
   }
 
   try {
@@ -312,7 +312,7 @@ export async function setItemPriceAction(
       data: { priceCentavos: price },
     });
     if (count === 0) {
-      return { ok: false, message: 'Wala sa menu mo ang item na ito.' };
+      return { ok: false, message: 'That item is not on your menu.' };
     }
     revalidatePath(`/merchant/${storeId}/menu`);
     revalidatePath(`/stores/${access.store.slug}`);
@@ -332,22 +332,22 @@ function toMerchantMessage(error: unknown): string {
   if (error instanceof Error) {
     switch (error.name) {
       case 'NoStoreAccessError':
-        return 'Wala kang access sa store na ito.';
+        return 'You do not have access to this store.';
       case 'InsufficientStoreRoleError':
-        return 'Kailangan ng mas mataas na access para dito.';
+        return 'That needs a higher level of access.';
       case 'NotAuthenticatedError':
-        return 'Mag-sign in muli.';
+        return 'Sign in again.';
       case 'IllegalTransitionError':
         // Almost always a stale screen: somebody else already moved it.
-        return 'Nagbago na ang order na ito. I-refresh ang queue.';
+        return 'This order has changed. Refresh the queue.';
       case 'MissingTransitionReasonError':
-        return 'Kailangan ng dahilan.';
+        return 'A reason is required.';
       case 'UnauthorizedTransitionError':
-        return 'Hindi ito kayang gawin ng store para sa order na ito.';
+        return 'A store cannot do that to this order.';
       case 'OrderNotFoundError':
-        return 'Hindi na mahanap ang order.';
+        return 'That order is gone.';
     }
   }
   console.error('merchant action failed:', error);
-  return 'Hindi natuloy. Subukan muli.';
+  return 'That did not go through. Try again.';
 }

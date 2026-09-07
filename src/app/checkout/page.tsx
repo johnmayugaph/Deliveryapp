@@ -44,9 +44,9 @@ export default async function CheckoutPage() {
 
       {addresses.length === 0 ? (
         <p className="px-4 py-8 text-sm text-ink-muted">
-          Kailangan mo ng address bago mag-order.{' '}
+          You need an address before ordering.{' '}
           <Link href="/addresses" className="font-semibold text-brand-700 underline">
-            Magdagdag ng address
+            Add an address
           </Link>
           .
         </p>

@@ -39,11 +39,11 @@ export default async function MerchantSettingsPage({
         className="rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5"
       >
         <h2 id="prep-heading" className="text-[13px] font-semibold">
-          Oras ng paghahanda
+          Prep time
         </h2>
         <p className="mt-0.5 text-[11px] text-ink-muted">
-          Ginagamit ito sa ETA na nakikita ng customer, at naka-snapshot sa bawat
-          bagong order.
+          This drives the ETA the customer sees, and is snapshotted onto every
+          new order.
         </p>
         <div className="mt-3">
           <PrepTimeForm
@@ -59,7 +59,7 @@ export default async function MerchantSettingsPage({
         className="rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5"
       >
         <h2 id="services-heading" className="text-[13px] font-semibold">
-          Mga service
+          Services
         </h2>
         <ul className="mt-2 space-y-1.5">
           {storeServices.map((service) => (
@@ -78,7 +78,7 @@ export default async function MerchantSettingsPage({
           ))}
         </ul>
         <p className="mt-2 text-[11px] text-ink-faint">
-          Kontakin ang support para magdagdag ng service.
+          Contact support to add a service.
         </p>
       </section>
 
@@ -87,7 +87,7 @@ export default async function MerchantSettingsPage({
         className="rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5"
       >
         <h2 id="members-heading" className="text-[13px] font-semibold">
-          Sino ang puwedeng mag-access
+          Who has access
         </h2>
         <ul className="mt-2 space-y-1.5">
           {members.map((member) => (

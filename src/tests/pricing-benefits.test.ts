@@ -65,7 +65,7 @@ describe('FREE_DELIVERY', () => {
     type: BenefitType.FREE_DELIVERY,
     minimumOrderCentavos: 29_900,
     monthlyUsageCap: 8,
-    displayLabel: 'Libreng delivery',
+    displayLabel: 'Free delivery',
   });
 
   it('waives the delivery fee above the minimum order', () => {
@@ -156,7 +156,7 @@ describe('DISCOUNT_PERCENT is scoped by data, not by a branch', () => {
     serviceKeys: [ServiceKey.FOOD],
     percentBasisPoints: 500, // 5%
     maxDiscountCentavos: 10_000,
-    displayLabel: '5% off sa Kainan',
+    displayLabel: '5% off Food',
   });
 
   it('applies to a service it is scoped to', () => {
@@ -234,7 +234,7 @@ describe('CREDIT_BACK_PERCENT', () => {
     type: BenefitType.CREDIT_BACK_PERCENT,
     percentBasisPoints: 200, // 2%
     monthlyCeilingCentavos: 20_000, // ₱200/month
-    displayLabel: '2% credits pabalik',
+    displayLabel: '2% back in credits',
   });
 
   it('accrues credits without reducing what is payable now', () => {

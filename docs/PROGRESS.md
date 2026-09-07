@@ -98,8 +98,8 @@ choices:
   Conflating them is how the `if FOOD` branches come back.
 - **`Service.intentGroup` owns grouping; the label file owns names.**
   `intent-groups.ts` contains no service keys, so regrouping the home screen is
-  a data edit. Group names are Filipino-market: *Pagkain at Grocery*, *Padala at
-  Pabili*, *Sakay*, *Bayad*.
+  a data edit. Group names say what somebody is trying to do: *Food & grocery*,
+  *Send & buy*, *Rides*, *Pay*.
 - **`SupportTicket.serviceType` is nullable.** A literal reading of the brief
   would make it required, but an account-level problem belongs to no vertical
   and forcing one would make the data lie.
@@ -446,7 +446,7 @@ Re-shooting the screens for review turned up a display bug the tests could not
 see: the offers board read `FleetPartner.acceptanceRate` — the *ranking* column,
 which defaults to `1` so a new partner is not buried — and rendered **94% next
 to an empty offer history**, while the profile screen, which guards on the offer
-records, correctly said *Wala pang offer* on the same account. Both screens now
+records, correctly said *No offers yet* on the same account. Both screens now
 compute from the records via `computeAcceptanceRate()`, the board shows an em
 dash with no history, and `getPartnerEarnings()` no longer carries the field, so
 the display path cannot read the ranking prior at all. Three grep tests hold the
@@ -640,6 +640,48 @@ order. A test asserts the file handles no `P2002`.
   ends with six inbox rows of which exactly one was texted.
 - **One copy bug the real send caught**: `"Deliveryapp— ₱89.00"`, a missing space
   from a joined string. Now a test that fails against it.
+
+---
+
+## Interface language: English ✅
+
+The original brief asked for Filipino-market group names and gave examples —
+*Kainan*, *Tindahan*, *Padala*, *Pabili*, *Sakay*. The product later decided the
+interface should be English, so every user-facing string was translated:
+
+| Was | Now |
+| --- | --- |
+| Kainan | Food |
+| Tindahan | Mart |
+| Padala | Parcel |
+| Pabili | Errands |
+| Sakay | Rides |
+
+Group headings became *Food & grocery*, *Send & buy*, *Rides*, *Pay*.
+
+**What stayed Filipino, on purpose:** dish names (*Sinigang na Baboy*, *Isaw ng
+Manok*), store names (*Aling Nena Carinderia*), and place names. A carinderia
+sells sinigang, not pork sour soup — translating those would make the catalogue
+read like a machine wrote it. Menu *categories* were translated, because those
+are app furniture.
+
+**The change was cheap in exactly the way the architecture predicted.** Service
+names are five `displayName` rows in the seed and group labels are one config
+file, so a vertical's name is data — the tiles, search placeholder, order
+history, notification copy and benefit labels all followed from the same rows.
+Everything else was screen copy: about 400 strings across 56 files, plus the
+notification templates, the OTP message and the seeded FAQ.
+
+Two things worth noting from doing it:
+
+- **Nothing in the domain layer changed.** No service key, status enum, lifecycle
+  map or database column moved. The only tests that needed editing were the ones
+  asserting display text — five assertions.
+- **A bulk find-and-replace was the wrong tool** and was reverted: short words
+  are substrings of longer ones, so *Bago* inside *Bagong order* produced
+  "Newng order". The second attempt matched whole phrases only.
+
+`<html lang>` is now `en-PH`.
 
 ---
 

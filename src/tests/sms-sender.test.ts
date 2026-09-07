@@ -47,7 +47,7 @@ describe('sender selection', () => {
 });
 
 describe('the Semaphore adapter', () => {
-  const message = { to: '+639171234567', body: '123456 ang code mo.' };
+  const message = { to: '+639171234567', body: '123456 is your code.' };
 
   /**
    * A stub `fetch` whose parameters are declared, so the recorded calls are

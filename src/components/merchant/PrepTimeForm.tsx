@@ -31,7 +31,7 @@ export function PrepTimeForm({
       <p className="text-sm">
         <span className="font-semibold tabular-nums">{minutes}</span> minuto
         <span className="ml-2 text-[11px] text-ink-faint">
-          Manager lang ang puwedeng magbago
+          Only a manager can change this
         </span>
       </p>
     );
@@ -56,7 +56,7 @@ export function PrepTimeForm({
       }}
     >
       <label htmlFor="prep" className="sr-only">
-        Minuto ng paghahanda
+        Prep minutes
       </label>
       <input
         id="prep"

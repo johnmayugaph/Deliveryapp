@@ -244,7 +244,7 @@ describe('templates', () => {
   it('renders a title, a body and a short form for every kind', () => {
     for (const kind of Object.values(NotificationKind)) {
       const rendered = renderNotification(kind, {
-        serviceName: 'Kainan',
+        serviceName: 'Food',
         orderNumber: 'DA-20260907-ABCDE',
         storeName: 'Aling Nena Carinderia',
         amountCentavos: 49900,
@@ -269,7 +269,7 @@ describe('templates', () => {
     // and it is the kind of thing only a real send makes obvious.
     for (const kind of Object.values(NotificationKind)) {
       const rendered = renderNotification(kind, {
-        serviceName: 'Kainan',
+        serviceName: 'Food',
         orderNumber: 'DA-1',
         earningsCentavos: 8900,
         secondsToAnswer: 60,
@@ -282,7 +282,7 @@ describe('templates', () => {
 
   it('carries the order number into the text, where there is no screen', () => {
     const rendered = renderNotification(NotificationKind.ORDER_ARRIVED, {
-      serviceName: 'Kainan',
+      serviceName: 'Food',
       orderNumber: 'DA-20260907-ABCDE',
     });
     expect(rendered.sms).toContain('DA-20260907-ABCDE');
@@ -290,19 +290,19 @@ describe('templates', () => {
 
   it('takes the vertical name from the caller rather than naming food', () => {
     const rendered = renderNotification(NotificationKind.ORDER_DELIVERED, {
-      serviceName: 'Padala',
+      serviceName: 'Parcel',
     });
-    expect(rendered.body).toContain('Padala');
+    expect(rendered.body).toContain('Parcel');
   });
 
   it('leaves out a refund line when there was no refund', () => {
     const withRefund = renderNotification(NotificationKind.ORDER_CANCELLED, {
-      serviceName: 'Kainan',
+      serviceName: 'Food',
       orderNumber: 'DA-1',
       amountCentavos: 49900,
     });
     const without = renderNotification(NotificationKind.ORDER_CANCELLED, {
-      serviceName: 'Kainan',
+      serviceName: 'Food',
       orderNumber: 'DA-1',
     });
     expect(withRefund.body).toContain('₱499.00');

@@ -24,16 +24,16 @@ export function CancelPlanButton() {
         onClick={() => setConfirming(true)}
         className="w-full rounded-xl bg-surface px-3 py-3 text-sm font-semibold text-rose-700 shadow-sm ring-1 ring-black/5 transition-colors hover:bg-rose-50"
       >
-        Itigil ang plan
+        End the plan
       </button>
     );
   }
 
   return (
     <div className="rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5">
-      <p className="text-[13px] font-semibold">Itigil ang plan?</p>
+      <p className="text-[13px] font-semibold">End the plan?</p>
       <p className="mt-1 text-xs leading-relaxed text-ink-muted">
-        Titigil agad ang mga benefits — hindi hanggang sa katapusan ng buwan.
+        Benefits stop immediately — not at the end of the month.
       </p>
       {error ? (
         <p role="alert" className="mt-2 text-xs text-rose-700">
@@ -57,7 +57,7 @@ export function CancelPlanButton() {
           }
           className="flex-1 rounded-xl bg-rose-700 px-3 py-2.5 text-sm font-bold text-white transition-colors hover:bg-rose-800 disabled:bg-ink-faint"
         >
-          {isPending ? '…' : 'Oo, itigil'}
+          {isPending ? '…' : 'Yes, end it'}
         </button>
         <button
           type="button"
@@ -65,7 +65,7 @@ export function CancelPlanButton() {
           onClick={() => setConfirming(false)}
           className="rounded-xl bg-surface-sunken px-3 py-2.5 text-sm font-semibold"
         >
-          Hindi
+          No
         </button>
       </div>
     </div>

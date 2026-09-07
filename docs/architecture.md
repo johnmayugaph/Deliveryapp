@@ -1,11 +1,11 @@
 # Architecture
 
 Deliveryapp is a multi-service delivery app for the Philippine market. It runs
-five verticals — **Kainan** (food), **Tindahan** (mart), **Padala** (parcel),
-**Pabili**, and **Sakay** (rides) — as one product rather than five apps sharing
+five verticals — **Food**, **Mart**, **Parcel**, **Errands**, and **Rides** — as
+one product rather than five apps sharing
 a login.
 
-Only Kainan is live. The other four exist in the database as coming-soon records
+Only Food is live. The other four exist in the database as coming-soon records
 so the home screen can show them, which measures demand before any of them costs
 engineering time.
 
@@ -85,8 +85,11 @@ data.
 Intent-group labels live in `src/lib/services/intent-groups.ts`. That file names
 the groups and contains **no service keys** — membership comes from
 `Service.intentGroup`, so regrouping the home screen is a data edit. The labels
-are plain Filipino-market language rather than a translation of anyone else's
-taxonomy: *Pagkain at Grocery*, *Padala at Pabili*, *Sakay*, *Bayad*.
+name what somebody is trying to do rather than the internal taxonomy: *Food &
+grocery*, *Send & buy*, *Rides*, *Pay*. They were Filipino (*Pagkain at
+Grocery*, *Padala at Pabili*) until the product decided the interface should be
+English — and that change touched `intent-groups.ts` and five `displayName`
+rows in the seed, nothing else. Which is the point of keeping names in data.
 
 ---
 
@@ -287,7 +290,7 @@ is exactly that, on one record. Nothing downstream may assume a session belongs
 to a customer.
 
 **One address book**, shared across every vertical. An address saved while
-ordering food is immediately available as a Padala pickup. Beyond the usual
+ordering food is immediately available as a Parcel pickup. Beyond the usual
 fields, `Address` carries:
 
 - `usageCount` and `lastUsedAt` — maintained by `bumpAddressUsage()` once per
@@ -447,7 +450,7 @@ ranking column always holds a value — `1` by default — reading it for displa
 put "94%" beside an empty offer history on the offers board. Both partner-facing
 screens now call `computeAcceptanceRate()` on the offer records, where "no
 history yet" is expressible: the board shows an em dash and the profile says
-*Wala pang offer*. `getPartnerEarnings()` no longer returns the field at all, so
+*No offers yet*. `getPartnerEarnings()` no longer returns the field at all, so
 there is one source of truth for display and one for ranking, and they cannot
 drift.
 
@@ -747,7 +750,7 @@ An **inactive plan grants nothing**, even to someone already subscribed —
 makes the seeded plan safe to leave in place.
 
 **Seeded plan:** *Deliveryapp Plus*, ₱99/month, `isActive: false`. Free delivery
-over ₱299 (8×/month), 5% off Kainan (₱100 cap), 2% credits back (₱200/month
+over ₱299 (8×/month), 5% off Food (₱100 cap), 2% credits back (₱200/month
 cap). It stays off until there is a decision to launch it.
 
 ### Enrollment, and why it cannot be paid for yet
@@ -989,7 +992,7 @@ not the same news to everybody:
 
 No service branch appears anywhere in this layer. The vertical's display name
 arrives from the registry in the template context, which is why the same
-`ORDER_DELIVERED` copy reads correctly for Kainan and for Padala.
+`ORDER_DELIVERED` copy reads correctly for Food and for Parcel.
 
 ### Restraint is the policy
 

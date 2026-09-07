@@ -7,9 +7,10 @@ import { IntentGroup } from '@prisma/client';
  * is `Service.intentGroup` in the database, so regrouping the home screen is a
  * data edit and never a code change. This module only names the groups.
  *
- * The labels are plain Filipino-market language rather than a translation of
- * someone else's taxonomy — a Filipino customer reads "Padala at Pabili" and
- * knows exactly what is behind it.
+ * The labels are plain English, and plain: a group is named for what somebody
+ * is trying to do, not for the internal taxonomy. They were Filipino
+ * ("Padala at Pabili") until the product decided otherwise — a reminder that
+ * this file, and not the service records, is where that wording lives.
  */
 export interface IntentGroupPresentation {
   /** Section heading on the home screen. */
@@ -24,23 +25,23 @@ export const INTENT_GROUP_PRESENTATION: Readonly<
   Record<IntentGroup, IntentGroupPresentation>
 > = {
   [IntentGroup.EAT]: {
-    label: 'Pagkain at Grocery',
-    tagline: 'Kainan at tindahan, dala sa pintuan mo',
+    label: 'Food & grocery',
+    tagline: 'Meals and groceries, brought to your door',
     sortOrder: 1,
   },
   [IntentGroup.GET]: {
-    label: 'Padala at Pabili',
-    tagline: 'Ipadala o ipamili — kami na ang pupunta',
+    label: 'Send & buy',
+    tagline: 'Send it or buy it — we make the trip',
     sortOrder: 2,
   },
   [IntentGroup.GO]: {
-    label: 'Sakay',
-    tagline: 'Ihahatid ka namin kung saan mo kailangan',
+    label: 'Rides',
+    tagline: 'We take you where you need to go',
     sortOrder: 3,
   },
   [IntentGroup.PAY]: {
-    label: 'Bayad',
-    tagline: 'Bayarin at rewards sa isang lugar',
+    label: 'Pay',
+    tagline: 'Bills and rewards in one place',
     sortOrder: 4,
   },
 };

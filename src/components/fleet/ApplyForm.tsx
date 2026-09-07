@@ -53,7 +53,7 @@ export function ApplyForm({ services }: { services: ApplyServiceOption[] }) {
         event.preventDefault();
         setError(null);
         if (vehicleType === '') {
-          setError('Pumili ng sasakyan.');
+          setError('Choose a vehicle.');
           return;
         }
         startTransition(async () => {
@@ -68,7 +68,7 @@ export function ApplyForm({ services }: { services: ApplyServiceOption[] }) {
       }}
     >
       <fieldset>
-        <legend className="text-[13px] font-semibold">Sasakyan</legend>
+        <legend className="text-[13px] font-semibold">Vehicle</legend>
         <div className="mt-2 grid grid-cols-2 gap-2">
           {(Object.values(VehicleType) as VehicleType[]).map((type) => (
             <label
@@ -110,8 +110,8 @@ export function ApplyForm({ services }: { services: ApplyServiceOption[] }) {
       <fieldset>
         <legend className="text-[13px] font-semibold">Anong gusto mong ihatid?</legend>
         <p className="mt-0.5 text-[11px] text-ink-muted">
-          Bawat service ay may sariling approval. Ang approval sa pagkain ay hindi
-          approval para sa pasahero.
+          Every service is approved separately. Being approved for food is not
+          approval to carry a passenger.
         </p>
         <div className="mt-2 space-y-1.5">
           {services.map((service) => (
@@ -158,8 +158,8 @@ export function ApplyForm({ services }: { services: ApplyServiceOption[] }) {
       </button>
 
       <p className="text-[11px] leading-relaxed text-ink-faint">
-        Susuriin namin ang application mo. Hindi ka makakatanggap ng offer
-        hangga&apos;t wala pang approved na service.
+        We will review your application. No offers arrive until a service
+        is approved.
       </p>
     </form>
   );

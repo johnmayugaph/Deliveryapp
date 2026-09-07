@@ -141,15 +141,15 @@ export function checkCodeUsable(
  * has genuinely run out of attempts needs to know to ask for a new code.
  */
 export const VERIFY_FAILURE_MESSAGES: Readonly<Record<VerifyFailure, string>> = {
-  NO_CODE: 'Mali ang code. Subukan muli o humingi ng bago.',
-  WRONG_CODE: 'Mali ang code. Subukan muli o humingi ng bago.',
-  EXPIRED: 'Nag-expire na ang code. Humingi ng bago.',
-  TOO_MANY_ATTEMPTS: 'Masyadong maraming mali. Humingi ng bagong code.',
-  ALREADY_USED: 'Nagamit na ang code na ito. Humingi ng bago.',
+  NO_CODE: 'That code is wrong. Try again, or ask for a new one.',
+  WRONG_CODE: 'That code is wrong. Try again, or ask for a new one.',
+  EXPIRED: 'That code has expired. Ask for a new one.',
+  TOO_MANY_ATTEMPTS: 'Too many wrong tries. Ask for a new code.',
+  ALREADY_USED: 'That code has already been used. Ask for a new one.',
 };
 
 export const THROTTLE_MESSAGES: Readonly<Record<ThrottleReason, string>> = {
-  COOLDOWN: 'Hintayin muna ang code na pinadala namin.',
-  PHONE_LIMIT: 'Sobra nang dami ang hiningi mong code. Subukan mamaya.',
-  IP_LIMIT: 'Sobra nang dami ang request mula sa koneksyon mo. Subukan mamaya.',
+  COOLDOWN: 'Wait for the code we already sent.',
+  PHONE_LIMIT: 'Too many codes requested. Try again later.',
+  IP_LIMIT: 'Too many requests from your connection. Try again later.',
 };
