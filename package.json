@@ -18,7 +18,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:guards": "node --env-file-if-exists=.env scripts/apply-sql-guards.mjs",
     "db:setup": "prisma migrate deploy && npm run prisma:guards && npm run db:seed",
-    "db:seed": "tsx prisma/seed.ts",
+    "db:seed": "tsx --env-file-if-exists=.env prisma/seed.ts",
     "verify": "npm run typecheck && npm run test",
     "jobs:orders": "tsx scripts/run-order-maintenance.ts",
     "fleet:approve": "tsx scripts/approve-fleet-partner.ts",
@@ -26,7 +26,9 @@
     "plan:comp": "tsx scripts/grant-subscription.ts",
     "sms:send-one": "tsx --env-file-if-exists=.env scripts/send-one-sms.ts",
     "push:keys": "tsx --env-file-if-exists=.env scripts/generate-vapid-keys.ts",
-    "db:purge-user": "tsx --env-file-if-exists=.env scripts/purge-user.ts"
+    "db:purge-user": "tsx --env-file-if-exists=.env scripts/purge-user.ts",
+    "db:purge-demo": "tsx --env-file-if-exists=.env scripts/purge-demo.ts",
+    "admin:grant": "tsx --env-file-if-exists=.env scripts/grant-admin.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

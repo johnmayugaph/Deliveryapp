@@ -3,11 +3,13 @@ import {
   NotificationDeliveryStatus,
   OrderStatus,
   SubscriptionStatus,
+  UserRole,
   VerificationStatus,
   WalletTransactionType,
   type ServiceKey,
 } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { demoDataIsUsable } from '@/lib/demo/policy';
 import { getAllServices } from '@/lib/services/registry';
 import { ALL_IN_PROGRESS_STATUSES } from '@/lib/orders/transitions';
 import { storeIdFromDetails } from '@/lib/merchant/access';
@@ -504,6 +506,44 @@ export async function deliveryHealth(): Promise<DeliveryHealth> {
     })),
     recentFailures,
     expiredPushDevices,
+  };
+}
+
+export interface DemoDataPresence {
+  demoUsers: number;
+  demoStores: number;
+  /** Demo accounts holding ADMIN. The reason this check exists. */
+  demoAdmins: number;
+  /** Accounts that could still open the console after a purge. */
+  realAdmins: number;
+  /** Whether demo accounts can hold a session in this runtime. */
+  usableHere: boolean;
+}
+
+/**
+ * Whether the seed data is still here.
+ *
+ * On the health page rather than tucked away, because "is there still an
+ * administrator account on a phone number a stranger owns" is a question about
+ * whether this deployment is healthy, in exactly the same sense as whether the
+ * outbox is draining.
+ */
+export async function demoDataPresence(): Promise<DemoDataPresence> {
+  const [demoUsers, demoStores, demoAdmins, realAdmins] = await Promise.all([
+    prisma.user.count({ where: { isDemo: true } }),
+    prisma.store.count({ where: { isDemo: true } }),
+    prisma.user.count({ where: { isDemo: true, roles: { has: UserRole.ADMIN } } }),
+    prisma.user.count({
+      where: { isDemo: false, isBlocked: false, roles: { has: UserRole.ADMIN } },
+    }),
+  ]);
+
+  return {
+    demoUsers,
+    demoStores,
+    demoAdmins,
+    realAdmins,
+    usableHere: demoDataIsUsable(),
   };
 }
 

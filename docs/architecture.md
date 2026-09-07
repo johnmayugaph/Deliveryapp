@@ -1218,6 +1218,59 @@ reads `orderableHere`, never `isActive`.
 
 ---
 
+## Demo data, and why it cannot be allowed to matter
+
+`prisma/seed.ts` writes six accounts and three stores so a fresh clone has
+something to click. Five of the six numbers belong to strangers in real life
+and one of them — `0917 000 9999` — holds ADMIN. Nothing in the login flow can
+tell that a row was invented, so on a production deployment whoever owns that
+number could request a code and be an administrator.
+
+The fix is not a checklist item. `User.isDemo` and `Store.isDemo` are set by
+the seed and read by `src/lib/demo/policy.ts`, whose one rule is that a demo
+account **cannot hold a session in production**:
+
+```ts
+export function signInIsPermitted(user, nodeEnv = process.env.NODE_ENV) {
+  if (user.isBlocked) return false;
+  if (user.isDemo && !demoDataIsUsable(nodeEnv)) return false;
+  return true;
+}
+```
+
+Called in two places, not one: `checkLoginCode()`, so a person gets a sentence,
+and `loadSession()`, so a cookie minted before the deploy stops working too.
+Both used to test `isBlocked` directly; one function now decides, and the
+refusal message is identical for both reasons, because somebody who happens to
+own a seeded number should learn nothing from the screen.
+
+**The seed refuses to run where it was not asked to.** Two independent checks —
+`NODE_ENV=production`, and a `DATABASE_URL` whose host is not local. The second
+catches the likelier mistake by far: `npm run db:seed` in a terminal with a
+production connection string exported and no NODE_ENV at all. `--force` exists
+because a check with no way past it gets deleted rather than respected.
+
+**Cleaning up is one command.** `npm run db:purge-demo` prints what would go and
+stops; `--confirm` removes it. It deletes only the ids it printed, never a
+predicate. Audit entries written *by* a demo administrator need `--and-audit`
+as well: an audit row records what was done to somebody else, so it is not the
+actor's to erase, and the purge names them and stops rather than deciding.
+
+**And there is a way back in.** Purging removes the only ADMIN a fresh database
+has, and there is deliberately no screen for granting console access — a screen
+for making yourself an administrator would be the largest hole in the product.
+`npm run admin:grant -- 09171234567 --reason "…"` does it from a shell, which
+is honest about where the boundary really is: anybody with `DATABASE_URL` can
+already write any row. What the script adds is the audit entry. It **refuses to
+create the account**: it must already exist, which means the person has signed
+in with that number and thereby proved they hold the phone. On the audit row,
+`actorId` is the account that gained or lost the role, because a shell has no
+identity to record — which is why `--reason` is mandatory and should name a
+human.
+
+The console's health page reports demo data as a health problem, in the same
+sense as an undrained outbox, and says which command to run.
+
 ## Verification
 
 Database-free, in CI (`npm run verify`) — **396 tests**:

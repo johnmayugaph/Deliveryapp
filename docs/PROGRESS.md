@@ -930,3 +930,48 @@ guards rejecting raw writes, the freeze expiring before any sweep, purpose-scope
 email codes, and the purge hatch closing again afterwards); and the whole flow in
 a real browser — add an address, confirm it, recover onto a new number from a
 clean browser, and sign in with it.
+
+## Phase 13 — the demo data stops being a liability
+
+The pre-launch review put "delete every demo account" first, ahead of the
+database and the SMS gateway, and that ordering was right but the remedy was
+wrong: the fix for a dangerous default is not a step in a document somebody has
+to remember.
+
+`User.isDemo` and `Store.isDemo` are written by the seed and read by
+`src/lib/demo/policy.ts`. A demo account cannot hold a session in production —
+checked both at login and every time a session is read back, so a cookie that
+predates the deploy stops working as well. The refusal is word-for-word the one
+a blocked account gets, so a stranger who happens to own `0917 000 9999` learns
+nothing from the screen.
+
+The seed itself now refuses two targets: `NODE_ENV=production`, and a
+`DATABASE_URL` whose host is not local. The second is the one that matters —
+the realistic mistake is not carelessness, it is `npm run db:seed` in a terminal
+with a production connection string exported. `--force` gets past both, on the
+grounds that a check with no way past it gets deleted rather than respected.
+
+Two new commands close the loop the checklist opened:
+
+- `npm run db:purge-demo` — prints the six accounts and three stores and stops;
+  `--confirm` removes them. It deletes only the ids it printed. Audit entries
+  written *by* a demo administrator need `--and-audit` too, because an audit row
+  is the record of what was done to somebody else and is not the actor's to
+  erase.
+- `npm run admin:grant -- 09171234567 --reason "…"` — because purging removes
+  the only administrator a fresh database has, and there is no screen for
+  granting console access on purpose. It will not create the account: the
+  person signs in once with their own number first, which is the only available
+  proof that they hold it. The audit row names the account that gained the role,
+  since a shell has no identity of its own — hence the mandatory reason.
+
+**Verified in a production runtime, not just in unit tests.** Built, started
+with `NODE_ENV=production`, and two sessions minted directly in the database:
+the demo ops admin (ADMIN, `isDemo`) gets 404 on `/admin` and a redirect to
+`/login` from `/profile`, while a real ADMIN on the same server gets 200 on
+both. Plus 39 checks on the policy itself, including three source-level guards
+verified against the real mistakes they prevent: an unmarked demo account added
+to the seed, the target check moved out of first position, and the purge
+switched from deleting listed ids to deleting by predicate.
+
+489 tests pass; `npm run build` and `npm run lint` are clean.

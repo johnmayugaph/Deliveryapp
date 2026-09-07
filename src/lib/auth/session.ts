@@ -7,6 +7,7 @@ import {
   hashClientIp,
   hashSessionToken,
 } from '@/lib/auth/crypto';
+import { signInIsPermitted } from '@/lib/demo/policy';
 
 export { pruneSessions } from '@/lib/auth/prune';
 
@@ -175,7 +176,11 @@ const loadSession = cache(
     if (session.revokedAt !== null || session.expiresAt.getTime() <= Date.now()) {
       return null;
     }
-    if (session.user.isBlocked) {
+    // Blocked accounts, and demo accounts in production. Checked HERE rather
+    // than only at login because a session outlives the deploy that created
+    // it: a cookie minted while the seed data was fair game must stop working
+    // the moment it is not.
+    if (!signInIsPermitted(session.user)) {
       return null;
     }
 

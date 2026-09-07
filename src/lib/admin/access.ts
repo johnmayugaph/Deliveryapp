@@ -165,4 +165,5 @@ export const ADMIN_ACTION_LABEL: Readonly<Record<AdminAction, string>> = {
   [AdminAction.DELIVERY_REQUEUED]: 'Notification delivery requeued',
   [AdminAction.SUBSCRIPTION_CHANGED]: 'Subscription granted or ended',
   [AdminAction.ACCOUNT_RECOVERED]: 'Account sign-in number moved',
+  [AdminAction.ADMIN_ROLE_CHANGED]: 'Console access granted or revoked',
 };

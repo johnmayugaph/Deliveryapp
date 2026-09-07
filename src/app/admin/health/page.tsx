@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { NotificationChannel } from '@prisma/client';
 import { requireAdmin } from '@/lib/admin/access';
-import { deliveryHealth } from '@/lib/admin/queries';
+import { deliveryHealth, demoDataPresence } from '@/lib/admin/queries';
 import { resolveChannels } from '@/lib/notifications/channels';
 import { isPushConfigured } from '@/lib/notifications/push/vapid';
 import { requeueDeliveryAction } from '@/lib/actions/admin-actions';
@@ -35,7 +35,7 @@ export const dynamic = 'force-dynamic';
 export default async function AdminHealthPage() {
   await requireAdmin();
 
-  const health = await deliveryHealth();
+  const [health, demo] = await Promise.all([deliveryHealth(), demoDataPresence()]);
   // Asked of the same function the cron uses, so this reports what would
   // actually happen on the next pass rather than a separate guess at it.
   const configured = resolveChannels();
@@ -64,6 +64,51 @@ export default async function AdminHealthPage() {
           by how often that runs.
         </p>
       </div>
+
+      {demo.demoUsers > 0 || demo.demoStores > 0 ? (
+        <div
+          className={
+            demo.usableHere
+              ? 'rounded-xl bg-amber-50 px-4 py-3 text-xs leading-relaxed text-amber-900 ring-1 ring-amber-200'
+              : 'rounded-xl bg-red-50 px-4 py-3 text-xs leading-relaxed text-red-900 ring-1 ring-red-200'
+          }
+        >
+          <p className="font-semibold">
+            {demo.demoUsers} demo account{demo.demoUsers === 1 ? '' : 's'} and{' '}
+            {demo.demoStores} demo store{demo.demoStores === 1 ? '' : 's'} are still
+            in this database
+            {demo.demoAdmins > 0
+              ? `, ${demo.demoAdmins} of them holding ADMIN`
+              : ''}
+            .
+          </p>
+          {demo.usableHere ? (
+            <p className="mt-1">
+              Fine here — this is not a production runtime, and the demo data is
+              what makes a fresh clone usable. It must not reach a deployment
+              real people can open: the seed uses real Philippine number
+              formats, so a stranger owns every one of those numbers. Purge it
+              as the first step of going live.
+            </p>
+          ) : (
+            <p className="mt-1">
+              Demo accounts are refused a session here, so nobody can sign into
+              them — but the stores are visible and a customer can order from
+              them, and nobody will cook it. Purge them now.
+            </p>
+          )}
+          <pre className="mt-2 overflow-x-auto rounded-lg bg-black/5 px-2.5 py-2 text-[11px]">
+            npm run db:purge-demo{'\n'}npm run db:purge-demo -- --confirm
+          </pre>
+          {demo.realAdmins === 0 ? (
+            <p className="mt-2 font-semibold">
+              There is no non-demo administrator account. Make one on a number
+              you control before purging, or nobody will be able to open this
+              console: npm run admin:grant -- 09XXXXXXXXX --reason &ldquo;…&rdquo;
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       {stuck.length > 0 ? (
         <div className="rounded-xl bg-red-50 px-4 py-3 text-xs leading-relaxed text-red-900 ring-1 ring-red-200">

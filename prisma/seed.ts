@@ -9,6 +9,7 @@ import {
   VehicleType,
   VerificationStatus,
 } from '@prisma/client';
+import { describeDatabaseHost, seedRefusalReason } from '../src/lib/demo/policy';
 
 const prisma = new PrismaClient();
 
@@ -432,10 +433,15 @@ async function seedStores() {
 
   for (const store of stores) {
     const { menu, ...storeData } = store;
+    // `isDemo` is set here rather than in each literal above so that a store
+    // added to this file cannot be forgotten: everything the seed writes is
+    // demo data by definition, and `npm run db:purge-demo` finds it by this
+    // column alone.
+    const demoStore = { ...storeData, isDemo: true };
     const saved = await prisma.store.upsert({
       where: { slug: store.slug },
-      create: storeData,
-      update: storeData,
+      create: demoStore,
+      update: demoStore,
     });
     await prisma.menuItem.deleteMany({ where: { storeId: saved.id } });
     await prisma.menuItem.createMany({
@@ -496,11 +502,15 @@ async function seedMerchants() {
         preferredCityId: cityId,
         phoneVerifiedAt: new Date(),
         onboardedAt: new Date(),
+        isDemo: true,
       },
       update: {
         fullName: person.fullName,
         roles: [UserRole.CUSTOMER, UserRole.MERCHANT_OWNER],
         onboardedAt: new Date(),
+        // Re-asserted on update so that a database seeded before this column
+        // existed is marked the first time the seed is run again.
+        isDemo: true,
       },
     });
 
@@ -568,8 +578,9 @@ async function seedUsers() {
       preferredCityId: 'city_manila',
       phoneVerifiedAt: new Date(),
       onboardedAt: new Date(),
+      isDemo: true,
     },
-    update: { fullName: 'Juan Dela Cruz', onboardedAt: new Date() },
+    update: { fullName: 'Juan Dela Cruz', onboardedAt: new Date(), isDemo: true },
   });
 
   const maria = await prisma.user.upsert({
@@ -583,18 +594,30 @@ async function seedUsers() {
       preferredCityId: 'city_quezon',
       phoneVerifiedAt: new Date(),
       onboardedAt: new Date(),
+      isDemo: true,
     },
     update: {
       roles: [UserRole.CUSTOMER, UserRole.FLEET_PARTNER],
       fullName: 'Maria Santos',
       onboardedAt: new Date(),
+      isDemo: true,
     },
   });
 
-  // An operations account. Two things in the app require a named human rather
-  // than "the system": a ledger ADJUSTMENT, and granting a subscription. Both
-  // constraints are enforced in SQL, so without an account holding one of these
-  // roles neither is possible at all.
+  // An operations account, for development only.
+  //
+  // Two things in the app require a named human rather than "the system": a
+  // ledger ADJUSTMENT, and granting a subscription. Both constraints are
+  // enforced in SQL, so without an account holding one of these roles neither
+  // is possible at all.
+  //
+  // It is also the most dangerous row this file writes. 0917 000 9999 is a
+  // real Philippine number format and somebody owns it; on a production
+  // deployment they could request a login code for an administrator account
+  // they did nothing to earn. `isDemo` is what stops that — a demo account
+  // cannot hold a session in production at all — and the real first
+  // administrator is made with `npm run admin:grant`, on a number the operator
+  // controls.
   await prisma.user.upsert({
     where: { phone: '+639170009999' },
     create: {
@@ -605,8 +628,9 @@ async function seedUsers() {
       preferredCityId: 'city_manila',
       phoneVerifiedAt: new Date(),
       onboardedAt: new Date(),
+      isDemo: true,
     },
-    update: { roles: [UserRole.ADMIN, UserRole.SUPPORT_AGENT] },
+    update: { roles: [UserRole.ADMIN, UserRole.SUPPORT_AGENT], isDemo: true },
   });
 
   // Credits accounts. Balances stay at zero here: the ledger is the only way to
@@ -699,8 +723,42 @@ async function seedUsers() {
   );
 }
 
+/**
+ * Refuses to write demo data anywhere it was not clearly asked to.
+ *
+ * The mistake this catches is not a careless one — it is running
+ * `npm run db:seed` in a terminal that happens to have a production
+ * DATABASE_URL exported, which is a thing that happens to careful people on a
+ * Friday. What lands if it succeeds is six accounts on real Philippine number
+ * formats, one of them an administrator, and four restaurants with invented
+ * prices that a real customer can order from.
+ *
+ * `--force` exists because a check with no way past it gets deleted rather
+ * than respected, and because filling a staging database with demo data on
+ * purpose is legitimate.
+ */
+function assertSeedTargetIsAllowed(): void {
+  const force = process.argv.slice(2).includes('--force');
+  const refusal = seedRefusalReason({
+    nodeEnv: process.env.NODE_ENV,
+    databaseUrl: process.env.DATABASE_URL,
+    force,
+  });
+  if (refusal === null) return;
+
+  console.error('');
+  console.error('  Refusing to seed.');
+  console.error('');
+  console.error(`  ${refusal}`);
+  console.error('');
+  console.error('  If you meant it:  npm run db:seed -- --force');
+  console.error('');
+  process.exit(2);
+}
+
 async function main() {
-  console.log('Seeding TARA...');
+  assertSeedTargetIsAllowed();
+  console.log(`Seeding TARA into ${describeDatabaseHost(process.env.DATABASE_URL)}...`);
   await seedCities();
   await seedServices();
   await seedDeliveryFeeRules();
@@ -711,6 +769,13 @@ async function main() {
   await seedPromotions();
   await seedUsers();
   console.log('Done.');
+  console.log('');
+  console.log('  Everything above is DEMO data, marked isDemo in the database.');
+  console.log('  Before this deployment is reachable by anybody:');
+  console.log('    npm run db:purge-demo            # see what would go');
+  console.log('    npm run db:purge-demo -- --confirm');
+  console.log('    npm run admin:grant -- 09XXXXXXXXX --reason "..."');
+  console.log('');
 }
 
 main()

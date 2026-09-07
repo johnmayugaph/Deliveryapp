@@ -365,6 +365,17 @@ model User {
   locale          String  @default("fil-PH")
   isBlocked       Boolean @default(false)
 
+  /// Written only by `prisma/seed.ts`. Demo rows exist so that a fresh clone
+  /// has something to click; in production they are the single most dangerous
+  /// thing in the database, because the seed uses real Philippine number
+  /// formats and one of them holds ADMIN. Whoever owns that number in real
+  /// life could otherwise request a login code and be an administrator.
+  ///
+  /// So the flag is not a label — it is load-bearing. A demo account cannot be
+  /// signed into in production at all (see `src/lib/demo/policy.ts`), which
+  /// means forgetting to purge is embarrassing rather than catastrophic.
+  isDemo          Boolean @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -577,6 +588,11 @@ model Store {
 
   isOpen    Boolean @default(true)
   isVisible Boolean @default(true)
+
+  /// Written only by `prisma/seed.ts`. An invented restaurant with invented
+  /// prices that a real customer can order from is a promise nobody will keep,
+  /// so these are what `npm run db:purge-demo` removes alongside the accounts.
+  isDemo    Boolean @default(false)
 
   /// Merchant's own quoted prep time, snapshotted into FOOD order details at
   /// checkout so a later menu edit cannot rewrite history.
@@ -1567,6 +1583,9 @@ enum AdminAction {
   SUBSCRIPTION_CHANGED
   /// An account's phone number was moved by support.
   ACCOUNT_RECOVERED
+  /// Console access was granted to, or taken from, an account. Recorded even
+  /// when it happened from a shell — see `scripts/grant-admin.ts`.
+  ADMIN_ROLE_CHANGED
 }
 
 /// One privileged action, and why.

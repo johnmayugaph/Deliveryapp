@@ -3,6 +3,7 @@ import { InvalidPhoneNumberError, normalisePhilippineMobile } from '@/lib/auth/p
 import { requestLoginCode, verifyLoginCode } from '@/lib/auth/otp';
 import { THROTTLE_MESSAGES, VERIFY_FAILURE_MESSAGES } from '@/lib/auth/otp-policy';
 import { ensureWallet } from '@/lib/wallet/ledger';
+import { SIGN_IN_REFUSED_MESSAGE, signInIsPermitted } from '@/lib/demo/policy';
 
 /**
  * The login flow's orchestration, as plain functions.
@@ -95,9 +96,11 @@ export async function checkLoginCode(input: {
     update: { phoneVerifiedAt: now },
   });
 
-  if (user.isBlocked) {
-    // Say nothing about why. Support handles it.
-    return { ok: false, message: 'This account cannot be accessed. Contact support.' };
+  if (!signInIsPermitted(user)) {
+    // Blocked, or a demo account on a production deployment. Say nothing about
+    // which: somebody who happens to own a seeded number learns nothing from
+    // this screen, and support has the console for the real answer.
+    return { ok: false, message: SIGN_IN_REFUSED_MESSAGE };
   }
 
   // Every account has a credits ledger from the start, so nothing later has to
