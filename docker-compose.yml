@@ -83,6 +83,9 @@ services:
       # The store form's map. OpenStreetMap unless set — see .env.example.
       MAP_TILE_URL: ${MAP_TILE_URL:-}
       MAP_TILE_ATTRIBUTION: ${MAP_TILE_ATTRIBUTION:-}
+      # Address search on that map. Nominatim unless set; "off" disables it.
+      GEOCODER_URL: ${GEOCODER_URL:-}
+      GEOCODER_CONTACT: ${GEOCODER_CONTACT:-}
       BACKUP_STRATEGY: ${BACKUP_STRATEGY:-script}
     ports:
       # Bound to localhost, because the thing facing the internet should be a

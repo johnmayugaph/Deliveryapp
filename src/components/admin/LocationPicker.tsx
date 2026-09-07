@@ -1,6 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  startTransition,
+  useActionState,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import 'leaflet/dist/leaflet.css';
 import {
   PARSE_FAILURE_MESSAGE,
@@ -11,6 +18,12 @@ import {
   type Coordinate,
 } from '@/lib/geo/philippines';
 import type { TileSource } from '@/lib/geo/tiles';
+import {
+  GEOCODER_CREDIT,
+  GEOCODE_FAILURE_MESSAGE,
+  MIN_QUERY_LENGTH,
+} from '@/lib/geo/geocode';
+import { searchAddressAction } from '@/lib/actions/geocode-actions';
 
 /**
  * Dropping a pin on a shop.
@@ -20,14 +33,17 @@ import type { TileSource } from '@/lib/geo/tiles';
  * charges the wrong money forever. Typing two eight-decimal numbers off a phone
  * screen is exactly the task people get wrong.
  *
- * THREE WAYS IN, and all three write to the same two number fields, which stay
+ * FOUR WAYS IN, and all four write to the same two number fields, which stay
  * visible and editable:
  *
- *   1. Click or drag on the map. What somebody actually wants.
- *   2. Paste a Google Maps or Waze link. What they actually have — somebody
+ *   1. Search for the address. Where somebody starts when they have a name and
+ *      a street rather than a pin.
+ *   2. Click or drag on the map. How they finish — a geocoder puts you on the
+ *      right road, not the right doorway.
+ *   3. Paste a Google Maps or Waze link. What they actually have — somebody
  *      stands outside the shop, drops a pin on their phone and shares it.
- *   3. Type the numbers. The keyboard path, and the one that still works when
- *      the map does not.
+ *   4. Type the numbers. The keyboard path, and the one that still works when
+ *      everything else is unreachable.
  *
  * The number inputs ARE the form fields rather than a read-out beside hidden
  * ones. That keeps the value inspectable, keyboard-editable and correct with
@@ -53,12 +69,19 @@ export function LocationPicker({
   centreKey,
   /** Resolved on the server from `MAP_TILE_URL`; see `lib/geo/tiles.ts`. */
   tiles: tileSource,
+  /**
+   * Whether the deployment has a geocoder at all. Resolved on the server, so a
+   * deployment with search switched off never renders a box that cannot work.
+   */
+  searchAvailable,
 }: {
   centre?: Coordinate | undefined;
   centreKey?: string | undefined;
   tiles: TileSource;
+  searchAvailable: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
   // Typed loosely on purpose: importing Leaflet's types eagerly would pull the
   // module into the server bundle, which is the thing the dynamic import is
   // avoiding.
@@ -78,6 +101,17 @@ export function LocationPicker({
   const [note, setNote] = useState<string | null>(null);
   const [noteIsError, setNoteIsError] = useState(false);
   const [mapState, setMapState] = useState<'loading' | 'ready' | 'failed'>('loading');
+  const [found, search, searching] = useActionState(searchAddressAction, null);
+  /** Set when a candidate is chosen, so the list does not linger. */
+  const [dismissedSearch, setDismissedSearch] = useState(false);
+  /**
+   * A refusal decided HERE rather than by the server — currently only "type a
+   * bit more". It needs its own slot because `useActionState` cannot be
+   * written to directly, and without one a two-character search left the
+   * previous result on screen: somebody would read "nothing found" about a
+   * query that was never sent.
+   */
+  const [searchNote, setSearchNote] = useState<string | null>(null);
 
   /** One way in and out: everything that moves the pin comes through here. */
   const place = useCallback((next: Coordinate) => {
@@ -230,6 +264,51 @@ export function LocationPicker({
     mapRef.current?.setView([latitude, longitude], 16);
   }
 
+  // --- searching for an address ----------------------------------------------
+
+  /**
+   * Dispatched directly rather than through a `<form action>`, because this
+   * component is rendered INSIDE the store form and a nested form is invalid
+   * HTML — the browser silently unnests it and the outer form starts
+   * submitting on the wrong button.
+   *
+   * Which is why the dispatch is wrapped in `startTransition`: React only
+   * establishes an action context for it automatically when it is passed to a
+   * form's `action` prop. Called bare, it works and logs an error, which is
+   * the worst of both — it would sit in the console of a page whose whole
+   * purpose is to be trusted with a shop's coordinates.
+   */
+  function runSearch(): void {
+    const query = searchRef.current?.value ?? '';
+    if (query.trim().length < MIN_QUERY_LENGTH) {
+      // Not sent: the server would refuse it too, and there is no reason to
+      // spend somebody else's request budget finding that out.
+      setSearchNote(GEOCODE_FAILURE_MESSAGE.TOO_SHORT);
+      setDismissedSearch(true);
+      return;
+    }
+    setSearchNote(null);
+    const payload = new FormData();
+    payload.set('query', query);
+    if (centre) {
+      payload.set('nearLat', String(centre.latitude));
+      payload.set('nearLng', String(centre.longitude));
+    }
+    setDismissedSearch(false);
+    startTransition(() => search(payload));
+  }
+
+  function chooseCandidate(next: Coordinate): void {
+    place(next);
+    setSearchNote(null);
+    // 17 rather than the map's own zoom: a geocoder lands on the road, and the
+    // point of the next step is to drag the pin onto the building.
+    mapRef.current?.setView([next.latitude, next.longitude], 17);
+    setDismissedSearch(true);
+    setNoteIsError(false);
+    setNote('Pin moved to the search result. Drag it onto the building.');
+  }
+
   // --- pasting a link --------------------------------------------------------
   function applyPastedLink(): void {
     const result = parseCoordinateInput(pasted);
@@ -254,6 +333,69 @@ export function LocationPicker({
       <span className="text-[11px] font-semibold text-ink-muted">
         Where the shop is
       </span>
+
+      {searchAvailable ? (
+        <div className="space-y-1.5">
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="min-w-[12rem] flex-1">
+              <span className="text-[11px] font-normal text-ink-muted">
+                Search for the address
+              </span>
+              <input
+                ref={searchRef}
+                type="text"
+                // NOT `type="search"`, which some browsers give an Enter
+                // behaviour of their own inside a form.
+                placeholder="Aling Nena Carinderia, Tondo"
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    // Otherwise this submits the store form.
+                    event.preventDefault();
+                    runSearch();
+                  }
+                }}
+                className={FIELD}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={runSearch}
+              disabled={searching}
+              className="rounded-lg bg-surface-sunken px-3 py-1.5 text-xs font-semibold text-brand-700 disabled:text-ink-faint"
+            >
+              {searching ? 'Searching…' : 'Search'}
+            </button>
+          </div>
+
+          {searchNote !== null ? (
+            <p role="status" className="text-[11px] leading-relaxed text-red-700">
+              {searchNote}
+            </p>
+          ) : found && !dismissedSearch ? (
+            found.ok ? (
+              <ul className="divide-y divide-black/5 overflow-hidden rounded-lg border border-black/10">
+                {found.candidates.map((candidate) => (
+                  <li key={`${candidate.point.latitude},${candidate.point.longitude}`}>
+                    <button
+                      type="button"
+                      onClick={() => chooseCandidate(candidate.point)}
+                      className="block w-full px-2.5 py-2 text-left text-[12px] leading-snug hover:bg-surface-sunken"
+                    >
+                      {candidate.label}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p role="status" className="text-[11px] leading-relaxed text-red-700">
+                {found.message}
+              </p>
+            )
+          ) : null}
+
+          <p className="text-[11px] text-ink-faint">{GEOCODER_CREDIT}</p>
+        </div>
+      ) : null}
 
       <div
         // Height in the wrapper, not on the map element, so Leaflet measures a

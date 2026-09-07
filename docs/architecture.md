@@ -1228,14 +1228,17 @@ does not fail — it charges the wrong money forever, quietly. And transcribing
 two eight-decimal numbers off a phone screen is exactly the task people get
 wrong.
 
-So there is a map, and **three ways in, all writing the same two fields**:
+So there is a map, and **four ways in, all writing the same two fields**:
 
-1. **Click or drag on the map.** What somebody wants.
-2. **Paste a Google Maps or Waze link.** What they actually have — the way
+1. **Search for the address.** Where somebody starts when they have a shop name
+   and a street rather than a pin.
+2. **Click or drag on the map.** How they finish — a geocoder lands you on the
+   right road, not the right doorway.
+3. **Paste a Google Maps or Waze link.** What they actually have — the way
    coordinates for a small shop are really obtained is that somebody stands
    outside it, drops a pin on their phone, and shares the link.
-3. **Type the numbers.** The keyboard path, and the one that still works when
-   the map does not.
+4. **Type the numbers.** The keyboard path, and the one that still works when
+   nothing else is reachable.
 
 The number inputs **are** the form fields, not a read-out beside hidden ones.
 That keeps the value inspectable and keyboard-editable, and it is what makes
@@ -1263,6 +1266,59 @@ The bounds live in **one** module, read by both the picker and the server action
 that accepts the form. They were written out twice for a while, which is
 exactly the pair that drifts: a picker that lets somebody drop a pin the server
 then rejects is worse than no picker.
+
+### Address search, through the server
+
+The search box goes to **Nominatim**, OpenStreetMap's own geocoder, and it goes
+through the server rather than from the browser. Three reasons, and the first is
+the one that decides it:
+
+- **Nominatim's policy asks for a `User-Agent` identifying the application.** A
+  browser cannot set one. Server-side, TARA can say who it is and carry a
+  contact address — the difference between being a good citizen of a free
+  service and being an anonymous source of traffic somebody eventually blocks.
+- **The policy caps requests at one a second.** A throttle in one place is a
+  throttle; a throttle in every operator's browser tab is a hope. It is claimed
+  *before* the call, so two searches in the same millisecond do not both go out.
+- **It keeps the third party at arm's length**, exactly like the SMS gateway,
+  the push service and the CAPTCHA verifier. Nothing in this application lets a
+  browser talk to somebody else's API directly.
+
+`requireAdmin()` on the action, without which this would be an open geocoding
+proxy for anybody who found the action id — an abuse of a free service and a
+good way to get the deployment's address blocked. It lives outside
+`admin-actions.ts` for the same reason the support controls do: it is a read of
+a public search index, and "an administrator typed a street name" would be noise
+in the log that matters.
+
+Two things make the results usable rather than merely present.
+`countrycodes=ph` is the single biggest improvement to relevance — without it
+"Mabini Street" matches a dozen countries — and a `viewbox` around the city
+already chosen on the form nudges the rest, deliberately *without* `bounded=1`,
+because a shop just over a city line should still be findable.
+
+Every candidate is checked against the same Philippine bounds as everything
+else, so a result can never place a pin the form would then refuse. And the
+response is read defensively throughout: it is somebody else's free JSON, under
+no obligation to keep its shape, so an unreadable row costs one result rather
+than the search. Nominatim sends coordinates as **strings**, which is the
+detail that quietly turns a coordinate into `NaN` if you trust the field names
+and not the types.
+
+**None of it is load-bearing.** Search sits on top of three ways of setting a
+coordinate that already work, and `GEOCODER_URL=off` removes the box entirely
+rather than leaving one that can only fail. Every failure message names one of
+the other three — "tap the map, paste a link, or type the coordinates" — which
+is a property a test asserts, because a dead end is the one thing a convenience
+must never become.
+
+One implementation note worth keeping. The picker renders **inside** the store
+form, so the search cannot be its own `<form>`: a nested form is invalid HTML,
+the browser unnests it, and the outer form starts submitting on the wrong
+button. The action is therefore dispatched by hand — which means wrapping it in
+`startTransition`, because React only establishes an action context
+automatically for a dispatch passed to a form's `action` prop. Called bare it
+works *and* logs an error, which is the worst of both.
 
 ### What the map costs, and what it does when it breaks
 

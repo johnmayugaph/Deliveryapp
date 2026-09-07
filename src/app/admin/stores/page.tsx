@@ -5,6 +5,7 @@ import { getAllServices } from '@/lib/services/registry';
 import { prisma } from '@/lib/prisma';
 import { StoreCreateForm } from '@/components/admin/StoreCreateForm';
 import { tileSource } from '@/lib/geo/tiles';
+import { geocodingIsAvailable } from '@/lib/geo/geocode';
 import { Empty, Panel, Pill, Stat, TableScroll, Td, Th } from '@/components/admin/primitives';
 
 export const dynamic = 'force-dynamic';
@@ -75,6 +76,7 @@ export default async function AdminStoresPage() {
         <div className="px-4 py-4">
           <StoreCreateForm
             tiles={tileSource()}
+            searchAvailable={geocodingIsAvailable()}
             cities={cities}
             services={services.map((service) => ({
               key: service.key,

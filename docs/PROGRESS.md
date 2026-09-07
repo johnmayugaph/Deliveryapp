@@ -57,7 +57,8 @@ brief's changes already folded in.
 | 19 | The Dockerfile, compose and CI | ✅ Built, never run |
 | 20 | Support that reaches a person: threads, a public channel, a queue, an alert | ✅ Done |
 | 21 | Store staff: invite by number, a first owner from the console, an owner who cannot vanish | ✅ Done |
-| 22 | A map for the shop's pin, and two other ways to set it | ✅ Done |
+| 22 | A map for the shop's pin, and three other ways to set it | ✅ Done |
+| 23 | Address search on that map, through the server | ✅ Done |
 
 Between phases 11 and 12: the interface was translated to English, the product
 was named TARA, and the typeface and brand blue were set from the brand artwork.
@@ -777,11 +778,11 @@ real file later is one line in `tailwind.config.ts`.
   log. Fleet approval (`npm run fleet:approve`), plan activation
   (`npm run plan:activate`) and subscription grants (`npm run plan:comp`) are
   still CLI scripts.
-- **No address search on the map.** The picker opens on the chosen city's
-  centre and you pan or paste a link from there. Typing "Aling Nena, Tondo" and
-  having the map go there would need a geocoder — Nominatim has a usage policy
-  and a rate limit, anything better costs money — and with the city centring
-  and the paste box it earns less than it looks like it would.
+- **Address search has never run against the real Nominatim.** The adapter is
+  verified against a stub over a real socket — the exact query parameters, the
+  User-Agent, the rate limit, every failure shape — and the environment has no
+  route to `nominatim.openstreetmap.org`. What is unverified is their side:
+  whether the results for a Philippine barangay are any good in practice.
 - **A store's own details cannot be edited after it is created.** The console
   can create one and set whether customers see it; the shop can set its prep
   time and open/closed. Changing a name, an address or which services a shop is
@@ -1533,3 +1534,63 @@ in the database with the picked point. Then again with the tile host dead.
 
 834 tests pass; build and lint clean. Leaflet is in its own chunk, so
 `/admin/stores` first-load JS is unchanged apart from 2 kB of picker.
+
+---
+
+## Phase 23 — address search ✅
+
+Phase 22 closed by naming address search as deliberately skipped: the city
+centring and the paste box covered most of it, and a geocoder brings a usage
+policy and a rate limit. Asked for, and worth having — somebody with a shop
+name and a street should not have to pan across the archipelago to find it.
+
+It goes to **Nominatim through the server**, and that is the decision the rest
+follows from. Their policy asks for a `User-Agent` identifying the application,
+which a browser cannot send, and caps requests at one a second, which is a
+throttle worth having in one place rather than in every operator's tab. Doing
+it server-side also keeps the third party at arm's length, exactly like the SMS
+gateway, the push service and the CAPTCHA verifier — nothing here lets a
+browser talk to somebody else's API directly. `requireAdmin()` on the action,
+without which it would be an open geocoding proxy for anybody who found the
+action id.
+
+`countrycodes=ph` does most of the work on relevance, with a `viewbox` around
+the city already chosen on the form and deliberately no `bounded=1`, so a shop
+just over a city line is still findable. Candidates are checked against the
+same Philippine bounds as everything else, so a result can never place a pin
+the form would then refuse.
+
+**None of it is load-bearing**, and the code says so: `GEOCODER_URL=off`
+removes the box rather than leaving one that can only fail, and every failure
+message names one of the three ways that still work. A test asserts that last
+property, because a dead end is the one thing a convenience must never become.
+
+### What the work turned up
+
+**A React misuse that worked and logged an error.** The picker renders inside
+the store form, so the search cannot be its own `<form>` — a nested form is
+invalid HTML, the browser unnests it, and the outer form starts submitting on
+the wrong button. So the action is dispatched by hand, and React only
+establishes an action context automatically for a dispatch passed to a form's
+`action` prop. Called bare it searched correctly *and* printed "an async
+function was passed to useActionState, but it was dispatched outside of an
+action context" into the console of a page whose whole purpose is to be trusted
+with a shop's coordinates. Wrapped in `startTransition`, found by watching the
+browser console rather than the screen.
+
+**A stale message on a refusal decided client-side.** Typing two characters and
+pressing Search left the previous result on screen, so somebody read "nothing
+found" about a query that was never sent. `useActionState` cannot be written
+to, so a client-side refusal needs its own slot.
+
+Verified in a real browser against a stub Nominatim that logs what it receives:
+the query carries `countrycodes=ph`, the city viewbox, the limit and the contact
+address; the User-Agent identifies TARA; three candidates render and choosing
+one places the pin and says to drag it onto the building; nothing-found, a
+503 and a result outside the Philippines each produce their own sentence; two
+searches in a burst reach upstream **once**; Enter searches without submitting
+the store form; and the paste box and number fields keep working throughout.
+Then again with `GEOCODER_URL=off`: no box, no credit line, everything else
+intact.
+
+870 tests pass; build and lint clean.

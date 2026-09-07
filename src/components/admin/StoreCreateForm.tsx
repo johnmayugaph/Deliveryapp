@@ -32,6 +32,7 @@ export function StoreCreateForm({
   cities,
   services,
   tiles,
+  searchAvailable,
 }: {
   cities: {
     id: string;
@@ -41,6 +42,7 @@ export function StoreCreateForm({
   }[];
   services: { key: ServiceKey; displayName: string; isActive: boolean }[];
   tiles: TileSource;
+  searchAvailable: boolean;
 }) {
   const [cityId, setCityId] = useState('');
 
@@ -121,6 +123,7 @@ export function StoreCreateForm({
           the one thing it is for. */}
       <LocationPicker
         tiles={tiles}
+        searchAvailable={searchAvailable}
         {...(centre === undefined ? {} : { centre })}
         centreKey={cityId}
       />
