@@ -1218,6 +1218,58 @@ reads `orderableHere`, never `isActive`.
 
 ---
 
+## Demand for the verticals that do not exist yet
+
+Four of the five tiles on the home screen are dimmed, and the decision about
+which vertical to build next was a guess. `ServiceInterest` is the only
+evidence the product collects: a tap on a dimmed tile, attributed to a city,
+so "is Mart worth building" becomes "how many people in Iloilo asked for it".
+
+The tile used to be an inert `<div>` — deliberately, since there was nothing to
+activate — and is now a button. Everything about it still derives from the
+`Service` row; what changed is that `orderableHere === false` has an action
+instead of nothing.
+
+**Two shapes of row, counted separately and never added up.**
+
+| Row | Means | Trustworthy? |
+| --- | --- | --- |
+| `userId` set | One account, `askCount` for repeats | Yes — needed a code sent to a real phone |
+| `userId` NULL | One shared counter per service and city | No — anybody who can post a form can raise it |
+
+Summing them would give the console a number that one person with a loop can
+move, and a launch decision made on it. So `foldDemand()` — pure, and tested at
+every shape — keeps them apart, the tile only ever shows the account count, and
+the console labels the anonymous tally as what it is. The anonymous rows are
+also a single counter per pair rather than a row per tap, so a script costs
+storage nothing.
+
+**The interest is refused where it would be meaningless.** An unregistered
+service key, and a service that is already orderable in that city — otherwise a
+launched vertical accrues "unmet demand" forever. Both are reachable by posting
+to the action rather than tapping the tile, which is why they are checked
+server-side against the registry rather than by rendering the tile differently.
+
+**The tap is a promise, so something keeps it.** `announceLaunchedServices()`
+runs on the same cron as the order timeouts and tells everybody whose service
+has since gone live where they asked. It is a query over current state, not an
+event fired from the launch switch: a launch done before this existed, or by a
+SQL update, or by withdrawing and re-adding a city, is picked up anyway — and an
+administrator flipping a switch does not wait on a fan-out to thousands of
+people. It is bounded per pass, and the dedupe key is the interest row, so
+switching a service off and on cannot tell the same person twice.
+
+`SERVICE_NOW_AVAILABLE` carries IN_APP and PUSH and **not SMS**. The recipient
+asked us to note that they wanted Mart; they did not ask to be texted, and a
+launch announcement to a waiting list at a peso a head is the message that
+teaches people to ignore texts from us.
+
+**One thing this does not measure yet.** Every route is behind the login wall,
+including `/`, so today only signed-in people ever see a tile. The anonymous
+path is built, tested and unreachable — `loadHomeData` already accepts a null
+user — and becomes live the moment `/` is added to the middleware's public
+prefixes. Until then the accounts number is the only one that moves.
+
 ## Demo data, and why it cannot be allowed to matter
 
 `prisma/seed.ts` writes six accounts and three stores so a fresh clone has

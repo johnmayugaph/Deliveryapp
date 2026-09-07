@@ -4,12 +4,12 @@
  *
  *     npm run jobs:orders
  *
- * Does six things, in order: closes dispatch offers nobody answered, offers
- * waiting orders to their best candidates, expires orders that have waited too
- * long in a state their lifecycle declares a timeout for (refunding any credits
- * they consumed), ends subscriptions whose term has run out, delivers whatever
- * is waiting in the notification outbox, and prunes spent login codes and dead
- * sessions.
+ * Closes dispatch offers nobody answered, offers waiting orders to their best
+ * candidates, expires orders that have waited too long in a state their
+ * lifecycle declares a timeout for (refunding any credits they consumed), ends
+ * subscriptions whose term has run out, tells anybody who asked for a vertical
+ * that it is now live where they are, delivers whatever is waiting in the
+ * notification outbox, and prunes spent login codes and dead sessions.
  *
  * Dispatch has no background worker, so how quickly a partner sees an offer is
  * bounded by how often this runs. Every minute or two is right.
@@ -25,6 +25,7 @@ async function main() {
     dispatched,
     expired,
     subscriptions,
+    launchAnnouncements,
     notifications,
     recoveryAlerts,
     liftedFreezes,
@@ -48,6 +49,16 @@ async function main() {
     console.log(
       `Subscription ${result.subscriptionId} (${result.origin}): ` +
         `${result.fromStatus} -> ${result.toStatus} — ${result.reason}`,
+    );
+  }
+
+  if (launchAnnouncements.announced > 0 || launchAnnouncements.failed > 0) {
+    console.log(
+      `Launch announcements: told ${launchAnnouncements.announced} person(s) that a ` +
+        'service they asked for is now live' +
+        (launchAnnouncements.failed > 0
+          ? `, ${launchAnnouncements.failed} to retry next pass`
+          : ''),
     );
   }
 

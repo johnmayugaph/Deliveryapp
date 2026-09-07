@@ -1,6 +1,7 @@
 import type { Order, Promotion, Service, Store } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { getActiveServiceKeys, getServicesByIntentGroup, type ServiceGroup } from '@/lib/services/registry';
+import { servicesAskedFor } from '@/lib/services/interest';
 import { ALL_IN_PROGRESS_STATUSES } from '@/lib/orders/transitions';
 
 /**
@@ -25,6 +26,12 @@ export interface HomeData {
   /** Null when the visitor has no saved address yet. */
   currentAddressLabel: string | null;
   currentCityName: string;
+  /**
+   * Coming-soon services this person has already asked for, here. Empty for a
+   * visitor who is not signed in — there is nothing to look them up by, so
+   * their tile remembers on their own device instead.
+   */
+  askedFor: string[];
 }
 
 export async function loadHomeData(input: {
@@ -37,10 +44,13 @@ export async function loadHomeData(input: {
     prisma.city.findUnique({ where: { id: input.cityId }, select: { name: true } }),
   ]);
 
-  const [activeOrders, promotions, recentStores, defaultAddress] = await Promise.all([
+  const [activeOrders, promotions, recentStores, askedFor, defaultAddress] = await Promise.all([
     loadActiveOrders(input.userId),
     loadPromotions(input.cityId, activeServiceKeys),
     loadRecentStores(input.userId, input.cityId, activeServiceKeys),
+    input.userId
+      ? servicesAskedFor({ userId: input.userId, cityId: input.cityId })
+      : Promise.resolve(new Set<string>()),
     input.userId
       ? prisma.address.findFirst({
           where: { userId: input.userId, archivedAt: null },
@@ -62,6 +72,7 @@ export async function loadHomeData(input: {
       ? [defaultAddress.label, defaultAddress.line1].filter(Boolean).join(' · ')
       : null,
     currentCityName: city?.name ?? 'Manila',
+    askedFor: [...askedFor],
   };
 }
 

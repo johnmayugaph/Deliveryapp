@@ -975,3 +975,49 @@ to the seed, the target check moved out of first position, and the purge
 switched from deleting listed ids to deleting by predicate.
 
 489 tests pass; `npm run build` and `npm run lint` are clean.
+
+## Phase 14 — the coming-soon tiles say something back
+
+Four of the five tiles are dimmed and the question of which vertical to build
+next was a guess. It is now a table.
+
+A tap on a coming-soon tile records `ServiceInterest`: the service, the city,
+and the person if there is one. The tile answers with the number of people who
+have asked — "Noted — you and 33 others" — which is the only reward on offer
+and, more usefully, an honest one. The console shows the same numbers beside
+each launch switch, and beside each city in the "launch in another city" list,
+which is where the decision is actually taken.
+
+**The design decision worth naming.** An account that asked and a tap from
+somebody not signed in are counted separately and never added together. An
+account needed a code sent to a real phone; an anonymous tap is available to
+anybody who can post a form. Summing them would put a number in front of a
+launch decision that one person with a loop can move. So the fold is pure and
+tested at every shape, the tile only ever shows accounts, and the console
+labels the other tally as what it is. Anonymous taps share one counter row per
+service and city, so a script costs storage nothing.
+
+**And the tap is kept.** `announceLaunchedServices()` runs on the order cron
+and tells everybody whose service has since gone live where they asked. It
+queries current state rather than firing from the launch switch, so a launch
+done any other way is still picked up and an administrator is not waiting on a
+fan-out. Bounded per pass; deduped on the interest row, so switching a service
+off and on again cannot tell somebody twice. Push and inbox only — the person
+asked to be told, not to be texted at a peso a head.
+
+**A finding.** Every route is behind the login wall, `/` included, so today
+only signed-in people ever see a tile at all. The anonymous path is built and
+tested but unreachable; `loadHomeData` already accepts a null user, so it needs
+one line in the middleware's public prefixes to start measuring the population
+that matters most before launch — strangers.
+
+**Verified**: 30 checks against a live database (a repeat not becoming a second
+person, five anonymous taps making one row, a live service refused and the same
+service accepted in a city it has not reached, the console's per-city
+breakdown, two people told exactly once at launch, no SMS queued, and a
+withdraw-and-relaunch telling nobody again); 23 unit checks on the fold, the
+copy and the policy; and the tile driven in a real browser — tapped, marked
+ASKED, the count returned, and still marked after a reload with localStorage
+cleared, because that state came from the database.
+
+513 tests pass; `npm run build` and `npm run lint` are clean.

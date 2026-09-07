@@ -1,6 +1,7 @@
 import { requireAdmin, listAdminActions } from '@/lib/admin/access';
 import { listCities, serviceHealth } from '@/lib/admin/queries';
 import { getAllServices } from '@/lib/services/registry';
+import { demandByService } from '@/lib/services/interest';
 import { setServiceActiveAction, setServiceCityAction } from '@/lib/actions/admin-actions';
 import { ReasonForm } from '@/components/admin/ReasonForm';
 import {
@@ -31,14 +32,16 @@ export const dynamic = 'force-dynamic';
 export default async function AdminServicesPage() {
   await requireAdmin();
 
-  const [services, cities, health, auditTrail] = await Promise.all([
+  const [services, cities, health, demand, auditTrail] = await Promise.all([
     getAllServices(),
     listCities(),
     serviceHealth(),
+    demandByService(),
     listAdminActions({ subjectType: 'Service', limit: 20 }),
   ]);
 
   const healthByKey = new Map(health.map((row) => [row.key, row] as const));
+  const cityNameById = new Map(cities.map((city) => [city.id, city.name] as const));
 
   return (
     <div className="space-y-5">
@@ -48,6 +51,12 @@ export default async function AdminServicesPage() {
           Launching a vertical is a row change here, not a deploy. Nothing on
           this page names a service — it reads them from the registry, which is
           the reason the registry exists.
+        </p>
+        <p className="mt-1.5 max-w-2xl text-xs leading-relaxed text-ink-muted">
+          Where a card says who asked for a service, <strong>accounts</strong> is
+          the number to trust: each one needed a code sent to a real phone. Taps
+          from people who were not signed in are counted apart, and shown apart,
+          because anybody who can post a form can add to them.
         </p>
       </div>
 
@@ -97,6 +106,37 @@ export default async function AdminServicesPage() {
                     <dd className="font-semibold tabular-nums">{stats?.ordersToday ?? 0}</dd>
                   </div>
                 </dl>
+
+                {(() => {
+                  const asked = demand.get(service.key);
+                  if (!asked || (asked.accounts === 0 && asked.anonymous === 0)) {
+                    return null;
+                  }
+                  return (
+                    <div className="rounded-lg bg-brand-50 px-2.5 py-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-brand-700">
+                        Asked for by {asked.accounts} account
+                        {asked.accounts === 1 ? '' : 's'}
+                        {asked.anonymous > 0
+                          ? `, plus ${asked.anonymous} tap${
+                              asked.anonymous === 1 ? '' : 's'
+                            } from people who were not signed in`
+                          : ''}
+                      </p>
+                      <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-ink-muted">
+                        {asked.byCity.map((row) => (
+                          <li key={row.cityId}>
+                            <span className="font-semibold text-ink">
+                              {cityNameById.get(row.cityId) ?? row.cityId}
+                            </span>{' '}
+                            {row.accounts}
+                            {row.anonymous > 0 ? ` (+${row.anonymous})` : ''}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  );
+                })()}
 
                 <div>
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
@@ -149,13 +189,22 @@ export default async function AdminServicesPage() {
                       Launch in another city
                     </summary>
                     <ul className="mt-2 space-y-2">
-                      {otherCities.map((city) => (
+                      {otherCities.map((city) => {
+                        const askedHere = demand
+                          .get(service.key)
+                          ?.byCity.find((row) => row.cityId === city.id);
+                        return (
                         <li key={city.id}>
                           <p className="text-xs font-semibold">
                             {city.name}
                             <span className="ml-1.5 font-normal text-ink-faint">
                               {city.province}
                             </span>
+                            {askedHere && askedHere.accounts > 0 ? (
+                              <span className="ml-1.5 font-semibold text-brand-700">
+                                {askedHere.accounts} asked
+                              </span>
+                            ) : null}
                           </p>
                           <div className="mt-1">
                             <ReasonForm
@@ -170,7 +219,8 @@ export default async function AdminServicesPage() {
                             />
                           </div>
                         </li>
-                      ))}
+                        );
+                      })}
                     </ul>
                   </details>
                 ) : null}

@@ -42,7 +42,11 @@ export default async function HomePage() {
         <GlobalSearch activeServiceNames={activeServiceNames} />
       </div>
 
-      <ServiceTileGrid groups={data.serviceGroups} />
+      <ServiceTileGrid
+        groups={data.serviceGroups}
+        cityName={data.currentCityName}
+        askedFor={data.askedFor}
+      />
 
       <ActiveOrderStrip orders={data.activeOrders} />
 

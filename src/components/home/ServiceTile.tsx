@@ -1,20 +1,32 @@
 import Link from 'next/link';
 import type { ServiceAvailability } from '@/lib/services/registry';
 import { accentClasses, serviceGlyph } from '@/lib/services/presentation';
+import { AskForService } from '@/components/home/AskForService';
 
 /**
  * One service tile.
  *
- * A service orderable HERE is a link. Anything else renders DIMMED with a
- * "Coming soon" label and is NOT tappable — not a disabled link, but no link at
- * all, so keyboard and screen-reader users are not offered a dead target
- * either. Every visual difference comes from the `Service` row.
+ * A service orderable HERE is a link. Anything else is a button that records
+ * that somebody wanted it — the tile used to be an inert dimmed `<div>`, which
+ * was right when there was nothing to activate and is wrong now that a tap is
+ * the only demand signal the product collects. Every visual difference still
+ * comes from the `Service` row.
  *
  * The condition is `orderableHere`, not `isActive`: a vertical live in Cebu is
  * still coming soon to somebody in Manila, and a tappable tile that fails at
  * checkout is the outcome that reads as broken.
  */
-export function ServiceTile({ service }: { service: ServiceAvailability }) {
+export function ServiceTile({
+  service,
+  cityName,
+  askedByMe = false,
+}: {
+  service: ServiceAvailability;
+  /** Where the visitor is standing, for the tile's own copy. */
+  cityName: string;
+  /** Whether this signed-in person has already asked for it here. */
+  askedByMe?: boolean;
+}) {
   const accent = accentClasses(service.accentToken);
   const glyph = serviceGlyph(service.icon);
 
@@ -37,15 +49,15 @@ export function ServiceTile({ service }: { service: ServiceAvailability }) {
 
   if (!service.orderableHere) {
     return (
-      <div
-        // Presentational, not interactive: there is nothing to activate.
-        className={`relative flex flex-col rounded-tile p-3 opacity-55 ${accent.tileBackground}`}
+      <AskForService
+        serviceKey={service.key}
+        displayName={service.displayName}
+        cityName={cityName}
+        askedByMe={askedByMe}
+        tileBackground={accent.tileBackground}
       >
-        <span className="absolute right-2 top-2 rounded-full bg-white/85 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-ink-muted">
-          Coming soon
-        </span>
         {inner}
-      </div>
+      </AskForService>
     );
   }
 

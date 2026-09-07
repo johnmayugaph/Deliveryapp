@@ -36,6 +36,8 @@ export interface NotificationContext {
   securityEvent?: string;
   /** Masked — the last four digits of the number the account moved to. */
   maskedPhone?: string;
+  /** For a launch: the city the person was standing in when they asked. */
+  cityName?: string;
 }
 
 export interface RenderedNotification {
@@ -180,6 +182,24 @@ export const NOTIFICATION_TEMPLATES: Readonly<Record<NotificationKind, Template>
     title: 'Your plan has ended',
     body: `Your ${context.planName ?? 'plan'} has ended, so no benefits apply at checkout for now.`,
     sms: `Your TARA ${context.planName ?? 'plan'} has ended.`,
+  }),
+
+  /**
+   * The one message somebody asked for in advance.
+   *
+   * So it says so in the first clause: a launch announcement that does not
+   * remind you that you put your hand up reads as marketing, and the person
+   * has forgotten — the tap could have been months ago.
+   */
+  [NotificationKind.SERVICE_NOW_AVAILABLE]: (context) => ({
+    title: `${serviceName(context)} is open${context.cityName ? ` in ${context.cityName}` : ''}`,
+    body:
+      `You asked for ${serviceName(context)}${
+        context.cityName ? ` in ${context.cityName}` : ' here'
+      }, and it is live now. Tap to have a look.`,
+    sms: `TARA: ${serviceName(context)} is now available${
+      context.cityName ? ` in ${context.cityName}` : ''
+    } — you asked us to tell you.`,
   }),
 };
 

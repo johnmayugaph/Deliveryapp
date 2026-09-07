@@ -8,7 +8,17 @@ import { ServiceTile } from '@/components/home/ServiceTile';
  * `getServicesByIntentGroup()` returns, in whatever grouping the data says —
  * which is what makes activating MART a one-row change.
  */
-export function ServiceTileGrid({ groups }: { groups: ServiceGroup[] }) {
+export function ServiceTileGrid({
+  groups,
+  cityName,
+  askedFor,
+}: {
+  groups: ServiceGroup[];
+  /** Where the visitor is standing. The coming-soon tiles say it out loud. */
+  cityName: string;
+  /** Service keys this signed-in person has already asked for, in this city. */
+  askedFor: readonly string[];
+}) {
   if (groups.length === 0) {
     return (
       <p className="px-4 py-6 text-sm text-ink-muted">
@@ -30,7 +40,12 @@ export function ServiceTileGrid({ groups }: { groups: ServiceGroup[] }) {
           <p className="mt-0.5 text-[11px] text-ink-faint">{presentation.tagline}</p>
           <div className="mt-2.5 grid grid-cols-3 gap-2.5">
             {services.map((service) => (
-              <ServiceTile key={service.key} service={service} />
+              <ServiceTile
+                key={service.key}
+                service={service}
+                cityName={cityName}
+                askedByMe={askedFor.includes(service.key)}
+              />
             ))}
           </div>
         </section>

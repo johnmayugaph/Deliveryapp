@@ -302,6 +302,7 @@ model Service {
   faqCategories    FaqCategory[]
   fleetApprovals   FleetPartnerServiceVerification[]
   deliveryFeeRules DeliveryFeeRule[]
+  interest         ServiceInterest[]
 
   @@index([isActive, sortOrder])
   @@index([intentGroup, sortOrder])
@@ -322,6 +323,7 @@ model City {
   addresses        Address[]
   stores           Store[]
   deliveryFeeRules DeliveryFeeRule[]
+  serviceInterest  ServiceInterest[]
 
   @@index([isActive, name])
 }
@@ -374,7 +376,7 @@ model User {
   /// So the flag is not a label — it is load-bearing. A demo account cannot be
   /// signed into in production at all (see `src/lib/demo/policy.ts`), which
   /// means forgetting to purge is embarrassing rather than catastrophic.
-  isDemo          Boolean @default(false)
+  isDemo Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -399,6 +401,7 @@ model User {
   adminActions            AdminAuditEvent[]                 @relation("AdminAuditActor")
   recoveries              AccountRecovery[]
   assistedRecoveries      AccountRecovery[]                 @relation("RecoveryAssistedBy")
+  serviceInterest         ServiceInterest[]
 
   @@index([roles], type: Gin)
   @@index([preferredCityId])
@@ -592,7 +595,7 @@ model Store {
   /// Written only by `prisma/seed.ts`. An invented restaurant with invented
   /// prices that a real customer can order from is a promise nobody will keep,
   /// so these are what `npm run db:purge-demo` removes alongside the accounts.
-  isDemo    Boolean @default(false)
+  isDemo Boolean @default(false)
 
   /// Merchant's own quoted prep time, snapshotted into FOOD order details at
   /// checkout so a later menu edit cannot rewrite history.
@@ -1376,6 +1379,10 @@ enum NotificationKind {
   CREDITS_GRANTED
   /// To the subscriber: the term ended.
   SUBSCRIPTION_ENDED
+  /// To somebody who tapped a coming-soon tile: that vertical is now live
+  /// where they are. The only message in the system that somebody asked for
+  /// in advance.
+  SERVICE_NOW_AVAILABLE
   /// To the account: something changed about who can get into it. The one kind
   /// that exists to be unwelcome — if the person did not do this, they need to
   /// know within seconds, not at their convenience.
@@ -1696,4 +1703,62 @@ model AccountRecovery {
   @@index([previousPhone])
   /// The sweep's queue: recoveries whose alert has not gone out.
   @@index([alertSentAt, createdAt])
+}
+
+// -----------------------------------------------------------------------------
+// 14. Demand for the verticals that do not exist yet
+// -----------------------------------------------------------------------------
+
+/// Somebody asked for a vertical that is not live where they are.
+///
+/// Four of the five services are coming-soon tiles, and the decision about
+/// which to build next is otherwise a guess. This table is the only evidence
+/// the product has: a tap on a dimmed tile, attributed to a city, so the
+/// question "is Mart worth building" becomes "how many people in Iloilo asked
+/// for it".
+///
+/// Two shapes of row, deliberately:
+///
+///  - **With a `userId`** — one row per account per service per city, with
+///    `askCount` for the repeats. This is the number worth trusting: getting
+///    an account requires a code sent to a real phone. It is also the only
+///    kind of row that can be told when the service launches.
+///  - **With `userId` NULL** — one shared counter row per service and city for
+///    everybody who has not signed in. They see the tiles too, and counting
+///    only signed-in people would measure the wrong population. Nothing
+///    identifies them, nothing can be sent to them, and the tally can be
+///    inflated by anybody who can post a form, which is why the console shows
+///    the two numbers apart rather than adding them up.
+model ServiceInterest {
+  id String @id @default(cuid())
+
+  serviceKey ServiceKey
+  service    Service    @relation(fields: [serviceKey], references: [key], onDelete: Cascade)
+
+  /// Where the person was standing. The whole point: a vertical launches one
+  /// city at a time, so demand without a city cannot be acted on.
+  cityId String
+  city   City   @relation(fields: [cityId], references: [id], onDelete: Cascade)
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// How many times this account (or how many anonymous visitors) asked.
+  askCount Int @default(1)
+
+  /// When we told them it launched. Only ever set on a row with a `userId` —
+  /// there is no way to reach an anonymous visitor, so those rows stay null
+  /// forever and the sweep filters them out.
+  notifiedAt DateTime?
+
+  createdAt   DateTime @default(now())
+  lastAskedAt DateTime @default(now())
+
+  /// One row per account per service per city. NULL userIds are not equal to
+  /// each other in Postgres, so this does NOT constrain the anonymous rows —
+  /// those are kept to one per pair by the recording function instead.
+  @@unique([serviceKey, cityId, userId])
+  @@index([serviceKey, cityId])
+  /// The launch sweep's query: rows still waiting to be told.
+  @@index([notifiedAt, serviceKey])
 }

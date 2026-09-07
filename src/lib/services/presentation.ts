@@ -45,3 +45,21 @@ const ICONS: Readonly<Record<string, string>> = {
 export function serviceGlyph(icon: string): string {
   return ICONS[icon] ?? '•';
 }
+
+/**
+ * What a coming-soon tile says back after a tap.
+ *
+ * Lives here rather than beside the tally it describes, because the tile is a
+ * client component and `interest.ts` imports Prisma — importing that from the
+ * browser bundle is a build error waiting to happen. It is presentation, and
+ * this file is where presentation lives.
+ *
+ * Only ever the account count. A number a stranger can inflate by posting a
+ * form does not belong on the home screen; the console shows the anonymous
+ * tally separately, labelled, where somebody can weigh it.
+ */
+export function describeAskCount(accounts: number | undefined): string {
+  if (accounts === undefined || accounts <= 1) return 'Noted — you are the first';
+  if (accounts === 2) return 'Noted — you and 1 other';
+  return `Noted — you and ${accounts - 1} others`;
+}

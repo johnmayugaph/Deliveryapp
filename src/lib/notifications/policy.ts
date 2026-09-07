@@ -135,6 +135,21 @@ export const KIND_POLICY: Readonly<Record<NotificationKind, KindPolicy>> = {
     urgency: NotificationUrgency.INFORMATIONAL,
     channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
   },
+
+  /**
+   * A vertical went live where somebody asked for it.
+   *
+   * Deliberately NOT on SMS, even though this is the one message the recipient
+   * actively requested. They asked us to note that they wanted Mart; they did
+   * not ask to be texted, and a launch announcement to a waiting list is
+   * exactly the shape of message that teaches people to ignore texts from us —
+   * at a peso each. The inbox keeps the record and push does the reach, which
+   * is what the free channel is for.
+   */
+  [NotificationKind.SERVICE_NOW_AVAILABLE]: {
+    urgency: NotificationUrgency.INFORMATIONAL,
+    channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
+  },
 };
 
 /**

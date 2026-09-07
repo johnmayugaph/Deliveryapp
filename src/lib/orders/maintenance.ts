@@ -30,6 +30,11 @@ import {
   recoveryAlertText,
 } from '@/lib/auth/recovery';
 import { pruneEmailCodes } from '@/lib/auth/email-codes';
+import {
+  markAnnounced,
+  pendingLaunchAnnouncements,
+} from '@/lib/services/interest';
+import { getService } from '@/lib/services/registry';
 import { resolveSmsSender } from '@/lib/auth/sms';
 
 /**
@@ -368,11 +373,84 @@ export async function sendRecoveryAlerts(): Promise<RecoveryAlertResult> {
   return { sent, failed, unconfigured: false };
 }
 
+export interface LaunchAnnouncementResult {
+  announced: number;
+  failed: number;
+}
+
+/**
+ * Tells everybody who asked for a vertical that it is now live where they are.
+ *
+ * The payoff for the coming-soon tiles: a tap is not only a number on an
+ * admin screen, it is a promise to come back. Nothing else in the product
+ * makes that promise, so nothing else would keep it.
+ *
+ * Through the outbox, unlike the recovery alert — the recipient is the account
+ * holder, the current phone number is the right one, and the kind is push and
+ * inbox only, so a launch never costs a peso per person.
+ *
+ * Bounded per pass. A city launch can have thousands of people waiting and
+ * this runs on the same cron as the order timeouts; a pass that tries to
+ * notify everybody would delay work somebody is actually waiting on. The
+ * remainder goes out on the next pass, a minute later.
+ */
+export async function announceLaunchedServices(): Promise<LaunchAnnouncementResult> {
+  const pending = await pendingLaunchAnnouncements();
+  if (pending.length === 0) {
+    return { announced: 0, failed: 0 };
+  }
+
+  // City names for the copy. One query for the pass rather than one per
+  // recipient, which on a launch day is the difference between two queries and
+  // two hundred.
+  const cityIds = [...new Set(pending.map((row) => row.cityId))];
+  const cities = await prisma.city.findMany({
+    where: { id: { in: cityIds } },
+    select: { id: true, name: true },
+  });
+  const cityNameById = new Map(cities.map((city) => [city.id, city.name] as const));
+
+  let announced = 0;
+  let failed = 0;
+
+  for (const row of pending) {
+    try {
+      const service = await getService(row.serviceKey);
+      await enqueueNotification({
+        userId: row.userId,
+        kind: NotificationKind.SERVICE_NOW_AVAILABLE,
+        context: {
+          serviceName: service.displayName,
+          ...(cityNameById.has(row.cityId)
+            ? { cityName: cityNameById.get(row.cityId)! }
+            : {}),
+        },
+        href: `/services/${row.serviceKey.toLowerCase()}`,
+        // The interest row, so a service that is switched off and on again
+        // cannot tell the same person twice about the same request.
+        dedupeKey: `service-live:${row.interestId}`,
+      });
+      // Marked told even when the enqueue collapsed onto an existing row:
+      // somebody has already been told, which is the same outcome.
+      await markAnnounced(row.interestId);
+      announced += 1;
+    } catch (error) {
+      // One bad row must not stop the rest of the pass, and it must not be
+      // marked told — it will be retried next time.
+      console.error('announceLaunchedServices: failed', row.interestId, error);
+      failed += 1;
+    }
+  }
+
+  return { announced, failed };
+}
+
 export async function runMaintenance(): Promise<{
   expiredOffers: number;
   dispatched: FanOutResult[];
   expired: ExpiredOrderResult[];
   subscriptions: RenewalOutcome[];
+  launchAnnouncements: LaunchAnnouncementResult;
   notifications: DeliveryPassResult;
   recoveryAlerts: RecoveryAlertResult;
   liftedFreezes: number;
@@ -390,6 +468,9 @@ export async function runMaintenance(): Promise<{
   // grants nothing (the pricing engine checks `renewsAt`), so this is
   // record-keeping and can wait behind anything a customer is watching.
   const subscriptions = await sweepDueSubscriptions();
+  // Before the delivery pass, so a launch announcement enqueued here goes out
+  // in the same run rather than waiting a minute for the next one.
+  const launchAnnouncements = await announceLaunchedServices();
   // Last, so that everything this pass enqueued goes out in the same run: a
   // store hearing about an order one cron interval later than it was placed is
   // the cost of having no worker, and there is no reason to make it two.
@@ -412,6 +493,7 @@ export async function runMaintenance(): Promise<{
     dispatched,
     expired,
     subscriptions,
+    launchAnnouncements,
     notifications,
     recoveryAlerts,
     liftedFreezes,
