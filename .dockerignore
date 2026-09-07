@@ -1,0 +1,38 @@
+# Everything the image does not need, and a few things it must never have.
+#
+# This file is load-bearing for more than image size. `.env` holds the real
+# AUTH_SECRET, the SMS key and the database password; copied into a layer it
+# would sit in the image forever, readable by anybody who can pull it — and
+# `docker history` shows layers even after a later step deletes the file.
+
+.env
+.env.local
+.env.*.local
+
+# Database dumps: every customer's phone number and home address in one file.
+backups/
+
+node_modules
+.next
+out
+build
+dist
+coverage
+
+.git
+.github
+.gitignore
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# Documentation and tests are not needed to serve requests. The ops image
+# takes scripts/ and src/ deliberately, so those are NOT excluded here.
+docs
+*.md
+*.log
+.DS_Store
+.idea
+.vscode
+*.tsbuildinfo
+next-env.d.ts

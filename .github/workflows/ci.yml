@@ -1,0 +1,276 @@
+# =============================================================================
+# CI
+# =============================================================================
+# Four jobs, and the second and third exist because of failure modes this
+# repository has actually had.
+#
+#   checks   — typecheck, lint, tests, and a production build. The build is
+#              here because it catches a class of error the other three cannot:
+#              a `'use server'` module exporting a constant, and an edge-runtime
+#              import that breaks instrumentation. Both have happened, and both
+#              were invisible to tsc and ESLint.
+#
+#   database — applies every migration to a real Postgres 16, then the SQL
+#              guards, then the seed. The guards shell out to `psql`, so a
+#              broken trigger definition is invisible until it silently fails
+#              to apply — which is what makes the credits ledger stop being
+#              tamper-proof. This job is the only thing that would catch it.
+#
+#   backup   — takes a dump and restores it into a scratch database, checking
+#              that the ledger still adds up. The restore drill, on every push,
+#              rather than an instruction somebody remembers.
+#
+#   image    — builds both container targets. There is no Docker daemon in the
+#              development environment these were written in, so CI is the
+#              first place they are built at all.
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+# A new push to the same branch cancels the run in flight. Nobody needs the
+# result for a commit that has already been replaced.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read-only by default: no job here needs to write to the repository, and a
+# token that cannot push is one that cannot be turned against the branch.
+permissions:
+  contents: read
+
+env:
+  NEXT_TELEMETRY_DISABLED: '1'
+
+jobs:
+  checks:
+    name: Types, lint, tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      # Before anything else: the Prisma client is generated code that tsc
+      # needs, and a schema change with a stale client fails here rather than
+      # confusingly later.
+      #
+      # Both URLs are set because the schema references both, and the CLI
+      # refuses to load a schema with a missing variable before it does
+      # anything else. Neither connects to anything here.
+      - run: npx prisma generate
+        env:
+          DATABASE_URL: postgresql://unused:unused@127.0.0.1:5432/unused
+          DIRECT_URL: postgresql://unused:unused@127.0.0.1:5432/unused
+
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+
+      - name: Build
+        run: npm run build
+        env:
+          # Syntactically valid placeholders. `next build` does not connect to
+          # a database, but Prisma refuses to load its schema without both
+          # variables, and a real connection string has no business being
+          # available to a build.
+          DATABASE_URL: postgresql://unused:unused@127.0.0.1:5432/unused
+          DIRECT_URL: postgresql://unused:unused@127.0.0.1:5432/unused
+          AUTH_SECRET: ci-build-secret-not-used-for-anything-at-all
+
+  database:
+    name: Migrations, guards and seed
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: tara
+          POSTGRES_PASSWORD: tara
+          POSTGRES_DB: tara
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://tara:tara@127.0.0.1:5432/tara?schema=public
+      # Required, not optional. `prisma/schema.prisma` declares
+      # `directUrl = env("DIRECT_URL")` for connection-pooled hosts, and the
+      # Prisma CLI refuses to load a schema whose referenced variables are
+      # missing — P1012, before it looks at the database at all. A developer
+      # never sees it because their `.env` has both; a runner has no `.env`.
+      DIRECT_URL: postgresql://tara:tara@127.0.0.1:5432/tara?schema=public
+      AUTH_SECRET: ci-secret-not-used-for-anything-at-all-here
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      # `psql` is what `npm run prisma:guards` shells out to. The runner has
+      # the Postgres 16 client already; asserting the version is the point,
+      # because pg_dump 15 cannot dump a 16 server and the failure message is
+      # not obvious.
+      - name: Check the Postgres client
+        run: |
+          psql --version
+          pg_dump --version
+
+      - run: npm ci
+      - run: npx prisma generate
+
+      # The whole migration chain against an empty database. This is the only
+      # place a migration that works on a developer's machine — because their
+      # database already has the column — is caught.
+      - name: Apply every migration
+        run: npx prisma migrate deploy
+
+      # The append-only triggers and CHECK constraints on the credits ledger,
+      # the admin audit trail and account recovery. If this step fails, the
+      # financial records are not tamper-proof.
+      - name: Apply the SQL guards
+        run: npm run prisma:guards
+
+      - name: Seed
+        run: npm run db:seed
+
+      # The seed must REFUSE a database that is not local, and refuse
+      # NODE_ENV=production. Both are asserted in unit tests against the pure
+      # policy; this proves the script itself acts on it.
+      - name: The seed refuses production
+        run: |
+          if NODE_ENV=production npm run db:seed; then
+            echo "::error::the seed ran with NODE_ENV=production"
+            exit 1
+          fi
+          echo "refused, as it should"
+
+      # The demo data is the first thing a real deployment removes, so the
+      # command that removes it runs on every push.
+      - name: Purge the demo data
+        run: npm run db:purge-demo -- --confirm --and-audit
+
+      # Asked of the purge tool itself rather than with a psql query, for two
+      # reasons: `DATABASE_URL` carries Prisma's `?schema=` parameter, which
+      # libpq rejects outright — the guards script strips it, and a step here
+      # that forgot to would fail for a reason unrelated to what it is
+      # checking — and the tool's own report is the thing an operator will
+      # read, so it is the thing worth asserting.
+      - name: Nothing demo survived
+        run: |
+          if ! npm run --silent db:purge-demo | grep -q 'No demo data'; then
+            echo "::error::demo rows survived the purge"
+            npm run --silent db:purge-demo
+            exit 1
+          fi
+
+  backup:
+    name: Backup and restore drill
+    runs-on: ubuntu-latest
+    needs: database
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: tara
+          POSTGRES_PASSWORD: tara
+          POSTGRES_DB: tara
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://tara:tara@127.0.0.1:5432/tara?schema=public
+      DIRECT_URL: postgresql://tara:tara@127.0.0.1:5432/tara?schema=public
+      AUTH_SECRET: ci-secret-not-used-for-anything-at-all-here
+      # Exercises the encrypted path, which is the one with a header, a tag and
+      # a key derivation to get wrong.
+      BACKUP_ENCRYPTION_KEY: ci-passphrase-for-the-drill-only
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx prisma migrate deploy
+      - run: npm run prisma:guards
+      - run: npm run db:seed
+
+      - name: Take a backup
+        run: npm run db:backup
+
+      # The step that turns a dump into a backup: restore it into a scratch
+      # database and check that the credits ledger still adds up there.
+      - name: Restore it and check it
+        run: npm run db:restore-check
+
+      - name: A damaged dump must be refused
+        run: |
+          file=$(ls backups/*.enc | head -1)
+          cp "$file" /tmp/damaged.dump.enc
+          # Flip one byte in the middle. GCM authenticates, so this must fail.
+          python3 - <<'PY'
+          path = '/tmp/damaged.dump.enc'
+          data = bytearray(open(path, 'rb').read())
+          data[len(data) // 2] ^= 0xff
+          open(path, 'wb').write(data)
+          PY
+          if npm run db:restore-check -- --file /tmp/damaged.dump.enc; then
+            echo "::error::a dump with a flipped byte was accepted"
+            exit 1
+          fi
+          echo "refused, as it should"
+
+  image:
+    name: Container images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Built, not pushed. Pushing needs a registry and credentials, which is a
+      # deployment decision rather than a CI one — add a login step and
+      # `push: true` when that decision is made.
+      - name: Build the web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: web
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build the ops image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: ops
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

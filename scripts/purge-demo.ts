@@ -31,7 +31,7 @@
  * transaction. `SET LOCAL` cannot outlive the COMMIT, so the hatch cannot be
  * left open, and it appears in the statement log next to what it permitted.
  */
-import { UserRole } from '@prisma/client';
+import { UserRole, WalletTransactionType } from '@prisma/client';
 import { prisma } from '../src/lib/prisma';
 import { describeDatabaseHost } from '../src/lib/demo/policy';
 import { formatPhilippineMobile } from '../src/lib/auth/phone';
@@ -129,7 +129,60 @@ async function main() {
     console.log('');
   }
 
-  const userIds = users.map((user) => user.id);
+  /**
+   * Accounts the ledger will not let go of.
+   *
+   * A demo administrator who has ever corrected somebody's credits is named on
+   * that ADJUSTMENT row, and `wallet_transaction_adjustment_needs_admin`
+   * requires it to stay named — so the SET NULL that a delete would perform is
+   * refused by the database. That is the ledger working: an adjustment nobody
+   * can be held to is an adjustment nobody can audit.
+   *
+   * Deleting the ledger row instead is not an option. It may be an adjustment
+   * to a REAL customer's balance, and removing it would quietly change what
+   * they are owed to tidy up a demo account.
+   *
+   * So those accounts are kept, named, and explained. In production they
+   * cannot be signed into anyway — `isDemo` refuses them a session — so what
+   * is left is untidiness rather than exposure, and blocking is the right
+   * ending for them.
+   */
+  const adjustmentActors = await prisma.walletTransaction.groupBy({
+    by: ['adminUserId'],
+    where: {
+      adminUserId: { in: users.map((user) => user.id) },
+      type: WalletTransactionType.ADJUSTMENT,
+    },
+    _count: { _all: true },
+  });
+  const heldByLedger = new Map(
+    adjustmentActors.flatMap((row) =>
+      row.adminUserId === null ? [] : [[row.adminUserId, row._count._all] as const],
+    ),
+  );
+
+  if (heldByLedger.size > 0) {
+    console.log('  KEPT, because the credits ledger names them:');
+    for (const user of users) {
+      const count = heldByLedger.get(user.id);
+      if (count === undefined) continue;
+      console.log(
+        `    ${formatPhilippineMobile(user.phone)}  ${user.fullName ?? '(no name)'}` +
+          ` — recorded ${count} credits adjustment(s)`,
+      );
+    }
+    console.log('');
+    console.log('  An ADJUSTMENT must name the administrator who made it, and the');
+    console.log('  database enforces that. Removing the row instead would change what');
+    console.log('  a real customer is owed in order to tidy up a demo account, so it');
+    console.log('  is not done. Block these accounts in /admin instead — and note that');
+    console.log('  in production they cannot hold a session at all.');
+    console.log('');
+  }
+
+  const userIds = users
+    .filter((user) => !heldByLedger.has(user.id))
+    .map((user) => user.id);
   const storeIds = stores.map((store) => store.id);
 
   // Audit rows whose ACTOR is a demo account.
@@ -144,6 +197,7 @@ async function main() {
     userIds.length === 0
       ? 0
       : await prisma.adminAuditEvent.count({ where: { actorId: { in: userIds } } });
+
 
   if (auditByDemoAdmins > 0) {
     console.log(
@@ -178,6 +232,20 @@ async function main() {
       await tx.adminAuditEvent.deleteMany({ where: { actorId: { in: userIds } } });
     }
     if (userIds.length > 0) {
+  // Orders BEFORE people.
+  //
+  // `Order.customerId` is RESTRICT rather than CASCADE, and that is right for
+  // production: nobody should be able to remove a customer and silently erase
+  // the order history that a store and a rider were part of. It also means a
+  // plain `DELETE FROM "User"` fails for anybody who has ever ordered — which
+  // is every real customer, and it is why this purge did nothing but throw a
+  // foreign-key error until CI ran it against seeded data.
+  //
+  // So the deletion is explicit here, in the one tool whose whole purpose is
+  // to override that intent. Deleting an order cascades to its addresses,
+  // status events, applied benefits and dispatch offers, and nulls the
+  // references from wallet transactions and support tickets.
+      await tx.order.deleteMany({ where: { customerId: { in: userIds } } });
       await tx.user.deleteMany({ where: { id: { in: userIds } } });
     }
     if (storeIds.length > 0) {
@@ -190,6 +258,9 @@ async function main() {
     `  Purged ${userIds.length} account(s) and ${storeIds.length} store(s)` +
       (andAudit && auditByDemoAdmins > 0
         ? `, and ${auditByDemoAdmins} audit entr(ies)`
+        : '') +
+      (heldByLedger.size > 0
+        ? `. Kept ${heldByLedger.size} the ledger names, as above`
         : '') +
       '. This cannot be undone.',
   );

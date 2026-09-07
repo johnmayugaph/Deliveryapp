@@ -3,7 +3,8 @@
  * Restores the newest dump into a scratch database and checks it.
  *
  *     npm run db:restore-check
- *     npm run db:restore-check -- --file backups/tara-2026-09-08T02-00-00Z.dump
+ *     npm run db:restore-check -- --dir /backups
+ *     npm run db:restore-check -- --file /backups/tara-2026-09-08T02-00-00Z.dump
  *
  * This is the step that makes the rest worth having. A dump that has never
  * been restored is a hope: it can be truncated, encrypted with a key nobody
@@ -121,6 +122,11 @@ async function main() {
   const argv = process.argv.slice(2);
   const fileIndex = argv.indexOf('--file');
   const explicit = fileIndex === -1 ? undefined : argv[fileIndex + 1];
+  const dirIndex = argv.indexOf('--dir');
+  // `--dir` matters as much as `--file`: in a container the dumps live on a
+  // mounted volume, not next to the source, and a drill that looks in the
+  // wrong place reports "no dumps" while the backups pile up elsewhere.
+  const dir = dirIndex === -1 ? DEFAULT_BACKUP_DIR : (argv[dirIndex + 1] ?? DEFAULT_BACKUP_DIR);
 
   const databaseUrl = process.env.DATABASE_URL;
   let connection;
@@ -135,7 +141,7 @@ async function main() {
   }
 
   const env = pgEnv(connection, databaseUrl!);
-  const filePath = explicit ?? (await newestDump(DEFAULT_BACKUP_DIR));
+  const filePath = explicit ?? (await newestDump(dir));
   const fileName = path.basename(filePath);
 
   console.log('');

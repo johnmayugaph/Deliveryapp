@@ -58,6 +58,12 @@ describe('the public storefront', () => {
     expect(redirectFor('/recover')).toBeNull();
   });
 
+  it('answers the container healthcheck without a session', () => {
+    // Behind the wall it would 307 to /login, which some probes read as
+    // healthy and others as unhealthy, and neither is true.
+    expect(redirectFor('/api/health')).toBeNull();
+  });
+
   it('serves the service worker on its own terms', () => {
     // A redirect to /login delivered as a service worker is a registration
     // failure with a confusing cause.

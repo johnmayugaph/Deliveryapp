@@ -38,6 +38,10 @@ const SESSION_COOKIE = 'tara_session';
  */
 const PUBLIC_PATHS: readonly string[] = [
   '/',
+  // The container healthcheck and the load balancer. Behind the login wall it
+  // would answer 307 to /login, which reads as healthy to some probes and as
+  // unhealthy to others — neither of them true.
+  '/api/health',
   '/login',
   // The premise of recovery is that the person cannot sign in.
   '/recover',

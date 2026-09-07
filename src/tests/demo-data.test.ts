@@ -24,6 +24,13 @@ function source(relativePath: string): string {
   return readFileSync(path.join(process.cwd(), relativePath), 'utf8');
 }
 
+/** Source with comments blanked out, for rules asserted by position or absence. */
+function codeOnly(relativePath: string): string {
+  return source(relativePath)
+    .replace(/\/\*[\s\S]*?\*\//g, (match) => match.replace(/[^\n]/g, ' '))
+    .replace(/\/\/[^\n]*/g, (match) => ' '.repeat(match.length));
+}
+
 /** Just the fields the policy reads. */
 function account(fields: { isBlocked?: boolean; isDemo?: boolean }) {
   return { isBlocked: fields.isBlocked ?? false, isDemo: fields.isDemo ?? false };
@@ -314,6 +321,43 @@ describe('the purge can only remove what it listed', () => {
   it('does nothing without --confirm', () => {
     expect(purge).toMatch(/--confirm/);
     expect(purge).toMatch(/Nothing was removed/);
+  });
+
+  /**
+   * Two failures found by putting this command in CI, where it ran against
+   * seeded data for the first time. Both made the purge do nothing at all
+   * while looking like it had been written.
+   */
+  it('deletes orders before people', () => {
+    // `Order.customerId` is RESTRICT, which is right for production — nobody
+    // should be able to erase the order history a store and a rider were part
+    // of by deleting a customer. It also means a plain user delete fails for
+    // anybody who has ever ordered, which is every real customer.
+    const orders = purge.indexOf('order.deleteMany');
+    const users = purge.indexOf('user.deleteMany');
+    expect(orders).toBeGreaterThan(0);
+    expect(orders).toBeLessThan(users);
+  });
+
+  it('keeps an account the credits ledger names, and says why', () => {
+    // A demo administrator who corrected somebody's credits is named on that
+    // ADJUSTMENT row, and the database requires them to stay named. Deleting
+    // the row instead would change what a real customer is owed in order to
+    // tidy up a demo account.
+    expect(purge).toMatch(/WalletTransactionType\.ADJUSTMENT/);
+    expect(purge).toMatch(/heldByLedger/);
+    expect(source('scripts/purge-demo.ts')).toMatch(/KEPT, because the credits ledger/);
+  });
+
+  it('makes the same ordering true of the single-account purge', () => {
+    // Comments stripped: the explanation above the code quotes `DELETE FROM
+    // "User"` while saying why it is not enough on its own, and a plain
+    // indexOf finds the explanation first.
+    const single = codeOnly('scripts/purge-user.ts');
+    const orders = single.indexOf('DELETE FROM "Order"');
+    const users = single.indexOf('DELETE FROM "User"');
+    expect(orders).toBeGreaterThan(0);
+    expect(orders).toBeLessThan(users);
   });
 });
 

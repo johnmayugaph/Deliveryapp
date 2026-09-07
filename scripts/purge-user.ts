@@ -145,6 +145,20 @@ async function main() {
     // The escape hatch the append-only triggers check. Transaction-scoped, so
     // it cannot leak past this COMMIT.
     await tx.$executeRawUnsafe(`SET LOCAL tara.allow_purge = 'on'`);
+    // Orders BEFORE people.
+    //
+    // `Order.customerId` is RESTRICT rather than CASCADE, and that is right for
+    // production: nobody should be able to remove a customer and silently erase
+    // the order history that a store and a rider were part of. It also means a
+    // plain `DELETE FROM "User"` fails for anybody who has ever ordered — which
+    // is every real customer, and it is why the demo purge did nothing but throw a
+    // foreign-key error until CI ran it against seeded data.
+    //
+    // So the deletion is explicit here, in the one tool whose whole purpose is
+    // to override that intent. Deleting an order cascades to its addresses,
+    // status events, applied benefits and dispatch offers, and nulls the
+    // references from wallet transactions and support tickets.
+    await tx.$executeRaw`DELETE FROM "Order" WHERE "customerId" = ${user.id}`;
     await tx.$executeRaw`DELETE FROM "User" WHERE id = ${user.id}`;
   });
 

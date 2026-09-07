@@ -1211,3 +1211,56 @@ modes confirmed to fail — wrong key, no key, and one byte flipped in the middl
 of an encrypted dump.
 
 646 tests pass; build and lint clean.
+
+## Phase 19 — the Dockerfile, compose and CI
+
+Blocker 10 on the pre-launch list was "no Dockerfile, no CI, no deploy
+configuration". There are now all three.
+
+**Two images from one Dockerfile.** `web` serves requests and carries only the
+standalone bundle — 86 MB of traced runtime files rather than 737 MB of
+node_modules. `ops` runs the things that are not requests: migrations, the SQL
+guards, the order sweep, backups, the restore drill. Splitting them keeps
+`pg_dump` and `psql` off the machine that answers customer requests, where they
+are attack surface for no benefit, while giving the jobs that genuinely need
+Postgres 16 client tools a place to run. Sixteen specifically, from PGDG: 15
+cannot dump a 16 server, and `psql` is what applies the ledger's append-only
+triggers.
+
+The standalone layout was verified by running it rather than by trusting the
+docs — the exact three paths the Dockerfile copies, assembled in a temporary
+directory, booted in 67 ms and rendered `/admin/health` with live queries.
+`/api/health` was added for the container healthcheck and returns 503 when the
+database is unreachable, so a rolling deploy does not send traffic to an
+instance that cannot answer.
+
+**CI has four jobs**, and each exists for a failure this project has actually
+had: a production build (the only thing that catches a `'use server'` export or
+an edge-runtime import), migrations plus the SQL guards against a real Postgres
+(the only thing that catches a broken trigger), a backup-and-restore drill
+including a deliberately corrupted dump, and a container build — CI is the
+first place the images are built at all, since this development environment has
+no Docker daemon.
+
+**Simulating CI locally caught three bugs that would each have failed the first
+push.** The Prisma CLI's `.env` overrides the shell, so every local "it works"
+was meaningless until the file was moved aside. `DIRECT_URL` turns out to be
+mandatory — the schema references it, and the CLI refuses to load a schema with
+a missing variable before it touches a database, which a developer never sees
+and a runner always would. And `docker compose run --rm ops …` named a service
+the compose file never defined.
+
+**And putting the demo purge in CI found two real bugs in it.** `Order.customerId`
+is RESTRICT — correct for production, since nobody should erase the order
+history a store and a rider were part of by deleting a customer — which meant
+`db:purge-demo` and `db:purge-user` threw a foreign-key error for anybody who
+had ever ordered, i.e. every real customer. Both now delete orders explicitly,
+in the one place whose purpose is to override that intent. Then the ledger
+refused too: a demo administrator who has corrected somebody's credits is named
+on that ADJUSTMENT row and `wallet_transaction_adjustment_needs_admin` requires
+them to stay named. Deleting the row instead would change what a real customer
+is owed to tidy up a demo account, so the purge now keeps those accounts, names
+them, and says blocking is the right ending — which is safe, because in
+production they cannot hold a session at all.
+
+677 tests pass; build and lint clean.

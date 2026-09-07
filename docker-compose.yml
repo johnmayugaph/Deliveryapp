@@ -1,0 +1,180 @@
+# =============================================================================
+# A complete TARA deployment, for one machine.
+# =============================================================================
+# This is the self-hosted shape: a VPS with Docker, which is the cheapest way
+# to run this in the Philippines and the one that does not need a platform
+# account. It brings up four things, and the fourth is the one people forget.
+#
+#     docker compose up -d --build
+#     docker compose run --rm ops npx prisma migrate deploy
+#     docker compose run --rm ops npm run prisma:guards
+#     docker compose logs -f web
+#
+# On a managed platform (Fly, Railway, Render, a Kubernetes cluster) ignore
+# this file and use the `web` and `ops` images directly; the commands above are
+# still the deploy sequence.
+#
+# WHAT THIS DOES NOT DO: terminate TLS. The login cookie is `secure` in
+# production, so over plain http nobody stays signed in — put Caddy or nginx in
+# front, or a load balancer that does it. See docs/architecture.md.
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # The database.
+  # ---------------------------------------------------------------------------
+  # Fine for a first launch and a real decision to revisit: a managed Postgres
+  # gives you point-in-time recovery, which is the backup that actually matters
+  # and which no amount of `db:backup` replaces. If you keep this, the backup
+  # schedule below is not optional.
+  db:
+    image: postgres:16-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tara
+      POSTGRES_DB: tara
+      # Required. Compose fails to start rather than defaulting to something
+      # guessable, which is the right way round.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    # Not published to the host. Nothing outside this compose network has any
+    # business reaching the database directly.
+    expose:
+      - '5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U tara -d tara']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ---------------------------------------------------------------------------
+  # The application.
+  # ---------------------------------------------------------------------------
+  web:
+    build:
+      context: .
+      target: web
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://tara:${POSTGRES_PASSWORD}@db:5432/tara?schema=public
+      AUTH_SECRET: ${AUTH_SECRET:?generate one with openssl rand -hex 32}
+      NEXT_PUBLIC_DEFAULT_CITY_ID: ${NEXT_PUBLIC_DEFAULT_CITY_ID:-city_manila}
+      # Everything below is optional and the app says so on /admin/health when
+      # it is missing, rather than pretending.
+      SEMAPHORE_API_KEY: ${SEMAPHORE_API_KEY:-}
+      SEMAPHORE_SENDER_NAME: ${SEMAPHORE_SENDER_NAME:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
+      NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
+      BACKUP_STRATEGY: ${BACKUP_STRATEGY:-script}
+    ports:
+      # Bound to localhost, because the thing facing the internet should be a
+      # reverse proxy holding the certificate — not this.
+      - '127.0.0.1:3000:3000'
+
+  # ---------------------------------------------------------------------------
+  # The order sweep. NOT OPTIONAL.
+  # ---------------------------------------------------------------------------
+  # Without this: riders are never offered jobs, stores are never told about
+  # orders, notifications never send, abandoned orders never time out or
+  # refund, recovered credits never unfreeze, and new faults never reach an
+  # administrator. Orders would sit there forever.
+  #
+  # A loop in a container rather than host cron, so it ships with the app and
+  # cannot be forgotten on the next machine. `sleep 90` between passes: the
+  # sweep is idempotent and bounded, and how quickly a partner sees an offer is
+  # bounded by how often this runs.
+  cron:
+    build:
+      context: .
+      target: ops
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://tara:${POSTGRES_PASSWORD}@db:5432/tara?schema=public
+      AUTH_SECRET: ${AUTH_SECRET:?}
+      SEMAPHORE_API_KEY: ${SEMAPHORE_API_KEY:-}
+      SEMAPHORE_SENDER_NAME: ${SEMAPHORE_SENDER_NAME:-}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+    command: >
+      sh -c 'while true; do npm run --silent jobs:orders || true; sleep 90; done'
+
+  # ---------------------------------------------------------------------------
+  # Backups, and the drill that proves them.
+  # ---------------------------------------------------------------------------
+  # Daily at 02:00 Manila (18:00 UTC), then the restore check half an hour
+  # later. Both in one loop rather than two services, because a backup nobody
+  # has restored is a hope and the two belong together.
+  #
+  # This is the SECOND line of defence. The first is point-in-time recovery on
+  # a managed database — see the note on `db` above.
+  backup:
+    build:
+      context: .
+      target: ops
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://tara:${POSTGRES_PASSWORD}@db:5432/tara?schema=public
+      # Set this. Without it the dump is every customer's phone number and home
+      # address in plaintext, on a disk somebody will one day copy.
+      BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:-}
+    volumes:
+      - ./backups:/backups
+    command: >
+      sh -c 'while true; do
+        now=$$(date -u +%H%M);
+        if [ "$$now" = "1800" ]; then npm run --silent db:backup -- --dir /backups --keep 14 || true; fi;
+        if [ "$$now" = "1830" ]; then npm run --silent db:restore-check -- --dir /backups || true; fi;
+        sleep 60;
+      done'
+
+  # ---------------------------------------------------------------------------
+  # One-off jobs: migrations, the guards, the demo purge, granting an admin.
+  # ---------------------------------------------------------------------------
+  # Under a profile, so `docker compose up` does not start it — it exists to be
+  # invoked:
+  #
+  #     docker compose run --rm ops npx prisma migrate deploy
+  #     docker compose run --rm ops npm run prisma:guards
+  #     docker compose run --rm ops npm run db:purge-demo -- --confirm
+  #     docker compose run --rm ops npm run admin:grant -- 09171234567 --reason "…"
+  #
+  # DIRECT_URL is set here because `prisma migrate` needs it: the schema
+  # declares it for connection-pooled hosts, and the CLI refuses to load a
+  # schema whose referenced variables are missing — before it looks at any
+  # database.
+  ops:
+    build:
+      context: .
+      target: ops
+    profiles: ['tools']
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://tara:${POSTGRES_PASSWORD}@db:5432/tara?schema=public
+      DIRECT_URL: postgresql://tara:${POSTGRES_PASSWORD}@db:5432/tara?schema=public
+      AUTH_SECRET: ${AUTH_SECRET:?}
+      BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:-}
+    volumes:
+      - ./backups:/backups
+
+volumes:
+  db-data:

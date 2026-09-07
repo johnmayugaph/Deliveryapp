@@ -1306,6 +1306,89 @@ anonymous tap is attributed to the default city. The per-city breakdown is only
 as good as the accounts column — which is the column the console already tells
 you to trust.
 
+## Shipping it: the image and CI
+
+Blocker 10 on the pre-launch list was "no Dockerfile, no CI and no deploy
+configuration". There are now all three, plus `docker-compose.yml` for the
+self-hosted case.
+
+### Two images, one file
+
+| Target | Job | Carries |
+| --- | --- | --- |
+| `web` (default) | answers requests | the standalone bundle, nothing else |
+| `ops` | migrations, guards, the sweep, backups, the restore drill | full dependencies, `scripts/`, the Postgres 16 client |
+
+Splitting them is not tidiness. `pg_dump` and `psql` on the machine that
+answers customer requests is attack surface for no benefit — nothing on a
+request path shells out to either — and the ops image needs both. Postgres
+**16** specifically, from PGDG rather than Debian's own 15: `pg_dump` 15
+refuses to dump a 16 server, and `psql` is what `npm run prisma:guards` shells
+out to, so without it the append-only triggers on the credits ledger silently
+never apply.
+
+`output: 'standalone'` in `next.config.ts` makes the web image 86 MB of traced
+runtime files instead of 737 MB of `node_modules`. That layout was verified by
+running it: the exact three paths the Dockerfile copies were assembled in a
+temporary directory and `node server.js` booted in 67 ms, served the public
+storefront, and rendered `/admin/health` with live Prisma queries.
+
+`/api/health` returns **503** when the database is unreachable, so a rolling
+deploy does not route traffic to an instance that cannot answer. It is in the
+middleware's public list — behind the login wall it would answer 307 to
+`/login`, which some probes read as healthy and others as unhealthy, and
+neither is true.
+
+### On `NEXT_PUBLIC_*` and build arguments
+
+Nothing here needs a secret at build time, and it must stay that way: an `ARG`
+is visible in `docker history` forever. The one thing to watch is
+`NEXT_PUBLIC_*`, which Next inlines into the **client** bundle at build. Every
+use today is in a server component — verified by running the built server with
+a site key set only at runtime and seeing it reach the page — so they are all
+runtime configuration. A `'use client'` component reading one would silently
+bake in whatever was set at build, and would need an `ARG`.
+
+### CI, and the four things it is for
+
+`checks` runs typecheck, lint, tests and **a production build**, because the
+build is the only one of the four that catches a `'use server'` module
+exporting a constant, or an edge-runtime import that stops instrumentation
+compiling. Both have happened here; `tsc` and ESLint pass both.
+
+`database` applies every migration to a real Postgres 16, then the SQL guards,
+then the seed — then asserts that the seed *refuses* `NODE_ENV=production` and
+that `db:purge-demo` leaves nothing behind. The guards step is the only thing
+in the project that would catch a broken trigger definition, which is the
+failure that quietly makes the credits ledger editable.
+
+`backup` takes a dump, restores it into a scratch database, checks the ledger
+adds up there, and then flips a byte in the middle of an encrypted dump and
+requires the restore to be **refused**. The restore drill, on every push,
+rather than an instruction somebody remembers.
+
+`image` builds both container targets. There is no Docker daemon in the
+environment these files were written in, so CI is the first place they are
+built at all — and that is stated plainly rather than implied otherwise.
+
+### Three bugs that simulating CI locally caught
+
+Running the workflow's steps by hand, with `.env` moved out of the way to match
+a runner, found three things that would each have failed on the first push:
+
+1. **The Prisma CLI's `.env` overrides the shell.** A command run with an
+   exported `DATABASE_URL` still used the one from `.env`, so any local "it
+   works" was meaningless. Only moving the file aside gave an honest answer.
+2. **`DIRECT_URL` is not optional.** `schema.prisma` declares
+   `directUrl = env("DIRECT_URL")` for pooled hosts, and the CLI refuses to
+   *load* a schema whose referenced variables are missing — P1012, before it
+   touches a database. A developer never sees it; a runner has no `.env`. Every
+   Prisma step in CI, and the compose `ops` service, sets both.
+3. **`docker compose run --rm ops …` named a service that did not exist.** The
+   header comments documented it; the file defined `cron` and `backup` and no
+   `ops`. It is now a real service under a `tools` profile, so `up` does not
+   start it.
+
 ## Backups
 
 The honest position first, because it decides everything else. **The real
