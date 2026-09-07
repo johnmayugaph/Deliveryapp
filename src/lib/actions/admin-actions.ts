@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import {
   AdminAction,
   NotificationDeliveryStatus,
+  RecoveryMethod,
   ServiceKey,
   SubscriptionStatus,
 } from '@prisma/client';
@@ -20,6 +21,17 @@ import {
 import { recordAdjustment } from '@/lib/wallet/ledger';
 import { formatCentavos } from '@/lib/money';
 import { cancelSubscription } from '@/lib/subscriptions/enrollment';
+import {
+  movePhoneNumber,
+  PhoneAlreadyInUseError,
+  SamePhoneError,
+  RECOVERY_CREDIT_FREEZE_DAYS,
+} from '@/lib/auth/recovery';
+import {
+  InvalidPhoneNumberError,
+  maskPhilippineMobile,
+  normalisePhilippineMobile,
+} from '@/lib/auth/phone';
 
 /**
  * Everything the console can change.
@@ -461,5 +473,111 @@ export async function endSubscriptionAction(
 
     revalidatePath(`/admin/users/${userId}`);
     return { ok: true, message: `${subscription.plan.name} ended.` };
+  });
+}
+
+// --- Account recovery --------------------------------------------------------
+
+/**
+ * Moves an account to a new phone number, by hand.
+ *
+ * The fallback for the majority who never added an email — and the single most
+ * dangerous thing in this console, because the person asking is by definition
+ * somebody who cannot prove they hold the number on the account.
+ *
+ * What makes it safe enough to offer is that it is not treated as more trusted
+ * than the self-service route. It goes through the same `movePhoneNumber`, so
+ * it gets the same three-day credit freeze, the same alert to the old number,
+ * and the same session revocation. An administrator cannot skip any of them,
+ * and the confirmation says so — because the temptation, when a real customer
+ * is on the phone insisting, is to want a version without the freeze.
+ *
+ * The reason field is where the actual verification lives. "Confirmed order
+ * DA-20260907-JBFP2 and last four of card" is a reason. "Customer asked" is
+ * the shape of a social-engineering success, and it will be in the log.
+ */
+export async function moveAccountPhoneAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const userId = String(formData.get('userId') ?? '');
+    const reason = normaliseReason(formData.get('reason'));
+
+    let newPhone: string;
+    try {
+      newPhone = normalisePhilippineMobile(String(formData.get('newPhone') ?? ''));
+    } catch (error) {
+      if (error instanceof InvalidPhoneNumberError) {
+        return { ok: false, message: error.message };
+      }
+      throw error;
+    }
+
+    const subject = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, phone: true, fullName: true },
+    });
+    if (!subject) return { ok: false, message: 'No such account.' };
+
+    if (subject.id === admin.id) {
+      // Not paranoia: an admin moving their own number through the console
+      // would revoke their own session mid-request and freeze their own
+      // credits, and there is a normal settings path for it.
+      return {
+        ok: false,
+        message: 'Use your own profile to change your own number.',
+      };
+    }
+
+    try {
+      await prisma.$transaction(async (tx) => {
+        const recovery = await movePhoneNumber(
+          {
+            userId,
+            newPhone,
+            method: RecoveryMethod.SUPPORT_ASSISTED,
+            assistedByUserId: admin.id,
+            reason,
+            now: new Date(),
+          },
+          tx,
+        );
+
+        await recordAdminAction(
+          {
+            actorId: admin.id,
+            action: AdminAction.ACCOUNT_RECOVERED,
+            subjectType: 'User',
+            subjectId: userId,
+            subjectLabel: subject.fullName ?? subject.phone,
+            reason,
+            detail: {
+              // The old number is in the recovery row too; repeated here so the
+              // audit log reads without a join.
+              previousPhone: subject.phone,
+              newPhone,
+              recoveryId: recovery.id,
+              creditsFrozenUntil: recovery.creditsFrozenUntil.toISOString(),
+            },
+          },
+          tx,
+        );
+      });
+    } catch (error) {
+      if (error instanceof PhoneAlreadyInUseError || error instanceof SamePhoneError) {
+        return { ok: false, message: error.message };
+      }
+      throw error;
+    }
+
+    revalidatePath(`/admin/users/${userId}`);
+    return {
+      ok: true,
+      message:
+        `Moved to ${maskPhilippineMobile(newPhone)}. Every session is revoked, ` +
+        `credits are frozen for ${RECOVERY_CREDIT_FREEZE_DAYS} days, and the ` +
+        'previous number is texted on the next maintenance run.',
+    };
   });
 }

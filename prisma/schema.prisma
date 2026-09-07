@@ -339,6 +339,11 @@ model User {
   /// Philippine mobile number in E.164, e.g. +639171234567. The login identity.
   phone           String    @unique
   email           String?   @unique
+  /// Set only when a code sent TO that address has been verified. An
+  /// unverified email is worthless for recovery — anybody can type an address
+  /// they do not control — so every recovery path checks this column, never
+  /// `email` alone.
+  emailVerifiedAt DateTime?
   /// NULL until the person tells us their name. A phone-first signup creates the
   /// record at the moment a code is verified, which is before they have typed
   /// anything else — pretending otherwise would put placeholder junk in the
@@ -381,6 +386,8 @@ model User {
   notificationPreferences NotificationPreference[]
   pushSubscriptions       WebPushSubscription[]
   adminActions            AdminAuditEvent[]                 @relation("AdminAuditActor")
+  recoveries              AccountRecovery[]
+  assistedRecoveries      AccountRecovery[]                 @relation("RecoveryAssistedBy")
 
   @@index([roles], type: Gin)
   @@index([preferredCityId])
@@ -500,6 +507,47 @@ model PhoneVerification {
   @@index([phone, createdAt(sort: Desc)])
   @@index([requestIpHash, createdAt])
   @@index([expiresAt])
+}
+
+/// A code sent to an email address.
+///
+/// Deliberately a separate table from `PhoneVerification` rather than one
+/// table with a nullable phone and a nullable email. The two are different
+/// enough in what they are for — one proves you hold the login identity, the
+/// other proves you hold a recovery channel — that a shared table would need a
+/// discriminator column and a CHECK constraint to stop rows meaning nothing.
+/// The policy module is shared instead, which is where the logic actually is.
+model EmailVerification {
+  id String @id @default(cuid())
+
+  /// Lower-cased and trimmed before it ever reaches this table.
+  email String
+
+  /// What the code is for. A code minted to confirm an address must not be
+  /// usable to recover an account, and the other way round.
+  purpose EmailCodePurpose
+
+  /// HMAC-SHA256(code, AUTH_SECRET), hex. The plaintext is never stored.
+  codeHash String
+
+  expiresAt  DateTime
+  attempts   Int       @default(0)
+  consumedAt DateTime?
+
+  requestIpHash String?
+
+  createdAt DateTime @default(now())
+
+  @@index([email, purpose, createdAt(sort: Desc)])
+  @@index([requestIpHash, createdAt])
+  @@index([expiresAt])
+}
+
+enum EmailCodePurpose {
+  /// Confirming an address the person typed while signed in.
+  VERIFY_ADDRESS
+  /// Proving control of a previously verified address, to move the phone.
+  ACCOUNT_RECOVERY
 }
 
 // -----------------------------------------------------------------------------
@@ -938,9 +986,16 @@ model Wallet {
   balanceCentavos Int    @default(0)
   currency        String @default("PHP")
 
-  /// Blocks spending without deleting history, e.g. during a fraud review.
-  isFrozen     Boolean @default(false)
+  /// Blocks spending without deleting history, e.g. during a fraud review or
+  /// the cooling-off period after the account's phone number changed.
+  isFrozen     Boolean   @default(false)
   frozenReason String?
+  /// When the freeze lifts on its own. NULL means indefinite — a fraud review
+  /// ends when somebody ends it. Set for the recovery cooling-off period,
+  /// which is the whole reason recovery is not a way to steal a balance:
+  /// taking over an account buys you credits you cannot spend for three days,
+  /// by which time the alert has reached the real owner.
+  frozenUntil  DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1305,6 +1360,10 @@ enum NotificationKind {
   CREDITS_GRANTED
   /// To the subscriber: the term ended.
   SUBSCRIPTION_ENDED
+  /// To the account: something changed about who can get into it. The one kind
+  /// that exists to be unwelcome — if the person did not do this, they need to
+  /// know within seconds, not at their convenience.
+  SECURITY_ALERT
 }
 
 /// How a message reaches someone.
@@ -1506,6 +1565,8 @@ enum AdminAction {
   DELIVERY_REQUEUED
   /// A complimentary subscription was granted or ended.
   SUBSCRIPTION_CHANGED
+  /// An account's phone number was moved by support.
+  ACCOUNT_RECOVERED
 }
 
 /// One privileged action, and why.
@@ -1547,4 +1608,73 @@ model AdminAuditEvent {
   @@index([actorId, createdAt])
   @@index([subjectType, subjectId, createdAt])
   @@index([action, createdAt])
+}
+
+// -----------------------------------------------------------------------------
+// 13. Account recovery
+// -----------------------------------------------------------------------------
+
+/// How somebody proved they should get the account back.
+enum RecoveryMethod {
+  /// Two channels: a code to an address verified BEFORE the phone was lost,
+  /// then a code to the new number. Self-service, no human involved.
+  VERIFIED_EMAIL
+  /// An administrator moved the number, with a reason, through the console.
+  /// For the people who never added an email — which will be most of them.
+  SUPPORT_ASSISTED
+}
+
+/// One change of the login identity, and everything about it.
+///
+/// APPEND-ONLY, enforced by trigger, like the credits ledger and the admin
+/// audit trail. This is the record of the single most dangerous operation in
+/// the system: whoever holds an account's phone number holds its credits
+/// balance, its order history and its saved addresses. A recovery that could
+/// be edited afterwards would make the whole feature untrustworthy.
+///
+/// `previousPhone` is kept on purpose, and it is the ONLY place the old number
+/// survives after the change — `User.phone` has moved on. It is what the
+/// security alert is sent to, and what answers "was this me" months later.
+model AccountRecovery {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  method RecoveryMethod
+
+  /// The number the account had before. E.164.
+  previousPhone String
+  /// The number it has now. E.164.
+  newPhone      String
+
+  /// The address the code went to, for VERIFIED_EMAIL. NULL for a support
+  /// recovery, where no email was involved.
+  viaEmail String?
+
+  /// Who did it, for SUPPORT_ASSISTED. NULL for self-service — the person
+  /// themselves is `user`, and naming them twice would suggest otherwise.
+  assistedByUserId String?
+  assistedBy       User?   @relation("RecoveryAssistedBy", fields: [assistedByUserId], references: [id])
+  /// Required for SUPPORT_ASSISTED by CHECK constraint. An identity moved
+  /// without a written reason is indistinguishable from a takeover.
+  reason           String?
+
+  /// When the cooling-off freeze on the credits balance lifts.
+  creditsFrozenUntil DateTime
+
+  /// When the alert to `previousPhone` went out. NULL means it is still
+  /// queued: the maintenance sweep sends it, because the recipient is a number
+  /// this account no longer has and the outbox resolves recipients from the
+  /// user row.
+  alertSentAt DateTime?
+  /// Kept if the alert could not be sent, so a failure is visible rather than
+  /// looking like it was never attempted.
+  alertError  String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([previousPhone])
+  /// The sweep's queue: recoveries whose alert has not gone out.
+  @@index([alertSentAt, createdAt])
 }

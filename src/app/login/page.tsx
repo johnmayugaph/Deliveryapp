@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/session';
 import { safeNextPath } from '@/lib/auth/login';
@@ -37,6 +38,16 @@ export default async function LoginPage({
       <div className="mt-6 rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5">
         <LoginFlow redirectTo={safeNextPath(next)} />
       </div>
+
+      {/* The one route out for somebody whose number is gone. Quiet, because
+          almost nobody needs it and the people who do are looking for it. */}
+      <p className="mt-5 text-xs text-ink-muted">
+        Lost your number?{' '}
+        <Link href="/recover" className="font-semibold text-brand-700">
+          Recover your account
+        </Link>
+        .
+      </p>
     </main>
   );
 }

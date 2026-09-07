@@ -22,6 +22,15 @@ import {
   fanOutDispatchOffers,
   type FanOutResult,
 } from '@/lib/fleet/dispatch-offers';
+import {
+  liftExpiredFreezes,
+  markRecoveryAlertFailed,
+  markRecoveryAlertSent,
+  pendingRecoveryAlerts,
+  recoveryAlertText,
+} from '@/lib/auth/recovery';
+import { pruneEmailCodes } from '@/lib/auth/email-codes';
+import { resolveSmsSender } from '@/lib/auth/sms';
 
 /**
  * Scheduled order maintenance.
@@ -299,14 +308,77 @@ export async function completeOrder(input: {
  * spent login codes and expired sessions are not needed once dead, and a table
  * of hashed codes and address fingerprints is not something to accumulate.
  */
+export interface RecoveryAlertResult {
+  sent: number;
+  failed: number;
+  /** True when no gateway is configured, so nothing was attempted. */
+  unconfigured: boolean;
+}
+
+/**
+ * Tells the OLD number that the account moved.
+ *
+ * This is here rather than in the notification outbox for one reason: the
+ * outbox resolves every recipient from the user row, and the user row now
+ * holds the NEW number. Sending this through the outbox would deliver the
+ * "your account was taken over" warning to whoever took it over.
+ *
+ * So the recovery row carries `previousPhone` — the only place the old number
+ * survives — and this sends to it directly. It is the one message in the
+ * system that goes to a number no account has.
+ *
+ * A failure is recorded rather than retried. The number was lost, which is why
+ * a recovery happened at all, so undeliverable is the expected case and a row
+ * that says so is more useful than a queue that never drains.
+ */
+export async function sendRecoveryAlerts(): Promise<RecoveryAlertResult> {
+  const pending = await pendingRecoveryAlerts();
+  if (pending.length === 0) {
+    return { sent: 0, failed: 0, unconfigured: false };
+  }
+
+  let sender;
+  try {
+    sender = resolveSmsSender();
+  } catch {
+    // No gateway. The rows stay pending — marking them failed would throw away
+    // the alert for a reason that has nothing to do with the alert.
+    return { sent: 0, failed: 0, unconfigured: true };
+  }
+
+  let sent = 0;
+  let failed = 0;
+  for (const recovery of pending) {
+    try {
+      await sender.send({
+        to: recovery.previousPhone,
+        body: recoveryAlertText(recovery),
+      });
+      await markRecoveryAlertSent(recovery.id);
+      sent += 1;
+    } catch (error) {
+      await markRecoveryAlertFailed(
+        recovery.id,
+        error instanceof Error ? error.message : String(error),
+      );
+      failed += 1;
+    }
+  }
+
+  return { sent, failed, unconfigured: false };
+}
+
 export async function runMaintenance(): Promise<{
   expiredOffers: number;
   dispatched: FanOutResult[];
   expired: ExpiredOrderResult[];
   subscriptions: RenewalOutcome[];
   notifications: DeliveryPassResult;
+  recoveryAlerts: RecoveryAlertResult;
+  liftedFreezes: number;
   prunedVerifications: number;
   prunedSessions: number;
+  prunedEmailCodes: number;
 }> {
   // Order matters. Lapsed offers are closed first so the fan-out sees accurate
   // live counts; dispatch runs before the timeout sweep so an order that just
@@ -322,8 +394,18 @@ export async function runMaintenance(): Promise<{
   // store hearing about an order one cron interval later than it was placed is
   // the cost of having no worker, and there is no reason to make it two.
   const notifications = await deliverPending();
+
+  // Security alerts go out AFTER the notification pass rather than through it,
+  // and they are not batched behind anything: see `sendRecoveryAlerts`.
+  const recoveryAlerts = await sendRecoveryAlerts();
+  // Tidying, not enforcement — the ledger computes the freeze from
+  // `frozenUntil` on every spend, so this only makes the column and the
+  // screens agree with what the ledger already does.
+  const liftedFreezes = await liftExpiredFreezes();
+
   const prunedVerifications = await pruneVerifications();
   const prunedSessions = await pruneSessions();
+  const prunedEmailCodes = await pruneEmailCodes();
 
   return {
     expiredOffers,
@@ -331,7 +413,10 @@ export async function runMaintenance(): Promise<{
     expired,
     subscriptions,
     notifications,
+    recoveryAlerts,
+    liftedFreezes,
     prunedVerifications,
     prunedSessions,
+    prunedEmailCodes,
   };
 }

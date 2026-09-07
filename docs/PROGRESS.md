@@ -48,6 +48,7 @@ brief's changes already folded in.
 | 10 | Second vertical | ⬜ Gated on demand |
 | 11 | Notifications: outbox, inbox, SMS | ✅ Done |
 | 12 | SMS verified at the wire; web push; the admin console | ✅ Built, one gap |
+| 13 | Account recovery: a verified email, or support, with a credits freeze | ✅ Done |
 
 Between phases 11 and 12: the interface was translated to English, the product
 was named TARA, and the typeface and brand blue were set from the brand artwork.
@@ -788,8 +789,16 @@ real file later is one line in `tailwind.config.ts`.
   Push API in the incognito profile Playwright uses and the environment blocks
   the push services outright, so no endpoint could be obtained. The error path
   a person would see is verified; the happy path with a real endpoint is not.
-- **No account recovery.** Losing the phone number means losing the account —
-  there is no email fallback and no support-assisted transfer.
+- **Recovery depends on foresight, or on support.** Self-service recovery needs
+  an email confirmed BEFORE the number was lost, and almost nobody will do that
+  in advance. Everyone else goes through support, where the verification is
+  whatever the administrator wrote in the reason field — which is auditable but
+  not strong. Prompting for an address at the right moment (after a first
+  successful order, not during signup) is the cheap improvement.
+- **Recovery by email needs an email provider.** With `RESEND_API_KEY` unset the
+  `/recover` route says so and only the support route works. The Resend adapter
+  has never sent a real message, for the same reason the SMS one has not: the
+  development environment blocks outbound mail providers too.
 - **No CAPTCHA.** The three throttles are the only abuse defence on code
   requests, which is thin if someone brings many source addresses.
 - **No realtime.** Tracking polls every 15 seconds. Push now reaches a closed
@@ -862,3 +871,62 @@ Manila entirely, neither usable nor coming. Unreachable until the console could
 put a service into that state, and the outcome of the first real launch if it
 had shipped. `isOrderableIn(service, cityId)` now separates "live" from "live
 where you are", and the tile reads `orderableHere`.
+
+---
+
+## Phase 13 — account recovery
+
+**The problem.** The phone number is the identity, so losing it meant losing
+the account: the order history, the saved addresses and the credits balance,
+with no route back. It was the top blocking gap for a real launch, and the one
+certain to happen in the first week.
+
+**Why it is dangerous to fix.** Whoever holds an account's number holds all of
+that, so recovery is an account-takeover surface. The design is arranged around
+making a successful takeover *worthless* rather than merely difficult, because
+"difficult" is a bet against an attacker's patience.
+
+**Four controls, and no route can skip one.** Both the self-service and the
+support-assisted path go through `movePhoneNumber()`, inside one transaction:
+
+1. **Two channels.** A code to an address verified before the loss, then a code
+   to the new number. Email alone never grants a session and never moves
+   anything — `recovery.ts` contains no `createSession`, and a grep test keeps
+   it that way.
+2. **Credits frozen for three days.** The control that removes the prize. The
+   ledger computes it from `frozenUntil` on every spend rather than reading
+   `isFrozen`, so the hold lifts the instant it expires instead of at the next
+   cron tick. Refunds INTO a frozen balance still land — only spending is
+   blocked, or a cancellation during the hold would lose somebody's money.
+3. **The old number is told.** From `AccountRecovery.previousPhone`, the only
+   place it survives the change. Deliberately not through the notification
+   outbox, which resolves recipients from the user row — that would send the
+   "your account was taken over" warning to whoever took it over. The
+   maintenance sweep sends it instead.
+4. **Every session revoked.**
+
+Plus an append-only `AccountRecovery` row whose UPDATE trigger permits only the
+two alert columns.
+
+**A design problem the guards surfaced.** An append-only table makes the rows
+referencing it undeletable: `onDelete: Cascade` from `User` runs as a DELETE and
+hits the trigger, so no account could ever be removed — and the credits ledger
+already had this property, unnoticed. Nearly right, since financial and identity
+records are retained on purpose, but "nearly" is what gets a trigger dropped and
+never recreated the first time somebody has a lawful erasure request. All three
+append-only triggers now honour `SET LOCAL tara.allow_purge`, which cannot
+outlive its transaction, and `npm run db:purge-user` is the one tool that uses
+it.
+
+**A mistake that cost two debugging rounds.** A `'use server'` module may export
+only async functions. Both `tsc` and ESLint pass a file that breaks it; the
+first sign is a 500 in the browser. It happened twice — a constant, then an enum
+re-export — so `no-service-branches.test.ts` now asserts it, and the assertion
+was checked against both real mistakes before being committed.
+
+**Verified**: 24 checks against a live database (the move, the freeze refusing a
+spend, the balance surviving, the alert sending once and not twice, all six
+guards rejecting raw writes, the freeze expiring before any sweep, purpose-scoped
+email codes, and the purge hatch closing again afterwards); and the whole flow in
+a real browser — add an address, confirm it, recover onto a new number from a
+clean browser, and sign in with it.

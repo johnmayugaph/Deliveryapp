@@ -96,6 +96,7 @@ export async function enqueueNotification(
         channel,
         urgency: policy.urgency,
         preference: preferenceByChannel.get(channel),
+        unmutable: policy.unmutable,
       }) &&
       (channel !== NotificationChannel.PUSH || pushDevices > 0);
     return {

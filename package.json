@@ -25,7 +25,8 @@
     "plan:activate": "tsx scripts/activate-plan.ts",
     "plan:comp": "tsx scripts/grant-subscription.ts",
     "sms:send-one": "tsx --env-file-if-exists=.env scripts/send-one-sms.ts",
-    "push:keys": "tsx --env-file-if-exists=.env scripts/generate-vapid-keys.ts"
+    "push:keys": "tsx --env-file-if-exists=.env scripts/generate-vapid-keys.ts",
+    "db:purge-user": "tsx --env-file-if-exists=.env scripts/purge-user.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

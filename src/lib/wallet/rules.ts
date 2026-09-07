@@ -78,3 +78,26 @@ export function replayLedger(
 ): number {
   return entries.reduce((total, entry) => total + entry.amountCentavos, 0);
 }
+
+/**
+ * Whether a freeze is actually in force right now.
+ *
+ * `frozenUntil` is NULL for an indefinite freeze — a fraud review ends when
+ * somebody ends it — and set for the cooling-off period after an account's
+ * phone number moved. That period expires on its own, and a sweep clears the
+ * column afterwards so screens read correctly.
+ *
+ * The sweep is tidying, not enforcement. This function is enforcement, and it
+ * is computed rather than read so a freeze that has run out stops applying at
+ * the instant it runs out — not at the next cron tick, which would leave
+ * somebody unable to spend credits that are already theirs again.
+ */
+export function freezeIsInForce(
+  wallet: { isFrozen: boolean; frozenUntil?: Date | null },
+  now: Date,
+): boolean {
+  if (!wallet.isFrozen) return false;
+  const until = wallet.frozenUntil ?? null;
+  if (until === null) return true;
+  return until.getTime() > now.getTime();
+}

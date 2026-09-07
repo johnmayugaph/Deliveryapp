@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readdirSync } from 'node:fs';
 import { isOrderableIn } from '@/lib/services/registry';
 import { readFileSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
@@ -191,4 +192,46 @@ describe('live somewhere is not live here', () => {
     expect(isOrderableIn(mart, undefined)).toBe(true);
     expect(isOrderableIn(parcel, undefined)).toBe(false);
   });
+});
+
+// -----------------------------------------------------------------------------
+// 'use server' modules
+// -----------------------------------------------------------------------------
+
+describe("a 'use server' file exports only async functions", () => {
+  /**
+   * Next.js enforces this, and only at build or request time — `tsc` and
+   * ESLint both pass a file that breaks it, so the first sign is a 500 in the
+   * browser. It has now cost this codebase two debugging rounds: a constant
+   * and an enum re-export, both of which looked completely ordinary.
+   *
+   * The fix in both cases was to move the value somewhere else, so the rule
+   * this asserts is not a style preference — it is the difference between a
+   * working page and one that throws.
+   */
+  const actionFiles = readdirSync(path.join(process.cwd(), 'src/lib/actions'))
+    .filter((name) => name.endsWith('.ts'))
+    .map((name) => path.join('src/lib/actions', name));
+
+  it('finds the action modules', () => {
+    expect(actionFiles.length).toBeGreaterThanOrEqual(4);
+  });
+
+  for (const file of actionFiles) {
+    const source = readFileSync(path.join(process.cwd(), file), 'utf8');
+    if (!/^\s*['"]use server['"]/m.test(source)) continue;
+
+    it(`${path.basename(file)} exports nothing but async functions`, () => {
+      // Types are erased before Next.js sees the module, so `export type` and
+      // `export interface` are fine. Everything else must be an async
+      // function declaration.
+      const offenders: string[] = [];
+      for (const match of source.matchAll(/^export\s+(?!type\b|interface\b)(.+)$/gm)) {
+        const declaration = match[1]!.trim();
+        if (declaration.startsWith('async function')) continue;
+        offenders.push(declaration.slice(0, 70));
+      }
+      expect(offenders, `${file} — move these out of the 'use server' module`).toEqual([]);
+    });
+  }
 });

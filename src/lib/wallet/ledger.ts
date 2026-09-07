@@ -10,9 +10,11 @@ import {
   InvalidLedgerEntryError,
   ORDER_LINKED_TYPES,
   signedAmountFor,
+  freezeIsInForce,
 } from '@/lib/wallet/rules';
 
 export { InvalidLedgerEntryError } from '@/lib/wallet/rules';
+export { freezeIsInForce } from '@/lib/wallet/rules';
 
 /**
  * The credits ledger.
@@ -159,7 +161,12 @@ export async function recordWalletTransaction(
 
     const signedAmount = signedAmountFor(input.type, input.amountCentavos);
 
-    if (wallet.isFrozen && signedAmount < 0) {
+    // Computed from `frozenUntil`, not read from `isFrozen` alone: a
+    // cooling-off period that has expired stops applying immediately rather
+    // than at the next sweep. Only spending is blocked — a refund INTO a
+    // frozen balance must still land, or a cancellation during the freeze
+    // would lose somebody's money.
+    if (signedAmount < 0 && freezeIsInForce(wallet, new Date())) {
       throw new WalletFrozenError(wallet.id, wallet.frozenReason);
     }
 
@@ -259,9 +266,13 @@ export async function getWalletForUser(userId: string): Promise<Wallet | null> {
 export async function getSpendableCentavos(userId: string): Promise<number> {
   const wallet = await prisma.wallet.findUnique({
     where: { userId },
-    select: { id: true, isFrozen: true },
+    select: { id: true, isFrozen: true, frozenUntil: true },
   });
-  if (!wallet || wallet.isFrozen) {
+  // A frozen balance reports zero SPENDABLE, which is what checkout asks for.
+  // The balance itself is unchanged and the credits screen still shows it,
+  // with the reason — money that has vanished from the screen is a support
+  // ticket, money that is visible and held is an explanation.
+  if (!wallet || freezeIsInForce(wallet, new Date())) {
     return 0;
   }
   const aggregate = await prisma.walletTransaction.aggregate({

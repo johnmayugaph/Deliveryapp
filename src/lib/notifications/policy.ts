@@ -23,6 +23,18 @@ export interface KindPolicy {
    * on every kind: the inbox is the record.
    */
   channels: readonly NotificationChannel[];
+  /**
+   * Ignores the recipient's channel switches.
+   *
+   * Reserved for the messages where being left alone is not the point. A
+   * security alert somebody has muted is a security alert that does not work:
+   * the person it protects is the one who did not perform the action, and they
+   * cannot have consented to missing it.
+   *
+   * Absent on everything else, and it should stay that way — the moment a
+   * marketing message is unmutable, the switch means nothing.
+   */
+  unmutable?: boolean;
 }
 
 /**
@@ -30,6 +42,17 @@ export interface KindPolicy {
  * whether it is worth an SMS.
  */
 export const KIND_POLICY: Readonly<Record<NotificationKind, KindPolicy>> = {
+  // The account's identity moved. Every channel, and no opting out.
+  [NotificationKind.SECURITY_ALERT]: {
+    urgency: NotificationUrgency.OPERATIONAL,
+    channels: [
+      NotificationChannel.IN_APP,
+      NotificationChannel.PUSH,
+      NotificationChannel.SMS,
+    ],
+    unmutable: true,
+  },
+
   // Somebody is waiting on an action, and the tab is probably closed. These are
   // the two that justify the cost of a message.
   [NotificationKind.ORDER_SUBMITTED]: {
@@ -165,8 +188,15 @@ export function channelCarries(input: {
   urgency: NotificationUrgency;
   /** The recipient's stored switch for this channel, if they have set one. */
   preference?: boolean | undefined;
+  /** From the kind's policy. Overrides the switch — see `KindPolicy`. */
+  unmutable?: boolean | undefined;
 }): boolean {
   if (ALWAYS_ON_CHANNELS.includes(input.channel)) {
+    return true;
+  }
+  // Checked BEFORE the stored preference, which is the whole point: this is
+  // the one case where a switch somebody set does not decide the outcome.
+  if (input.unmutable) {
     return true;
   }
   if (input.preference !== undefined) {

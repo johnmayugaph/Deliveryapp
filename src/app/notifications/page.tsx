@@ -44,6 +44,7 @@ const KIND_GLYPH: Readonly<Record<NotificationKind, string>> = {
   [NotificationKind.DISPATCH_OFFER]: '🔔',
   [NotificationKind.CREDITS_GRANTED]: '🎁',
   [NotificationKind.SUBSCRIPTION_ENDED]: '📄',
+  [NotificationKind.SECURITY_ALERT]: '🔐',
 };
 
 /**

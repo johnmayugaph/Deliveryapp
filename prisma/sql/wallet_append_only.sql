@@ -16,8 +16,31 @@
 CREATE OR REPLACE FUNCTION wallet_transaction_is_append_only()
 RETURNS TRIGGER AS $$
 BEGIN
+  -- An explicit, transaction-scoped escape hatch.
+  --
+  -- Without one, an append-only table makes the rows that reference it
+  -- undeletable too: `onDelete: Cascade` from User runs as a DELETE and hits
+  -- this trigger, so no account can ever be removed. That is nearly right —
+  -- financial and identity records are retained on purpose, and a hard delete
+  -- is not how an account ends — but "nearly" is what gets a trigger dropped
+  -- and never recreated the first time somebody has a lawful erasure request
+  -- or needs to reset a test database.
+  --
+  -- So: opt in per transaction, and only per transaction.
+  --
+  --     BEGIN;
+  --     SET LOCAL tara.allow_purge = 'on';
+  --     DELETE FROM "User" WHERE id = '...';
+  --     COMMIT;
+  --
+  -- `SET LOCAL` cannot leak past COMMIT, so this cannot be left switched on,
+  -- and it appears in the statement log next to what it permitted.
+  IF current_setting('tara.allow_purge', true) = 'on' THEN
+    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+  END IF;
+
   RAISE EXCEPTION
-    'WalletTransaction is append-only: % is not permitted. Write a compensating ADJUSTMENT row instead.',
+    'WalletTransaction is append-only: % is not permitted. Write a compensating ADJUSTMENT row instead. A lawful purge sets tara.allow_purge for one transaction.',
     TG_OP;
 END;
 $$ LANGUAGE plpgsql;

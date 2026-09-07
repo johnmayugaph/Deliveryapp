@@ -26,6 +26,8 @@ const SESSION_COOKIE = 'tara_session';
  */
 const PUBLIC_PREFIXES = [
   '/login',
+  // The premise of recovery is that the person cannot sign in.
+  '/recover',
   '/icon.svg',
   '/sw.js',
   '/icon-192.png',

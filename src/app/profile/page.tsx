@@ -15,6 +15,8 @@ import { liveSubscription } from '@/lib/subscriptions/enrollment';
 import { countUnread } from '@/lib/notifications/inbox';
 import { SignOutButton } from '@/components/auth/SignOutButton';
 import { ActiveSessions } from '@/components/auth/ActiveSessions';
+import { RecoveryEmail } from '@/components/auth/RecoveryEmail';
+import { isEmailConfigured } from '@/lib/auth/email';
 
 export const dynamic = 'force-dynamic';
 
@@ -259,6 +261,15 @@ export default async function ProfilePage() {
           </Link>
         )}
       </section>
+
+      {/* Above the session list on purpose: "how do I get back in" comes
+          before "who is signed in", for somebody scanning this screen after
+          losing a phone. */}
+      <RecoveryEmail
+        email={user.email}
+        verified={user.emailVerifiedAt !== null}
+        available={isEmailConfigured()}
+      />
 
       <ActiveSessions sessions={sessions} />
 

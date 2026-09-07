@@ -26,8 +26,11 @@ async function main() {
     expired,
     subscriptions,
     notifications,
+    recoveryAlerts,
+    liftedFreezes,
     prunedVerifications,
     prunedSessions,
+    prunedEmailCodes,
   } = await runMaintenance();
 
   if (expiredOffers > 0) {
@@ -67,9 +70,28 @@ async function main() {
     );
   }
 
-  if (prunedVerifications > 0 || prunedSessions > 0) {
+  if (recoveryAlerts.unconfigured) {
     console.log(
-      `Pruned ${prunedVerifications} login code(s) and ${prunedSessions} dead session(s).`,
+      'Account-recovery alerts are waiting on an SMS gateway. They stay queued: ' +
+        'the alert to a number an account no longer has is the whole point.',
+    );
+  } else if (recoveryAlerts.sent > 0 || recoveryAlerts.failed > 0) {
+    console.log(
+      `Recovery alerts: ${recoveryAlerts.sent} sent to previous numbers` +
+        (recoveryAlerts.failed > 0
+          ? `, ${recoveryAlerts.failed} undeliverable (expected — the number was lost)`
+          : ''),
+    );
+  }
+
+  if (liftedFreezes > 0) {
+    console.log(`Lifted ${liftedFreezes} expired credits freeze(s).`);
+  }
+
+  if (prunedVerifications > 0 || prunedSessions > 0 || prunedEmailCodes > 0) {
+    console.log(
+      `Pruned ${prunedVerifications} login code(s), ${prunedEmailCodes} email code(s) ` +
+        `and ${prunedSessions} dead session(s).`,
     );
   }
 

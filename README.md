@@ -146,6 +146,41 @@ merchants and the customer profile offers a link in:
 | `0917 000 3333` | Rosa Lim | Staff at Nena's: queue only, no prices |
 | `0917 000 9999` | Ops Admin | Grants subscriptions and ledger adjustments |
 
+### If somebody loses their phone
+
+The phone number is the identity, so losing it used to mean losing the account.
+Two routes back, and both go through the same one function so neither can skip a
+safeguard.
+
+**Self-service**, at `/recover`: a code to an email address the person confirmed
+*before* they lost the number, then a code to the new number. Two channels —
+email alone never grants a session and never moves anything, it only earns the
+right to prove control of a new number. Needs `RESEND_API_KEY` and `EMAIL_FROM`;
+with neither set the route says so plainly rather than failing later.
+
+**Support-assisted**, on the person's page in `/admin`: for the majority who
+never added an email. The reason field is the verification — write what you
+actually checked, because "customer asked" is the shape a social-engineering
+success takes and it stays in the log.
+
+Four things happen either way, and an administrator cannot turn any of them off:
+
+- **Credits are frozen for three days.** This is the control that matters. It
+  does not make takeover harder, it makes it *worthless* — the balance cannot be
+  spent until long after the alert has landed. The ledger computes the freeze
+  from `frozenUntil` on every spend, so it lifts the instant it expires.
+- **The old number is texted.** Sent from `AccountRecovery.previousPhone`, which
+  after the change is the only place that number survives. Deliberately NOT
+  through the notification outbox — the outbox resolves recipients from the user
+  row, which now holds the new number, so it would send the warning to whoever
+  triggered it.
+- **Every session is revoked**, including an attacker's.
+- **An append-only row records it**, with the method, both numbers, and the
+  reason. Only the alert columns can ever be updated.
+
+The remaining hole is honest: somebody who controls both the old email and the
+new phone can do this. What the freeze and the alert buy is time to notice.
+
 ### The admin console
 
 `/admin`, for an account with the `ADMIN` role. The seed creates one:
@@ -232,13 +267,14 @@ touching by hand.
 | `npm run plan:activate` | List plans, or launch/pull one — the whole launch switch |
 | `npm run plan:comp` | Grant or end a subscription, attributed to an admin |
 | `npm run push:keys` | Generate the VAPID pair. Once, ever — see Notifications |
+| `npm run db:purge-user` | Permanently remove an account. Blocking is almost always what you want |
 | `npm run sms:send-one` | Send one real SMS, to prove a gateway works |
 
 ## Layout
 
 ```
 prisma/
-  schema.prisma          the source of truth: 33 models, 24 enums
+  schema.prisma          the source of truth: 35 models, 26 enums
   seed.ts                the ONLY file that enumerates the five services
   sql/                   invariants Prisma's schema language cannot express
 src/
@@ -247,6 +283,8 @@ src/
   lib/
     services/registry.ts the only reader of the Service registry
     auth/                phone normalisation, one-time codes, sessions, SMS
+      email/             addresses, and the provider behind recovery codes
+      recovery.ts        the one function that moves a phone number
     orders/              lifecycle map, state machine, details, placement, timeouts
     wallet/              the credits ledger and its pure rules
     pricing/             delivery rates and subscription-aware checkout pricing
@@ -257,7 +295,7 @@ src/
     admin/               console authorisation, the audit trail, its queries
     merchant/            store access and the order queue
     support/             unified tickets
-  tests/                 396 tests, database-free
+  tests/                 450 tests, database-free
 ```
 
 ## Money

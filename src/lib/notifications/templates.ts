@@ -32,6 +32,10 @@ export interface NotificationContext {
   creditsReason?: string;
   planName?: string;
   reason?: string;
+  /** For a security alert: what changed, in the person's own terms. */
+  securityEvent?: string;
+  /** Masked — the last four digits of the number the account moved to. */
+  maskedPhone?: string;
 }
 
 export interface RenderedNotification {
@@ -53,6 +57,27 @@ const orderRef = (context: NotificationContext) =>
 const serviceName = (context: NotificationContext) => context.serviceName ?? 'TARA';
 
 export const NOTIFICATION_TEMPLATES: Readonly<Record<NotificationKind, Template>> = {
+  /**
+   * The one message that exists to be unwelcome.
+   *
+   * Written so somebody who did NOT do this knows what to do in the first
+   * sentence, because that person is the reason the message exists. It names
+   * no support phone number on purpose — an alert that tells you where to call
+   * is the shape a phishing message copies.
+   */
+  [NotificationKind.SECURITY_ALERT]: (context) => ({
+    title: 'Your sign-in number changed',
+    body:
+      `${context.securityEvent ?? 'The phone number for this account was changed'}` +
+      `${context.maskedPhone ? ` to ${context.maskedPhone}` : ''}. ` +
+      'If this was you, nothing else is needed. If it was not, open Help now — ' +
+      'your credits are on hold for three days, so nothing can be spent yet.',
+    sms:
+      `TARA: the sign-in number for your account was changed${
+        context.maskedPhone ? ` to ${context.maskedPhone}` : ''
+      }. Not you? Your credits are frozen for 3 days. Open Help in the app.`,
+  }),
+
   [NotificationKind.ORDER_SUBMITTED]: (context) => ({
     title: 'New order',
     body: `A new ${serviceName(context)} order is waiting for your answer${orderRef(context)}.`,

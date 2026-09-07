@@ -164,4 +164,5 @@ export const ADMIN_ACTION_LABEL: Readonly<Record<AdminAction, string>> = {
   [AdminAction.CREDITS_ADJUSTED]: 'Credits adjusted',
   [AdminAction.DELIVERY_REQUEUED]: 'Notification delivery requeued',
   [AdminAction.SUBSCRIPTION_CHANGED]: 'Subscription granted or ended',
+  [AdminAction.ACCOUNT_RECOVERED]: 'Account sign-in number moved',
 };

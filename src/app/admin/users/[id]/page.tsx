@@ -11,8 +11,10 @@ import { userDetail } from '@/lib/admin/queries';
 import {
   adjustCreditsAction,
   endSubscriptionAction,
+  moveAccountPhoneAction,
   setUserBlockedAction,
 } from '@/lib/actions/admin-actions';
+import { listRecoveries, RECOVERY_CREDIT_FREEZE_DAYS } from '@/lib/auth/recovery';
 import { LIVE_SUBSCRIPTION_STATUSES } from '@/lib/subscriptions/enrollment';
 import { ReasonForm } from '@/components/admin/ReasonForm';
 import {
@@ -53,9 +55,10 @@ export default async function AdminUserPage({
   const admin = await requireAdmin();
   const { id } = await params;
 
-  const [user, auditTrail] = await Promise.all([
+  const [user, auditTrail, recoveries] = await Promise.all([
     userDetail(id),
     listAdminActions({ subjectType: 'User', subjectId: id, limit: 30 }),
+    listRecoveries(id),
   ]);
   if (!user) notFound();
 
@@ -177,6 +180,89 @@ export default async function AdminUserPage({
               balance directly.
             </ReasonForm>
           </div>
+        </Panel>
+      </div>
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        <Panel
+          title="Move this account to a new number"
+          description={`The fallback for somebody who never added a recovery email. Same safeguards as self-service: sessions revoked, credits frozen ${RECOVERY_CREDIT_FREEZE_DAYS} days, previous number texted.`}
+        >
+          <div className="px-4 py-3">
+            {user.id === admin.id ? (
+              <p className="text-xs text-ink-muted">
+                This is your own account. Moving your own number here would
+                revoke your own session mid-request and freeze your own credits,
+                so the action refuses — use your profile.
+              </p>
+            ) : (
+              <ReasonForm
+                action={moveAccountPhoneAction}
+                hidden={{ userId: user.id }}
+                submitLabel="Move the number"
+                tone="danger"
+                placeholder="What you checked — order number, address, last order total"
+                extraFields={
+                  <label className="block">
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
+                      New number
+                    </span>
+                    <input
+                      name="newPhone"
+                      inputMode="tel"
+                      required
+                      placeholder="0917 123 4567"
+                      aria-label="New phone number"
+                      className="mt-1 w-full rounded-lg border border-black/10 bg-surface px-2.5 py-1.5 text-xs"
+                    />
+                  </label>
+                }
+              >
+                The reason field is the verification. Write what you actually
+                checked — a recent order number, a saved address, the total on
+                their last order. &ldquo;Customer asked&rdquo; is the shape a
+                social-engineering success takes, and it stays in the log.
+              </ReasonForm>
+            )}
+          </div>
+        </Panel>
+
+        <Panel
+          title="Number history"
+          description="Append-only. Every move this account has ever had."
+        >
+          {recoveries.length === 0 ? (
+            <Empty>This account has never changed its number.</Empty>
+          ) : (
+            <ul className="divide-y divide-black/5">
+              {recoveries.map((recovery) => (
+                <li key={recovery.id} className="px-4 py-2 text-xs">
+                  <div className="flex flex-wrap items-baseline gap-2">
+                    <Pill tone={recovery.method === 'SUPPORT_ASSISTED' ? 'warn' : 'neutral'}>
+                      {humaniseEnum(recovery.method)}
+                    </Pill>
+                    <span className="text-ink-faint">{manilaTime(recovery.createdAt)}</span>
+                  </div>
+                  <p className="mt-1 font-mono text-[11px]">
+                    {recovery.previousPhone} → {recovery.newPhone}
+                  </p>
+                  <p className="mt-0.5 text-ink-muted">
+                    {recovery.viaEmail
+                      ? `Proved with ${recovery.viaEmail}`
+                      : `By ${recovery.assistedBy?.fullName ?? recovery.assistedBy?.phone ?? 'an administrator'}`}
+                    {recovery.reason ? ` — ${recovery.reason}` : ''}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-ink-faint">
+                    {recovery.alertSentAt
+                      ? `Previous number alerted ${manilaTime(recovery.alertSentAt)}`
+                      : recovery.alertError
+                        ? `Alert undeliverable: ${recovery.alertError}`
+                        : 'Alert to the previous number still queued'}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
         </Panel>
       </div>
 
