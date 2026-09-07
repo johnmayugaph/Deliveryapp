@@ -65,7 +65,23 @@ production build refuses to start a login rather than pretend to send a code.
 
 Order timeouts are swept by a job, not a background thread — put
 `npm run jobs:orders` on a cron every minute or two, or orders will sit waiting
-on a merchant forever. The same job prunes spent login codes and dead sessions.
+on a merchant forever. The same job creates dispatch offers, **delivers the
+notification outbox**, ends lapsed subscriptions, and prunes spent login codes
+and dead sessions.
+
+Nothing on a request path waits for an SMS gateway, so how quickly a store hears
+about a new order is bounded by how often this runs.
+
+### Notifications
+
+One inbox per account at `/notifications`, shared across all three apps, plus
+SMS for the messages where somebody is waiting on an action: a new order, a
+dispatch offer, a rider at the door, a cancellation. Progress updates are
+inbox-only — every informational text is a peso spent to be slightly annoying.
+
+In development the texts print to the `npm run dev` console like login codes do.
+Quiet hours are 22:00–06:00 Manila: informational texts wait for morning,
+operational ones do not.
 
 ### The merchant side
 
@@ -155,9 +171,10 @@ src/
     pricing/             delivery rates and subscription-aware checkout pricing
     fleet/               dispatch, offers, and the partner's own view
     subscriptions/       plans, enrollment, renewal, and the unbuilt charge seam
+    notifications/       the outbox: policy, templates, channels, delivery
     merchant/            store access and the order queue
     support/             unified tickets
-  tests/                 260 tests, database-free
+  tests/                 287 tests, database-free
 ```
 
 ## Money

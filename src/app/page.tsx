@@ -6,6 +6,7 @@ import { ServiceTileGrid } from '@/components/home/ServiceTileGrid';
 import { ActiveOrderStrip } from '@/components/home/ActiveOrderStrip';
 import { PromotionsRail } from '@/components/home/PromotionsRail';
 import { RecentStores } from '@/components/home/RecentStores';
+import { NotificationBell } from '@/components/notifications/NotificationBell';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,6 +37,7 @@ export default async function HomePage() {
         <LocationHeader
           addressLabel={data.currentAddressLabel}
           cityName={data.currentCityName}
+          bell={user ? <NotificationBell userId={user.id} /> : null}
         />
         <GlobalSearch activeServiceNames={activeServiceNames} />
       </div>

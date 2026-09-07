@@ -14,6 +14,9 @@ import {
   sweepDueSubscriptions,
   type RenewalOutcome,
 } from '@/lib/subscriptions/renewal';
+import { enqueueNotification } from '@/lib/notifications/enqueue';
+import { deliverPending, type DeliveryPassResult } from '@/lib/notifications/deliver';
+import { NotificationKind } from '@prisma/client';
 import {
   expireDispatchOffers,
   fanOutDispatchOffers,
@@ -163,7 +166,35 @@ export async function expireStaleOrders(
             tx,
           );
 
-          return refundOrderCredits({ orderId: order.id, reason: policy.reason }, tx);
+          const refunded = await refundOrderCredits(
+            { orderId: order.id, reason: policy.reason },
+            tx,
+          );
+
+          // The cancellation message says an order was cancelled; this one says
+          // where the money went. Two events, because they are two facts, and a
+          // customer whose credits came back should be able to see that on its
+          // own row.
+          if (refunded > 0) {
+            await enqueueNotification(
+              {
+                userId: order.customerId,
+                kind: NotificationKind.CREDITS_GRANTED,
+                relatedOrderId: order.id,
+                href: '/credits',
+                context: {
+                  creditsCentavos: refunded,
+                  creditsReason: `Refund para sa ${order.orderNumber}.`,
+                  orderNumber: order.orderNumber,
+                },
+                dedupeKey: `credits-refund:${order.id}`,
+                now,
+              },
+              tx,
+            );
+          }
+
+          return refunded;
         });
 
         results.push({
@@ -230,6 +261,22 @@ export async function completeOrder(input: {
         },
         tx,
       );
+
+      await enqueueNotification(
+        {
+          userId: order.customerId,
+          kind: NotificationKind.CREDITS_GRANTED,
+          relatedOrderId: order.id,
+          href: '/credits',
+          context: {
+            creditsCentavos: creditBackCentavos,
+            creditsReason: `Credits back sa order ${order.orderNumber}.`,
+            orderNumber: order.orderNumber,
+          },
+          dedupeKey: `credits-back:${order.id}`,
+        },
+        tx,
+      );
     }
 
     // A completed cash order has been paid by definition.
@@ -257,6 +304,7 @@ export async function runMaintenance(): Promise<{
   dispatched: FanOutResult[];
   expired: ExpiredOrderResult[];
   subscriptions: RenewalOutcome[];
+  notifications: DeliveryPassResult;
   prunedVerifications: number;
   prunedSessions: number;
 }> {
@@ -270,6 +318,10 @@ export async function runMaintenance(): Promise<{
   // grants nothing (the pricing engine checks `renewsAt`), so this is
   // record-keeping and can wait behind anything a customer is watching.
   const subscriptions = await sweepDueSubscriptions();
+  // Last, so that everything this pass enqueued goes out in the same run: a
+  // store hearing about an order one cron interval later than it was placed is
+  // the cost of having no worker, and there is no reason to make it two.
+  const notifications = await deliverPending();
   const prunedVerifications = await pruneVerifications();
   const prunedSessions = await pruneSessions();
 
@@ -278,6 +330,7 @@ export async function runMaintenance(): Promise<{
     dispatched,
     expired,
     subscriptions,
+    notifications,
     prunedVerifications,
     prunedSessions,
   };

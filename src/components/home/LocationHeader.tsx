@@ -9,15 +9,18 @@ import Link from 'next/link';
 export function LocationHeader({
   addressLabel,
   cityName,
+  bell,
 }: {
   addressLabel: string | null;
   cityName: string;
+  /** The unread badge, resolved by the page so this stays presentational. */
+  bell?: React.ReactNode;
 }) {
   return (
-    <header className="bg-surface px-4 pb-3 pt-5">
+    <header className="flex items-start gap-2 bg-surface px-4 pb-3 pt-5">
       <Link
         href="/addresses"
-        className="group flex w-full items-start gap-2 text-left"
+        className="group flex min-w-0 flex-1 items-start gap-2 text-left"
       >
         <span aria-hidden className="mt-0.5 text-base leading-none">
           📍
@@ -37,6 +40,7 @@ export function LocationHeader({
         </span>
         <span className="sr-only">Change delivery location</span>
       </Link>
+      {bell}
     </header>
   );
 }

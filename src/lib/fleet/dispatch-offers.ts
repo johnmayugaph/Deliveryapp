@@ -1,11 +1,14 @@
 import {
   DispatchOfferStatus,
+  NotificationKind,
   OrderStatus,
   type DispatchOffer,
   type Order,
   type Service,
 } from '@prisma/client';
 import { prisma, type PrismaTransactionClient } from '@/lib/prisma';
+import { enqueueNotification } from '@/lib/notifications/enqueue';
+import { getService } from '@/lib/services/registry';
 import { findDispatchCandidates } from '@/lib/fleet/dispatch';
 import {
   acceptanceRateForRanking,
@@ -106,6 +109,7 @@ export async function fanOutDispatchOffers(
       continue;
     }
 
+    const service = await getService(order.serviceType);
     const expiresAt = new Date(now.getTime() + OFFER_TTL_SECONDS * 1000);
     await prisma.dispatchOffer.createMany({
       data: fresh.map((candidate, index) => ({
@@ -120,6 +124,30 @@ export async function fanOutDispatchOffers(
       // worth aborting the whole sweep for.
       skipDuplicates: true,
     });
+
+    // Tell the partners. An offer lives 60 seconds, so this is the one message
+    // in the app where arriving late is the same as not arriving: it goes out
+    // as OPERATIONAL, which means SMS by default and no quiet hours.
+    for (const candidate of fresh) {
+      await enqueueNotification({
+        userId: candidate.partner.userId,
+        kind: NotificationKind.DISPATCH_OFFER,
+        relatedOrderId: order.id,
+        href: '/fleet',
+        context: {
+          serviceName: service.displayName,
+          orderNumber: order.orderNumber,
+          storeName: pickup.label ?? undefined,
+          earningsCentavos: partnerEarningsCentavos(order),
+          secondsToAnswer: OFFER_TTL_SECONDS,
+          distanceLabel: `${(candidate.distanceMeters / 1000).toFixed(1)} km`,
+        },
+        // One message per partner per round of offers on this order: a
+        // re-fan-out 20 seconds later is a new offer and worth saying so.
+        dedupeKey: `dispatch-offer:${order.id}:${candidate.partner.id}:${expiresAt.getTime()}`,
+        now,
+      });
+    }
 
     results.push({
       orderId: order.id,

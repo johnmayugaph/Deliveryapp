@@ -4,6 +4,7 @@ import { requireStoreAccess, STORE_ROLE_LABELS } from '@/lib/merchant/access';
 import { getAccessibleStores } from '@/lib/merchant/access';
 import { MerchantTabs } from '@/components/merchant/MerchantTabs';
 import { StoreOpenToggle } from '@/components/merchant/StoreOpenToggle';
+import { NotificationBell } from '@/components/notifications/NotificationBell';
 
 export const dynamic = 'force-dynamic';
 
@@ -53,7 +54,10 @@ export default async function MerchantStoreLayout({
               {STORE_ROLE_LABELS[access.role]} · {access.store.preparationMinutes} min prep
             </p>
           </div>
-          <StoreOpenToggle storeId={access.store.id} isOpen={access.store.isOpen} />
+          <div className="flex shrink-0 items-center gap-2">
+            <NotificationBell userId={access.user.id} />
+            <StoreOpenToggle storeId={access.store.id} isOpen={access.store.isOpen} />
+          </div>
         </div>
 
         <MerchantTabs storeId={access.store.id} />

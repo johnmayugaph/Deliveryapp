@@ -4,11 +4,12 @@
  *
  *     npm run jobs:orders
  *
- * Does five things, in order: closes dispatch offers nobody answered, offers
+ * Does six things, in order: closes dispatch offers nobody answered, offers
  * waiting orders to their best candidates, expires orders that have waited too
  * long in a state their lifecycle declares a timeout for (refunding any credits
- * they consumed), ends subscriptions whose term has run out, and prunes spent
- * login codes and dead sessions.
+ * they consumed), ends subscriptions whose term has run out, delivers whatever
+ * is waiting in the notification outbox, and prunes spent login codes and dead
+ * sessions.
  *
  * Dispatch has no background worker, so how quickly a partner sees an offer is
  * bounded by how often this runs. Every minute or two is right.
@@ -24,6 +25,7 @@ async function main() {
     dispatched,
     expired,
     subscriptions,
+    notifications,
     prunedVerifications,
     prunedSessions,
   } = await runMaintenance();
@@ -43,6 +45,21 @@ async function main() {
     console.log(
       `Subscription ${result.subscriptionId} (${result.origin}): ` +
         `${result.fromStatus} -> ${result.toStatus} — ${result.reason}`,
+    );
+  }
+
+  const { sent, failed, retrying, unconfigured } = notifications;
+  if (sent > 0 || failed > 0 || retrying > 0) {
+    console.log(
+      `Notifications: ${sent} sent` +
+        (retrying > 0 ? `, ${retrying} retrying` : '') +
+        (failed > 0 ? `, ${failed} gave up` : ''),
+    );
+  }
+  if (unconfigured.length > 0) {
+    console.log(
+      `Notifications waiting on an unconfigured channel: ${unconfigured.join(', ')}. ` +
+        'They stay queued rather than being thrown away.',
     );
   }
 

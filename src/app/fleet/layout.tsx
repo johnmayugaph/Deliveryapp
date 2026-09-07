@@ -4,6 +4,7 @@ import { getCurrentUser, displayNameFor } from '@/lib/auth/session';
 import { getFleetPartner, getActiveJob } from '@/lib/fleet/partner';
 import { FleetTabs } from '@/components/fleet/FleetTabs';
 import { AvailabilityToggle } from '@/components/fleet/AvailabilityToggle';
+import { NotificationBell } from '@/components/notifications/NotificationBell';
 import { prisma } from '@/lib/prisma';
 
 export const dynamic = 'force-dynamic';
@@ -58,12 +59,15 @@ export default async function FleetLayout({ children }: { children: React.ReactN
                 : ' · walang approved service'}
             </p>
           </div>
-          <AvailabilityToggle
-            isOnline={partner.isOnline}
-            canGoOnline={partner.enabledServices.length > 0 && !partner.isSuspended}
-            homeLatitude={partner.currentLatitude ?? homeCity?.centroidLat ?? null}
-            homeLongitude={partner.currentLongitude ?? homeCity?.centroidLng ?? null}
-          />
+          <div className="flex shrink-0 items-center gap-2">
+            <NotificationBell userId={user.id} />
+            <AvailabilityToggle
+              isOnline={partner.isOnline}
+              canGoOnline={partner.enabledServices.length > 0 && !partner.isSuspended}
+              homeLatitude={partner.currentLatitude ?? homeCity?.centroidLat ?? null}
+              homeLongitude={partner.currentLongitude ?? homeCity?.centroidLng ?? null}
+            />
+          </div>
         </div>
 
         <FleetTabs hasActiveJob={activeJob !== null} />

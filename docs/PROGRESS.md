@@ -46,6 +46,7 @@ brief's changes already folded in.
 | 8 | Fleet partner app | ✅ Done |
 | 9 | Subscription tier: enrollment, renewal, plan screen | ✅ Built, launch gated |
 | 10 | Second vertical | ⬜ Gated on demand |
+| 11 | Notifications: outbox, inbox, SMS | ✅ Done |
 
 ---
 
@@ -574,13 +575,86 @@ Steps 1 and 3 are the real work. The home screen, order history, search, help,
 credits, subscription benefits, dispatch and support need **no changes** — that
 is the return on this phase's design, and the thing to protect in review.
 
+## Phase 11 — Notifications ✅
+
+Taken ahead of Phase 10 on purpose: a second vertical is gated on demand data
+nobody has yet, while the biggest hole in the working product was that **a store
+or a partner who closed the tab learned nothing.** Every screen polled while it
+was open, and that was all.
+
+### What landed
+
+- **An outbox.** `Notification` (one event, one recipient, both forms of the copy
+  rendered and stored) and `NotificationDelivery` (one attempt per channel, with
+  its own status, attempts and error).
+- **`src/lib/notifications/`** — `policy.ts` (urgency, channel defaults, quiet
+  hours, retries), `order-events.ts` (the per-status map), `templates.ts`,
+  `enqueue.ts`, `channels.ts`, `deliver.ts`, `inbox.ts`.
+- **Two channels**: the in-app inbox, and SMS through the sender the login flow
+  already uses. Push is a third adapter behind the same interface.
+- **`/notifications`** — one inbox for one account across all three apps, with an
+  unread badge in the customer, merchant and fleet headers, and a row on the
+  profile.
+- **A delivery pass in the cron**, last in the run so everything that run
+  enqueued goes out in it.
+- **Four SQL guards**: a SENT row must say when, a FAILED row must say why,
+  attempts never go negative, and the inbox can never be a preference row.
+
+### Restraint was the hard part
+
+SMS costs money per message, so the policy is as much about what we do *not*
+send. `urgency` exists for exactly this: SMS defaults **on** for OPERATIONAL and
+**off** for INFORMATIONAL. Four kinds text by default — a new order, a dispatch
+offer, a rider outside the door, and a cancellation. The customer's other five
+progress messages are inbox-only, which the browser run shows: six rows in the
+inbox, one marked *na-text*.
+
+Quiet hours (22:00–06:00 Manila) **defer** an informational text to 06:00 rather
+than dropping it, and operational ones ignore them — a store that finds out at
+6am about an order placed at 1am has already lost it.
+
+### The constraint that shaped the code
+
+Enqueueing happens inside the transaction that caused it, so an order that moved
+and a message saying so either both happen or neither does. That means a failed
+insert would abort the caller's transaction at the database level, and catching
+it in TypeScript would not put it back. So the insert uses `skipDuplicates`
+(`ON CONFLICT DO NOTHING`) on the dedupe key instead of catching a unique
+violation — a duplicate is the ordinary case and must never cost a delivered
+order. A test asserts the file handles no `P2002`.
+
+### Verification
+
+- `npm run verify` — **287 tests** (up from 260): 27 on the notification policy,
+  the status map, the templates and the transaction-safety rule.
+- **30 end-to-end checks** against live PostgreSQL, re-runnable: both store
+  members notified and neither the customer nor a repeat transition writing a
+  second row, an informational kind getting the inbox only, the delivery pass
+  being idempotent, an opted-out channel recorded as SKIPPED while a colleague
+  still gets the text, a 2am informational text deferred to 6am while its inbox
+  copy is immediate, and all four SQL guards refusing a dishonest row.
+- **A browser run** of the whole loop: a customer places an order, the cron texts
+  both store members, the store sees a badge it did not ask for, opening the
+  notification marks it read and lands on the queue, a partner is texted
+  *"May bagong job sa Deliveryapp — ₱89.00, 60s para sagutin"*, and the customer
+  ends with six inbox rows of which exactly one was texted.
+- **One copy bug the real send caught**: `"Deliveryapp— ₱89.00"`, a missing space
+  from a joined string. Now a test that fails against it.
+
+---
+
 ---
 
 ## Known gaps
 
-- **No notifications anywhere.** Every screen polls while it is open. A merchant
-  or partner who closes the tab learns nothing about a new order or offer, which
-  is the single biggest gap left in the working product.
+- **No push.** The inbox and SMS reach people; a free channel that reaches a
+  closed tab does not exist yet. It is one adapter behind
+  `NotificationChannelAdapter` — a subscription table, VAPID keys, the same
+  `deliver()` — and it should be the next thing built, because every SMS it
+  replaces is money.
+- **Notification latency is the cron interval.** Nothing on a request path waits
+  for a gateway, which is right, but it means a store hears about an order up to
+  one cron tick late.
 - **Dispatch has no worker.** Offers are created by cron, so how fast a partner
   sees a job depends on how often it runs.
 - **No admin console.** Fleet approval, plan activation and subscription grants
@@ -595,7 +669,8 @@ is the return on this phase's design, and the thing to protect in review.
   change a role — `StoreMember` rows are written by the seed or by hand.
 - **The Semaphore SMS adapter is unverified against the live API.** Written from
   its documented request shape and exercised only against a stub; this codebase
-  has no gateway account. Send one real message before trusting it.
+  has no gateway account. Now that notifications ride on it too, one real send
+  proves out both the login codes and the whole outbox.
 - **No account recovery.** Losing the phone number means losing the account —
   there is no email fallback and no support-assisted transfer.
 - **No CAPTCHA.** The three throttles are the only abuse defence on code

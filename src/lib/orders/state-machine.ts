@@ -1,5 +1,6 @@
 import { OrderActor, OrderStatus, Prisma, type Order, type ServiceKey } from '@prisma/client';
 import { prisma, type PrismaTransactionClient } from '@/lib/prisma';
+import { notifyOrderStatus } from '@/lib/notifications/enqueue';
 import {
   getLifecycle,
   STATUSES_REQUIRING_REASON,
@@ -208,6 +209,21 @@ export async function transitionOrder(
         metadata: request.metadata ?? undefined,
       },
     });
+
+    // Notifying is part of the transaction that caused it: an order that moved
+    // and a message saying so either both happen or neither does. Notifying
+    // after the commit would drop the message whenever the process died in
+    // between, and those are precisely the moments somebody is waiting.
+    //
+    // The map in `order-events.ts` decides whether this status is worth telling
+    // anybody about; most are not.
+    await notifyOrderStatus(
+      {
+        order: { ...updated, status: request.to },
+        reason: request.reason ?? null,
+      },
+      tx,
+    );
 
     return updated;
   };

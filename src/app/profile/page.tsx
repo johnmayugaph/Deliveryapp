@@ -12,6 +12,7 @@ import { formatPhilippineMobile } from '@/lib/auth/phone';
 import { getAccessibleStores } from '@/lib/merchant/access';
 import { getLaunchedPlan } from '@/lib/subscriptions/plans';
 import { liveSubscription } from '@/lib/subscriptions/enrollment';
+import { countUnread } from '@/lib/notifications/inbox';
 import { SignOutButton } from '@/components/auth/SignOutButton';
 import { ActiveSessions } from '@/components/auth/ActiveSessions';
 
@@ -40,7 +41,7 @@ export default async function ProfilePage() {
     redirect('/login?next=%2Fprofile');
   }
 
-  const [addresses, fleetPartner, sessions, stores, plan, subscription] =
+  const [addresses, fleetPartner, sessions, stores, plan, subscription, unreadCount] =
     await Promise.all([
       listAddressBook({ userId: user.id, limit: 5 }),
       prisma.fleetPartner.findUnique({
@@ -51,6 +52,7 @@ export default async function ProfilePage() {
       getAccessibleStores(),
       getLaunchedPlan(),
       liveSubscription(user.id),
+      countUnread(user.id),
     ]);
 
   return (
@@ -141,6 +143,37 @@ export default async function ProfilePage() {
             ))}
           </ul>
         )}
+      </section>
+
+      <section aria-labelledby="inbox-heading" className="mt-5 px-4">
+        <h2
+          id="inbox-heading"
+          className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted"
+        >
+          Mga abiso
+        </h2>
+        <Link
+          href="/notifications"
+          className="mt-2 flex items-center justify-between gap-3 rounded-xl bg-surface px-4 py-3 shadow-sm ring-1 ring-black/5"
+        >
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold">Inbox at SMS</span>
+            <span className="mt-0.5 block text-[11px] text-ink-muted">
+              {unreadCount > 0
+                ? `${unreadCount} hindi pa nabasa`
+                : 'Lahat ng update sa isang lugar'}
+            </span>
+          </span>
+          {unreadCount > 0 ? (
+            <span className="shrink-0 rounded-full bg-rose-600 px-2 text-[11px] font-bold leading-5 text-white tabular-nums">
+              {unreadCount}
+            </span>
+          ) : (
+            <span aria-hidden className="text-xs text-ink-faint">
+              ›
+            </span>
+          )}
+        </Link>
       </section>
 
       {/* Only shown when there is something to show: no plan launched and no

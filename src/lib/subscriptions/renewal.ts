@@ -1,5 +1,10 @@
-import { SubscriptionOrigin, SubscriptionStatus } from '@prisma/client';
+import {
+  NotificationKind,
+  SubscriptionOrigin,
+  SubscriptionStatus,
+} from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { enqueueNotification } from '@/lib/notifications/enqueue';
 import { LIVE_SUBSCRIPTION_STATUSES } from '@/lib/subscriptions/enrollment';
 import { isPaidEnrollmentAvailable } from '@/lib/subscriptions/payment';
 
@@ -134,6 +139,20 @@ export async function sweepDueSubscriptions(
         endedAt: isTerminal ? subscription.renewsAt : null,
       },
     });
+
+    // Benefits stopped the moment the term lapsed, whether or not this sweep had
+    // run. Saying so is the point: a customer who finds out at checkout that
+    // free delivery is gone has been told by the worst possible messenger.
+    if (isTerminal) {
+      await enqueueNotification({
+        userId: subscription.userId,
+        kind: NotificationKind.SUBSCRIPTION_ENDED,
+        href: '/plus',
+        context: { planName: subscription.plan.name },
+        dedupeKey: `subscription-ended:${subscription.id}`,
+        now,
+      });
+    }
 
     outcomes.push({
       subscriptionId: subscription.id,

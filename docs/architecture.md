@@ -936,6 +936,109 @@ not exist is dropped rather than shown as an empty section.
 
 ---
 
+## Notifications — an outbox, not a fire-and-forget
+
+The gap this closes: every screen polled while it was open, so a store or a
+partner who closed the tab learned nothing. SMS is the only channel that reaches
+a closed tab today, and it costs money per message — which is why almost every
+decision in this section is about *restraint*.
+
+### The shape
+
+`Notification` is one thing that happened, addressed to one person: a row per
+recipient, because "who has read this" is a property of a person. Both forms of
+the copy — the screen version and the short form for a text — are rendered at
+enqueue time and stored, so an edited template cannot rewrite a message already
+queued, and support can see exactly what somebody was told.
+
+`NotificationDelivery` is one attempt through one channel. Separate, because
+delivery fails per channel: an SMS gateway timing out must not lose the inbox
+copy, and a retry needs somewhere to count attempts.
+
+### Enqueueing is part of the transaction that caused it
+
+`transitionOrder()` writes the status, the status event and the notifications in
+one transaction. Notifying after the commit would drop the message whenever the
+process died in between, and those are precisely the moments somebody is
+waiting.
+
+That imposes a constraint worth knowing about: **inside a caller's transaction,
+a failed statement aborts the whole transaction at the database level**, and
+catching the error in TypeScript does not put it back. So `enqueueNotification()`
+inserts with `skipDuplicates` — `ON CONFLICT DO NOTHING` — rather than catching a
+unique violation on `dedupeKey`. A duplicate is the ordinary case (a retried
+transition, a cron that ran twice, two tabs advancing the same order), and it must
+not cost a delivered order. A test asserts the file contains no `P2002` handling.
+
+### Which statuses notify
+
+`ORDER_STATUS_NOTIFICATIONS` is keyed by **every** `OrderStatus`, so a new status
+in the superset cannot be added without deciding whether it earns a message.
+Most do not, and each `null` says why in a word or two: `PREPARING` adds nothing
+to a customer who already knows the order was accepted; `AWAITING_RIDER_ASSIGNMENT`
+would invite a question nobody can answer.
+
+Audiences are a map from audience to kind, not a list, because the same event is
+not the same news to everybody:
+
+| Status | Customer hears | Store hears |
+| --- | --- | --- |
+| `PENDING_MERCHANT_ACCEPTANCE` | — | `ORDER_SUBMITTED` |
+| `CANCELLED_BY_CUSTOMER` | — (they did it) | `ORDER_CANCELLED` |
+| `CANCELLED_BY_SYSTEM` | `ORDER_CANCELLED` | `ORDER_LOST_TO_TIMEOUT` |
+
+No service branch appears anywhere in this layer. The vertical's display name
+arrives from the registry in the template context, which is why the same
+`ORDER_DELIVERED` copy reads correctly for Kainan and for Padala.
+
+### Restraint is the policy
+
+`KIND_POLICY` gives every kind an urgency and a channel list, and
+`CHANNEL_DEFAULTS` decides what a person who has never touched a setting gets:
+
+- **`IN_APP` is always on** and is not representable as a preference. The inbox
+  is the record of what we told somebody; switching it off would mean losing
+  history rather than being left alone. A CHECK constraint refuses the row.
+- **SMS defaults on for OPERATIONAL and off for INFORMATIONAL.** That split is
+  the entire reason `urgency` exists. A store that misses an order loses money
+  and a dispatch offer expires in 60 seconds; a customer does not need to pay
+  for a text saying the kitchen has started. Four kinds carry SMS by default:
+  `ORDER_SUBMITTED`, `DISPATCH_OFFER`, `ORDER_ARRIVED`, `ORDER_CANCELLED`.
+- **An opted-out channel becomes a SKIPPED row**, not a missing one, so the
+  record still shows what we chose not to send.
+
+**Quiet hours** are 22:00–06:00 Manila (a fixed offset; the Philippines has no
+daylight saving). An informational text is *deferred* to 06:00 rather than
+dropped — a customer whose order was cancelled overnight still needs to know —
+and lands exactly on the hour so a night of deferrals does not fan out across
+one minute. Operational messages ignore quiet hours entirely.
+
+### Delivery
+
+`deliverPending()` runs from `npm run jobs:orders`, last in the pass, so
+everything the same run enqueued goes out in it. Three attempts with 1/5/25
+minute backoff, then a FAILED row with the gateway's own words in it — a CHECK
+constraint requires the reason, because a silent failure is a bug report nobody
+can file.
+
+A channel with **no adapter configured** leaves its deliveries PENDING rather
+than failing them: the moment a gateway is configured the backlog goes out, and
+marking them failed would throw messages away for a reason that has nothing to
+do with the messages. The cron says so out loud when it happens.
+
+How fast a store hears about an order is bounded by how often the cron runs.
+That is the same limitation dispatch has, for the same reason: no worker.
+
+### Push is the next adapter, not the next rewrite
+
+`NotificationChannelAdapter` is one interface with two implementations. Web push
+lands as a third — a subscription table, VAPID keys from the environment, the
+same `deliver()` signature — and nothing above that layer changes. That is the
+test of whether this design was worth building: the channel that reaches a
+closed tab *for free* should be a file, not a phase.
+
+---
+
 ## Verification
 
 Database-free, in CI (`npm run verify`) — **62 tests**:

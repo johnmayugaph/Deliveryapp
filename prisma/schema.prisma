@@ -377,6 +377,8 @@ model User {
   storeMemberships   StoreMember[]
   fleetDecisions     FleetPartnerServiceVerification[] @relation("FleetVerificationDecider")
   grantedSubscriptions UserSubscription[]              @relation("SubscriptionGrants")
+  notifications        Notification[]
+  notificationPreferences NotificationPreference[]
 
   @@index([roles], type: Gin)
   @@index([preferredCityId])
@@ -722,6 +724,7 @@ model Order {
   walletTransactions WalletTransaction[]
   supportTickets     SupportTicket[]
   appliedBenefits    OrderAppliedBenefit[]
+  notifications      Notification[]
 
   /// Powers the unified cross-service order history: one chronological list,
   /// every vertical, no per-service queries.
@@ -1266,4 +1269,161 @@ model Promotion {
 
   @@index([isActive, sortOrder])
   @@index([serviceKeys], type: Gin)
+}
+
+// -----------------------------------------------------------------------------
+// 9. Notifications — an outbox, not a fire-and-forget
+// -----------------------------------------------------------------------------
+
+/// What happened. One value per moment worth telling somebody about, NOT one
+/// per order status: most statuses are internal, and the map in
+/// `src/lib/notifications/order-events.ts` decides which of them earn a message.
+enum NotificationKind {
+  /// To the store: an order is waiting for a decision.
+  ORDER_SUBMITTED
+  /// To the customer: the store took it.
+  ORDER_ACCEPTED
+  /// To the customer: it is ready and looking for a rider.
+  ORDER_READY
+  /// To the customer: a partner is on it.
+  ORDER_RIDER_ASSIGNED
+  /// To the customer: collected from the store.
+  ORDER_PICKED_UP
+  /// To the customer: the rider is outside.
+  ORDER_ARRIVED
+  /// To the customer: delivered.
+  ORDER_DELIVERED
+  /// To the customer, and to the store when the store was not the one who did it.
+  ORDER_CANCELLED
+  /// To the store: nobody answered in time and the order was lost.
+  ORDER_LOST_TO_TIMEOUT
+  /// To a fleet partner: a job is on offer, and the clock is running.
+  DISPATCH_OFFER
+  /// To the customer: credits arrived — credit-back, a refund, a promo.
+  CREDITS_GRANTED
+  /// To the subscriber: the term ended.
+  SUBSCRIPTION_ENDED
+}
+
+/// How a message reaches someone.
+///
+/// IN_APP is the inbox and is always written — it is the record, and the only
+/// channel that cannot fail for a reason outside our control. SMS is the only
+/// channel that reaches a closed tab today. Push is the obvious third and lands
+/// as another adapter behind the same interface.
+enum NotificationChannel {
+  IN_APP
+  SMS
+}
+
+/// Whether a message is worth interrupting someone for.
+///
+/// OPERATIONAL means somebody is waiting on an action: a store has an order to
+/// accept, a partner has 60 seconds to answer. These ignore quiet hours.
+/// INFORMATIONAL is news about something already in motion.
+enum NotificationUrgency {
+  OPERATIONAL
+  INFORMATIONAL
+}
+
+enum NotificationDeliveryStatus {
+  PENDING
+  SENT
+  /// Attempted and given up on, with the reason kept.
+  FAILED
+  /// Not attempted, on purpose: the recipient turned this channel off.
+  SKIPPED
+}
+
+/// One thing that happened, addressed to one person.
+///
+/// A row per recipient rather than per event: "who has read this" is a property
+/// of a person, and a shared row would need a join table to answer it.
+model Notification {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  kind    NotificationKind
+  urgency NotificationUrgency
+
+  /// Rendered at enqueue time, from the template map. Stored rather than
+  /// re-rendered on read: what someone was told should not change because the
+  /// copy was later edited, and the SMS body is already gone by then anyway.
+  title String
+  body  String
+
+  /// The short form, for channels with no screen around them. Stored beside the
+  /// long form because a text has to carry its own context — which order, which
+  /// deadline — and because re-rendering at send time would let an edited
+  /// template rewrite a message already queued.
+  smsBody String
+
+  /// Where tapping it goes — an in-app path, never an absolute URL.
+  href String?
+
+  relatedOrderId String?
+  relatedOrder   Order?  @relation(fields: [relatedOrderId], references: [id], onDelete: SetNull)
+
+  /// Makes enqueueing idempotent. A retried transition, a cron that runs twice,
+  /// two tabs both advancing the same order — all collapse onto one row.
+  dedupeKey String @unique
+
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  deliveries NotificationDelivery[]
+
+  @@index([userId, readAt, createdAt])
+  @@index([relatedOrderId])
+}
+
+/// One attempt to put a notification through one channel.
+///
+/// Separate from `Notification` because delivery is per-channel and fails
+/// per-channel: an SMS gateway timing out must not lose the inbox copy, and a
+/// retry needs somewhere to count attempts.
+model NotificationDelivery {
+  id             String       @id @default(cuid())
+  notificationId String
+  notification   Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  channel NotificationChannel
+  status  NotificationDeliveryStatus @default(PENDING)
+
+  attempts Int @default(0)
+  /// When the next attempt becomes due. Backoff writes this forward.
+  nextAttemptAt DateTime @default(now())
+  sentAt        DateTime?
+  /// Kept on failure. A gateway's own words are usually the fastest diagnosis.
+  lastError     String?
+  /// Which sender handled it, and its reference, for support.
+  provider          String?
+  providerMessageId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// One delivery per channel per notification.
+  @@unique([notificationId, channel])
+  @@index([status, nextAttemptAt])
+}
+
+/// A person's channel switches.
+///
+/// Absent means "the default for that channel", which lives in code — so a new
+/// channel does not need a backfill to start behaving sensibly. IN_APP is not
+/// representable here on purpose: the inbox is the record, and turning it off
+/// would mean losing history rather than being left alone.
+model NotificationPreference {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  channel NotificationChannel
+  enabled Boolean
+
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, channel])
 }
