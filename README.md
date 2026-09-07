@@ -26,14 +26,21 @@ before any of them costs engineering time.
 | In prose | TARA |
 | Blue | `#077aff` (`brand-500`) |
 | Buttons | `brand-700` `#0a56c4` — white on `brand-500` is 4.0:1, which misses AA for body text |
-| Typeface | [Outfit](https://fonts.google.com/specimen/Outfit), 300–800, via `next/font` |
+| Typeface | [Urbanist](https://fonts.google.com/specimen/Urbanist), 300–800, via `next/font` |
 
-The typeface is a geometric grotesque with a single-storey `a`, chosen to match
-the brand artwork. The artwork itself looks like Gilroy or Sofia Pro, both
-commercial; Outfit is the closest thing that can be served from our own origin
-without a licence. If the licensed file turns up, self-host it and change the
-`fontFamily.sans` stack in `tailwind.config.ts` — one line, and nothing else
-moves.
+Urbanist is the closest free match to the brand artwork on the three features
+that give the wordmark its character: a single-storey `a` built from a circle and
+a straight stem with **no tail**, a `t` whose stem **curves into a tail** at the
+baseline, and flat-cut terminals. The artwork's own face looks like Circular,
+Sofia Pro or Gilroy — all commercial, and none of them identifiable from a
+raster with certainty.
+
+**To make it exact:** get the font from the file the artwork was designed in (a
+Canva or Figma text layer names it), then buy a webfont licence, drop the
+`.woff2` in `src/app/fonts/` and point `fontFamily.sans` at it. Nothing else
+changes. For the wordmark specifically there is a better answer than a font at
+all: hand over the original vector and it ships as SVG paths, which is what most
+brands do with a logo.
 
 ## The three rules
 
