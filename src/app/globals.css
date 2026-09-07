@@ -10,6 +10,29 @@ body {
   @apply bg-surface-sunken text-ink antialiased;
 }
 
+/**
+ * Display type is tracked in, the way the brand artwork sets it. A geometric
+ * face with wide round shapes looks loose at default spacing, and the effect is
+ * strongest on the biggest text — so the correction scales with the heading
+ * rather than being one value everywhere.
+ */
+h1 {
+  letter-spacing: -0.03em;
+}
+
+h2 {
+  letter-spacing: -0.02em;
+}
+
+h3 {
+  letter-spacing: -0.01em;
+}
+
+/* Numbers should line up in columns wherever they are stacked. */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
 /* Bottom navigation is fixed; keep the last section clear of it. */
 .app-shell {
   padding-bottom: 5.5rem;

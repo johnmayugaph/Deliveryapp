@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/session';
 import { safeNextPath } from '@/lib/auth/login';
+import { Wordmark } from '@/components/brand/Wordmark';
 import { LoginFlow } from '@/components/auth/LoginFlow';
 
 export const dynamic = 'force-dynamic';
@@ -26,10 +27,8 @@ export default async function LoginPage({
   return (
     <main className="px-4 py-10">
       <header>
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-brand-700">
-          TARA
-        </p>
-        <h1 className="mt-1 text-2xl font-bold">Sign in</h1>
+        <Wordmark size="lg" />
+        <h1 className="mt-4 text-2xl font-bold tracking-[-0.02em]">Sign in</h1>
         <p className="mt-1 text-sm text-ink-muted">
           Just your number. No password.
         </p>

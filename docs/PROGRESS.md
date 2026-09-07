@@ -715,6 +715,36 @@ name is not one of them.
 
 ---
 
+## Typography and the brand blue ✅
+
+The app had no webfont at all — it rendered in whatever the browser defaults to,
+which on Android is Roboto and on iOS is San Francisco. The brand artwork uses a
+geometric grotesque with a single-storey `a`, so:
+
+- **Outfit**, weights 300–800, loaded through `next/font` and set as Tailwind's
+  `sans` stack. Served from our own origin: no third-party request on first
+  paint and no swap-in shift. Every existing `font-semibold` and `font-bold`
+  kept working, because the change is the family and not the weights.
+- **Display tracking** is applied once, to `h1`/`h2`/`h3` in `globals.css`,
+  scaling with the heading — a wide geometric face looks loose at default
+  spacing and the effect is worst on the biggest text.
+- **The brand blue is `#077aff`**, sampled from the artwork, and the ramp was
+  rebuilt around it.
+- **A `Wordmark` component**, lowercase as the artwork draws it, with the
+  tracking and weight in one place rather than re-typed per screen.
+
+One accessibility decision worth recording: **white on `#077aff` is 4.0:1**,
+which passes AA for large text and misses it for body. So the brand blue is
+`brand-500` and used for the wordmark and large type, while buttons and small
+white-on-blue labels use `brand-700` (`#0a56c4`). A brand colour is not worth an
+unreadable label.
+
+The artwork's own face looks like Gilroy or Sofia Pro — both commercial. Outfit
+is the nearest thing that can be self-hosted without a licence; swapping in the
+real file later is one line in `tailwind.config.ts`.
+
+---
+
 ---
 
 ## Known gaps

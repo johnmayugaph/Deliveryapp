@@ -18,6 +18,23 @@ before any of them costs engineering time.
 - **[docs/architecture.md](docs/architecture.md)** — how it is built and why.
 - **[docs/PROGRESS.md](docs/PROGRESS.md)** — what is done and what is next.
 
+## Brand
+
+| | |
+| --- | --- |
+| Wordmark | `tara`, lowercase, `font-bold`, tracking `-0.045em` — `src/components/brand/Wordmark.tsx` |
+| In prose | TARA |
+| Blue | `#077aff` (`brand-500`) |
+| Buttons | `brand-700` `#0a56c4` — white on `brand-500` is 4.0:1, which misses AA for body text |
+| Typeface | [Outfit](https://fonts.google.com/specimen/Outfit), 300–800, via `next/font` |
+
+The typeface is a geometric grotesque with a single-storey `a`, chosen to match
+the brand artwork. The artwork itself looks like Gilroy or Sofia Pro, both
+commercial; Outfit is the closest thing that can be served from our own origin
+without a licence. If the licensed file turns up, self-host it and change the
+`fontFamily.sans` stack in `tailwind.config.ts` — one line, and nothing else
+moves.
+
 ## The three rules
 
 1. **A vertical is data, not a branch.** There is no hardcoded list of services

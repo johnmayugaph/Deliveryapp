@@ -9,18 +9,39 @@ const config: Config = {
   content: ['./src/**/*.{ts,tsx}'],
   theme: {
     extend: {
+      fontFamily: {
+        // The variable is set on <html> by next/font; the fallbacks are the
+        // geometric-ish system faces, so a failed font load degrades to
+        // something with the same proportions rather than to Times.
+        sans: [
+          'var(--font-display)',
+          'ui-sans-serif',
+          'system-ui',
+          '-apple-system',
+          'Segoe UI',
+          'Roboto',
+          'Helvetica Neue',
+          'Arial',
+          'sans-serif',
+        ],
+      },
       colors: {
+        // Built around the brand blue, #077aff, which is 500 — the wordmark and
+        // large type use it as-is. Buttons and small white-on-blue text use 700
+        // instead: white on #077aff is 4.0:1, which passes AA for large text
+        // and misses it for body, and a brand colour is not worth an
+        // unreadable label.
         brand: {
-          50: '#eef7ff',
-          100: '#d9edff',
-          200: '#bce0ff',
-          300: '#8ecdff',
-          400: '#59b0ff',
-          500: '#3390fb',
-          600: '#1c71f0',
-          700: '#175add',
-          800: '#194ab3',
-          900: '#1a418d',
+          50: '#ecf4ff',
+          100: '#d7e9ff',
+          200: '#b3d5ff',
+          300: '#7fb8ff',
+          400: '#3f95ff',
+          500: '#077aff',
+          600: '#0668e6',
+          700: '#0a56c4',
+          800: '#0d479c',
+          900: '#0f3d7d',
         },
         ink: {
           DEFAULT: '#101828',
