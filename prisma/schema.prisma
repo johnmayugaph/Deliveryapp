@@ -402,6 +402,8 @@ model User {
   recoveries              AccountRecovery[]
   assistedRecoveries      AccountRecovery[]                 @relation("RecoveryAssistedBy")
   serviceInterest         ServiceInterest[]
+  errorReports            ErrorReport[]
+  resolvedErrorReports    ErrorReport[]                     @relation("ErrorResolver")
 
   @@index([roles], type: Gin)
   @@index([preferredCityId])
@@ -1383,6 +1385,10 @@ enum NotificationKind {
   /// where they are. The only message in the system that somebody asked for
   /// in advance.
   SERVICE_NOW_AVAILABLE
+  /// To an administrator: something is failing that was not failing before.
+  /// The only kind addressed to the people running the business rather than
+  /// to somebody using it.
+  ERROR_DETECTED
   /// To the account: something changed about who can get into it. The one kind
   /// that exists to be unwelcome — if the person did not do this, they need to
   /// know within seconds, not at their convenience.
@@ -1593,6 +1599,8 @@ enum AdminAction {
   /// Console access was granted to, or taken from, an account. Recorded even
   /// when it happened from a shell — see `scripts/grant-admin.ts`.
   ADMIN_ROLE_CHANGED
+  /// An error report was marked fixed, or reopened.
+  ERROR_REPORT_RESOLVED
 }
 
 /// One privileged action, and why.
@@ -1761,4 +1769,81 @@ model ServiceInterest {
   @@index([serviceKey, cityId])
   /// The launch sweep's query: rows still waiting to be told.
   @@index([notifiedAt, serviceKey])
+}
+
+// -----------------------------------------------------------------------------
+// 15. Error monitoring
+// -----------------------------------------------------------------------------
+
+/// Where an error came from. Not a severity — a location, because the first
+/// question about a 500 is which surface it broke.
+enum ErrorSource {
+  /// Rendering a page, or a route handler.
+  SERVER_REQUEST
+  /// A server action: a form post, a button.
+  SERVER_ACTION
+  /// The maintenance sweep. Nobody is watching a screen when these happen,
+  /// which is exactly why they need recording.
+  CRON
+  /// A React error boundary in the browser.
+  CLIENT
+  /// A background job or script with no request around it.
+  BACKGROUND
+}
+
+/// One DISTINCT error, however many times it happened.
+///
+/// Grouped by `fingerprint` rather than stored per occurrence, which is the
+/// decision that makes this table useful instead of enormous. A page failing
+/// four hundred times in an hour is one row saying "four hundred times, first
+/// at 14:02, still happening" — the shape somebody can act on — and a loop
+/// cannot fill the disk.
+///
+/// The alternative, a row per occurrence, buys a timeline nobody reads at the
+/// cost of an unbounded table on the day something breaks. Occurrence counts
+/// and first/last timestamps carry the part of that timeline that matters.
+///
+/// Messages and stacks are REDACTED before they arrive here: see
+/// `src/lib/monitoring/redact.ts`. An error log that captures the login code
+/// it failed to send would be worse than no error log.
+model ErrorReport {
+  id String @id @default(cuid())
+
+  /// Stable hash of kind, redacted message shape and top stack frame.
+  fingerprint String @unique
+
+  /// The constructor name: Error, TypeError, PrismaClientKnownRequestError.
+  kind    String
+  message String
+  stack   String?
+
+  source ErrorSource
+  /// Path or action name, when known. Never a query string — those carry
+  /// tokens, and a `next=` parameter is not worth grouping on.
+  route  String?
+
+  /// Next.js's own error digest, which is the only thing linking the opaque
+  /// message a customer saw to the stack we recorded.
+  digest String?
+
+  /// Whose request it was, when there was a session. Nullable and never
+  /// required: most errors happen to somebody we cannot name.
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  occurrences Int      @default(1)
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  /// Marked fixed by a person, through the console, with an audit entry.
+  resolvedAt       DateTime?
+  resolvedByUserId String?
+  resolvedBy       User?     @relation("ErrorResolver", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+
+  /// When the admins were told. Set by the cron, once, on first sight — so an
+  /// error storm is one notification per distinct fault, not per occurrence.
+  alertedAt DateTime?
+
+  @@index([resolvedAt, lastSeenAt])
+  @@index([alertedAt])
 }

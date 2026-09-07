@@ -15,9 +15,11 @@
  * bounded by how often this runs. Every minute or two is right.
  * Safe to run frequently: it is idempotent and bounded per policy.
  */
+import { ErrorSource } from '@prisma/client';
 import { runMaintenance } from '../src/lib/orders/maintenance';
 import { prisma } from '../src/lib/prisma';
 import { formatCentavos } from '../src/lib/money';
+import { reportError } from '../src/lib/monitoring/report';
 
 async function main() {
   const {
@@ -26,6 +28,7 @@ async function main() {
     expired,
     subscriptions,
     launchAnnouncements,
+    errorAlerts,
     notifications,
     recoveryAlerts,
     liftedFreezes,
@@ -49,6 +52,13 @@ async function main() {
     console.log(
       `Subscription ${result.subscriptionId} (${result.origin}): ` +
         `${result.fromStatus} -> ${result.toStatus} — ${result.reason}`,
+    );
+  }
+
+  if (errorAlerts.faults > 0) {
+    console.log(
+      `Errors: told ${errorAlerts.admins} administrator(s) about ` +
+        `${errorAlerts.faults} newly seen fault(s). See /admin/errors.`,
     );
   }
 
@@ -125,8 +135,18 @@ async function main() {
 }
 
 main()
-  .catch((error) => {
+  .catch(async (error) => {
+    // The sweep failing is the error nobody is present for: no screen, no
+    // customer, and — before this — no record beyond a line in a log file
+    // that a cron daemon may or may not have kept. It is also the error with
+    // the widest consequences, since a sweep that stops means orders stop
+    // moving. So it is recorded like any other, and then still exits non-zero
+    // so the scheduler notices.
     console.error(error);
+    await reportError(error, {
+      source: ErrorSource.CRON,
+      route: 'jobs:orders',
+    });
     process.exit(1);
   })
   .finally(async () => {

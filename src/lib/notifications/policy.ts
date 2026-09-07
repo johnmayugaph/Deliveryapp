@@ -137,6 +137,24 @@ export const KIND_POLICY: Readonly<Record<NotificationKind, KindPolicy>> = {
   },
 
   /**
+   * Something is failing that was not failing before.
+   *
+   * OPERATIONAL, which means it ignores quiet hours — the only non-order kind
+   * that does, and the justification is the same as for an order: somebody is
+   * waiting, they just do not know it yet. A checkout that has been broken
+   * since 2am is worth waking one administrator for.
+   *
+   * Push and inbox. NOT SMS, even though this is arguably the most urgent
+   * thing the system can say: an error loop that outruns the once-per-fault
+   * guard would be a peso a message, and the failure mode of a monitoring
+   * system that can spend money is a monitoring system somebody switches off.
+   */
+  [NotificationKind.ERROR_DETECTED]: {
+    urgency: NotificationUrgency.OPERATIONAL,
+    channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
+  },
+
+  /**
    * A vertical went live where somebody asked for it.
    *
    * Deliberately NOT on SMS, even though this is the one message the recipient

@@ -1102,3 +1102,62 @@ half-a-pair case confirmed not to lock anybody out. No real token has been
 checked against Cloudflare: this environment has no route to it.
 
 552 tests pass; build and lint clean.
+
+## Phase 17 — error monitoring
+
+The last code item on the "before customers" list. Before this, a page that
+started failing was discovered when a customer said so, and most customers do
+not say so — they leave.
+
+**Not Sentry**, and the reasoning is worth recording. Sentry is a good product;
+it is also a US processor receiving Philippine phone numbers, home addresses
+and order contents inside error payloads, before this business has a privacy
+policy or a named data protection officer. And it would do nothing at all until
+somebody sets a DSN — the same "configured later, unprotected today" shape as
+the SMS gateway. So the record lives in the same database as everything else,
+needs no configuration, and works on the first deploy, behind a seam narrow
+enough (`reportError(error, context)`) that forwarding to Sentry later is
+another file. What is given up is source-mapped client stacks, which is a real
+loss and the right trade at this stage.
+
+`ErrorReport` is grouped by fingerprint — kind, redacted message, first frame
+of our own code — with an occurrence counter. Four hundred failures in an hour
+is one row saying "four hundred times, still happening", and a loop cannot fill
+the disk.
+
+**Redaction is the part that matters.** Every message is cleaned before it is
+written: login codes, phone numbers, email addresses, API keys, session tokens,
+JWTs and connection strings. All of those are strings this codebase can really
+produce — a gateway rejection quotes the request body, which contains the login
+code. An error log that captured the code it failed to send would be the
+softest target in the database. It also makes grouping work, since two failures
+differing only by a phone number only become one fault after both become
+`[phone]`.
+
+Caught in five places: `onRequestError` for page renders, route handlers and
+server actions; a client boundary for components that throw in the browser; a
+root boundary for the layout itself; and the maintenance sweep. Next's `digest`
+is stored and shown at the bottom of the error screen, so "it says 986393595"
+starts a support conversation instead of a guess.
+
+**A bug worth writing down.** The first version hashed the fingerprint with
+`node:crypto`. `instrumentation.ts` is compiled for the edge runtime as well as
+for Node, so that failed the production build — and failed *silently* in
+development: the instrumentation module never compiled, the hook was never
+registered, and errors vanished with no sign that monitoring was off. That is
+the worst possible failure for this feature and it cost an hour of digging
+through Next's internals. The fingerprint is now four seeded FNV-1a lanes
+written out in the file, which is also the right tool: a grouping key is not a
+security primitive, and a collision merges two rare faults into one row.
+
+Administrators are told once per fault, on the cron, at most five faults per
+pass. Push and inbox, never SMS — a monitoring system that can run up a bill
+during an error loop is one somebody switches off.
+
+**Verified** against a production build by making a server component, a route
+handler, a server action and a client component each throw: all four landed
+with the right source, secrets redacted, three hits of one page grouped as
+`occurrences = 3`, and the client row carrying the same digest as the server
+row. The cron alerted once per fault and a second pass alerted nobody again.
+
+594 tests pass; build and lint clean.

@@ -208,6 +208,64 @@ export async function setServiceCityAction(
   });
 }
 
+// --- Errors ------------------------------------------------------------------
+
+/**
+ * Marks a fault fixed, or reopens one.
+ *
+ * "Fixed" is a claim by a person, not a fact the system can check — so it is
+ * recorded with who and why, like every other privileged change. The row is
+ * not deleted: a fault that comes back needs its history, and the next
+ * occurrence reopens it automatically anyway (see `reportError`).
+ */
+export async function resolveErrorReportAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const id = String(formData.get('errorId') ?? '');
+    const resolved = formData.get('resolved') !== 'false';
+    const reason = normaliseReason(formData.get('reason'));
+
+    const report = await prisma.errorReport.findUnique({
+      where: { id },
+      select: { id: true, kind: true, message: true, route: true, resolvedAt: true },
+    });
+    if (!report) return { ok: false, message: 'No such error report.' };
+
+    await prisma.$transaction(async (tx) => {
+      await tx.errorReport.update({
+        where: { id },
+        data: resolved
+          ? { resolvedAt: new Date(), resolvedByUserId: admin.id }
+          : { resolvedAt: null, resolvedByUserId: null },
+      });
+      await recordAdminAction(
+        {
+          actorId: admin.id,
+          action: AdminAction.ERROR_REPORT_RESOLVED,
+          subjectType: 'ErrorReport',
+          subjectId: id,
+          // The kind and route, not the message: an audit label is read in a
+          // list and a stack line would make that list unreadable.
+          subjectLabel: `${report.kind}${report.route ? ` at ${report.route}` : ''}`,
+          reason,
+          detail: { resolved, wasResolvedAt: report.resolvedAt },
+        },
+        tx,
+      );
+    });
+
+    revalidatePath('/admin/errors');
+    return {
+      ok: true,
+      message: resolved
+        ? 'Marked fixed. It will reopen by itself if it happens again.'
+        : 'Reopened.',
+    };
+  });
+}
+
 // --- People ------------------------------------------------------------------
 
 /**

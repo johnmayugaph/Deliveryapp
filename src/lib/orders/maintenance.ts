@@ -35,6 +35,13 @@ import {
   pendingLaunchAnnouncements,
 } from '@/lib/services/interest';
 import { getService } from '@/lib/services/registry';
+import {
+  administratorsToAlert,
+  markErrorAlerted,
+  unalertedErrorReports,
+} from '@/lib/monitoring/queries';
+import { reportError } from '@/lib/monitoring/report';
+import { ErrorSource } from '@prisma/client';
 import { resolveSmsSender } from '@/lib/auth/sms';
 
 /**
@@ -445,12 +452,73 @@ export async function announceLaunchedServices(): Promise<LaunchAnnouncementResu
   return { announced, failed };
 }
 
+export interface ErrorAlertResult {
+  faults: number;
+  admins: number;
+}
+
+/**
+ * Tells the administrators about faults nobody has seen yet.
+ *
+ * On the cron rather than at the moment of the error, for the same reason the
+ * launch announcements are: the request that just failed is not the place to
+ * start a fan-out, and a page that broke should not then hang while we notify
+ * four people about it. A minute's delay costs nothing here — the fault has
+ * already happened.
+ *
+ * One alert per distinct fault, ever, enforced by `alertedAt`. That is the
+ * property that makes this usable: an error loop with ten thousand
+ * occurrences is one notification, and an administrator who mutes this channel
+ * because it cried wolf is worse off than one with no monitoring at all.
+ */
+export async function alertOnNewErrors(): Promise<ErrorAlertResult> {
+  const faults = await unalertedErrorReports();
+  if (faults.length === 0) {
+    return { faults: 0, admins: 0 };
+  }
+
+  const admins = await administratorsToAlert();
+
+  for (const fault of faults) {
+    // Marked told even when there is nobody to tell. Otherwise the first
+    // administrator to be created would be greeted with every fault since the
+    // deployment began, which is not news — it is an inbox nobody reads.
+    try {
+      for (const admin of admins) {
+        await enqueueNotification({
+          userId: admin.id,
+          kind: NotificationKind.ERROR_DETECTED,
+          context: {
+            errorKind: fault.kind,
+            ...(fault.route === null ? {} : { errorRoute: fault.route }),
+          },
+          href: '/admin/errors',
+          dedupeKey: `error-alert:${fault.id}:${admin.id}`,
+        });
+      }
+      await markErrorAlerted(fault.id);
+    } catch (error) {
+      // A failure here must not stop the rest of the sweep, and must not
+      // silently vanish — so it goes through the reporter, which is the one
+      // place in this file that cannot recurse into itself: reportError
+      // swallows its own failures.
+      await reportError(error, {
+        source: ErrorSource.CRON,
+        route: 'alertOnNewErrors',
+      });
+    }
+  }
+
+  return { faults: faults.length, admins: admins.length };
+}
+
 export async function runMaintenance(): Promise<{
   expiredOffers: number;
   dispatched: FanOutResult[];
   expired: ExpiredOrderResult[];
   subscriptions: RenewalOutcome[];
   launchAnnouncements: LaunchAnnouncementResult;
+  errorAlerts: ErrorAlertResult;
   notifications: DeliveryPassResult;
   recoveryAlerts: RecoveryAlertResult;
   liftedFreezes: number;
@@ -471,6 +539,9 @@ export async function runMaintenance(): Promise<{
   // Before the delivery pass, so a launch announcement enqueued here goes out
   // in the same run rather than waiting a minute for the next one.
   const launchAnnouncements = await announceLaunchedServices();
+  // Also before the delivery pass, so a fault recorded a minute ago reaches
+  // somebody on this run rather than the next one.
+  const errorAlerts = await alertOnNewErrors();
   // Last, so that everything this pass enqueued goes out in the same run: a
   // store hearing about an order one cron interval later than it was placed is
   // the cost of having no worker, and there is no reason to make it two.
@@ -494,6 +565,7 @@ export async function runMaintenance(): Promise<{
     expired,
     subscriptions,
     launchAnnouncements,
+    errorAlerts,
     notifications,
     recoveryAlerts,
     liftedFreezes,

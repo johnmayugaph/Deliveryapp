@@ -1306,6 +1306,124 @@ anonymous tap is attributed to the default city. The per-city breakdown is only
 as good as the accounts column — which is the column the console already tells
 you to trust.
 
+## Error monitoring
+
+Before this, a page that started failing was discovered when a customer said
+so — and most customers do not say so, they leave. Nothing here makes anything
+more reliable; it makes failure *visible*, which is the prerequisite for
+everything else.
+
+### Not Sentry, and why
+
+Sentry is the obvious choice and a good product. What it also is, for this
+application, is a US processor receiving Philippine phone numbers, home
+addresses and order contents inside error payloads — before this business has
+a privacy policy or a named data protection officer, both of which are still
+open items on the launch list. It would also do nothing at all until somebody
+creates an account and sets a DSN, which is the same "configured later, so
+unprotected today" shape as the SMS gateway.
+
+So the record lives in the same database as everything else, needs no
+configuration, and works on the first deploy. It sits behind a narrow enough
+seam — `reportError(error, context)` — that forwarding to Sentry later is
+another file rather than a rewrite. What is given up is source-mapped client
+stacks and release tracking, which is a real loss and the right trade at this
+stage.
+
+### One row per fault, not per occurrence
+
+`ErrorReport` is grouped by a `fingerprint` — kind, plus the redacted message,
+plus the first stack frame belonging to our own code — with an `occurrences`
+counter and first/last timestamps. A page failing four hundred times in an hour
+is one row saying "four hundred times, still happening", which is a shape
+somebody can act on, and a loop cannot fill the disk. The route is deliberately
+NOT in the fingerprint: the same bug on four pages is one bug.
+
+Framework frames are skipped when picking the frame to group on, because an
+error thrown inside React's renderer has the same top frame whatever caused it.
+
+### Redaction, which is the part that matters
+
+Everything is redacted **before** it is written. These are all real messages
+this codebase can produce:
+
+| What arrives | What is stored |
+| --- | --- |
+| `HTTP 422: {"message":["481923 is your TARA code…"]}` | `…["[6-digit] is your TARA code…"]` |
+| `POST …/messages?apikey=abc123` | `…?apikey=[redacted]` |
+| `Unique constraint failed on +639171234567` | `…failed on [phone]` |
+| `Can't reach database at postgresql://tara:hunter2@…` | `…at postgresql://[redacted]` |
+
+An error log that captured the login code it failed to send would be the
+softest target in the database. Redaction earns its place twice over: it also
+makes grouping work, since `Invalid phone +639171234567` and `Invalid phone
++639189876543` only become one fault after both turn into `Invalid phone
+[phone]`.
+
+### Where errors are caught
+
+| Source | Caught by |
+| --- | --- |
+| Page render, route handler | `onRequestError` in `src/instrumentation.ts` |
+| Server action | the same hook, distinguished by `routeType` |
+| A component throwing in the browser | `src/app/error.tsx` → one narrow server action |
+| The root layout itself | `src/app/global-error.tsx` (reports nothing; the server hook already has it) |
+| The maintenance sweep | `runMaintenance`, and the script's own catch |
+
+Next's `digest` is stored, because it is the only thing linking the opaque
+message a customer saw to the stack we recorded — and it appears, small and
+selectable, at the bottom of the error screen, so "it says 986393595" is the
+start of a support conversation rather than a guess.
+
+The client report endpoint takes a message and a digest and **never a stack**:
+it is reachable by anybody who can post to the app, and an accepted stack would
+be unverifiable text written straight into the database. A flood of junk
+becomes one row with a high count, which is the same protection the table's
+shape gives everything else.
+
+### Nothing in `report.ts` may make things worse
+
+It never throws — every entry point wraps its own body, because a monitoring
+call that can fail turns one broken page into two, and the second happens
+inside the handler for the first. It never reports its own failure, which would
+be an infinite loop with a database connection attached.
+
+**No `node:crypto`.** The fingerprint uses four seeded FNV-1a lanes written out
+in the file. This is not a preference: `instrumentation.ts` is compiled for the
+edge runtime as well as for Node, so a `node:crypto` import fails the
+production build outright — and in development it fails *quietly*, because the
+instrumentation module never compiles, the hook is never registered, and errors
+vanish with no sign that monitoring is off. That happened during this work and
+cost an hour. A grouping key is not a security primitive; a collision merges
+two rare faults into one row, which is cosmetic next to silent blindness.
+
+### Being told
+
+`alertOnNewErrors()` runs on the order cron and notifies every unblocked
+administrator the **first** time a fingerprint appears — `alertedAt`, once,
+per fault. An error loop with ten thousand occurrences is one notification, and
+at most five faults are announced per pass: if twenty things broke at once an
+administrator needs to know something is badly wrong, not to receive twenty
+messages, which is indistinguishable from spam and gets muted.
+
+`ERROR_DETECTED` is OPERATIONAL, so it ignores quiet hours — a checkout broken
+since 2am is worth waking one person for — and carries push and inbox but
+**not SMS**: a monitoring system that can run up a bill during an error loop is
+one somebody switches off. Not SUPPORT_AGENT either: a support agent cannot
+deploy a fix, so a stack trace at 2am is noise with no action attached.
+
+### Verified
+
+594 tests, including every redaction rule against the string that motivated it.
+Then driven end to end against a production build: a server component, a route
+handler, a server action and a client component were each made to throw, and
+all four landed with the right `source`, the phone number and code and API key
+redacted, three hits of the same page grouped into one row with
+`occurrences = 3`, and the client row carrying the same `digest` as the server
+row so the opaque message a customer sees ties back to the real stack. The cron
+then alerted the administrator once per fault, and a second pass alerted nobody
+again. Marking one fixed from the console wrote its audit entry.
+
 ## The CAPTCHA on the login screen
 
 Three rate limits already guard the code request — three per number per fifteen

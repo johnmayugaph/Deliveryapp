@@ -38,6 +38,9 @@ export interface NotificationContext {
   maskedPhone?: string;
   /** For a launch: the city the person was standing in when they asked. */
   cityName?: string;
+  /** For an error alert: the kind, and where it happened. */
+  errorKind?: string;
+  errorRoute?: string;
 }
 
 export interface RenderedNotification {
@@ -182,6 +185,31 @@ export const NOTIFICATION_TEMPLATES: Readonly<Record<NotificationKind, Template>
     title: 'Your plan has ended',
     body: `Your ${context.planName ?? 'plan'} has ended, so no benefits apply at checkout for now.`,
     sms: `Your TARA ${context.planName ?? 'plan'} has ended.`,
+  }),
+
+  /**
+   * To an administrator: something is failing that was not failing before.
+   *
+   * The only notification in the system addressed to the people running the
+   * business rather than to somebody using it, and the only one whose job is
+   * to shorten the gap between a page breaking and anybody knowing. It carries
+   * the fault, not the fix: a title somebody can triage from a lock screen,
+   * and a link to the console for the stack.
+   *
+   * The message deliberately does NOT carry the error text. A stack in a push
+   * notification is unreadable, and it would put a redacted-but-still-detailed
+   * fault description on a lock screen in a jeepney.
+   */
+  [NotificationKind.ERROR_DETECTED]: (context) => ({
+    title: `Something is failing: ${context.errorKind ?? 'an error'}`,
+    body:
+      `A fault not seen before${
+        context.errorRoute ? ` at ${context.errorRoute}` : ''
+      } was recorded just now. Open the console for the details — it is grouped, so ` +
+      'you will see whether it is happening once or constantly.',
+    sms: `TARA: a new fault${
+      context.errorRoute ? ` at ${context.errorRoute}` : ''
+    } — check /admin/errors.`,
   }),
 
   /**
