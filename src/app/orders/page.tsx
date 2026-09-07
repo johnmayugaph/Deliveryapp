@@ -5,6 +5,7 @@ import { StatusPill } from '@/components/ui/StatusPill';
 import { serviceGlyph } from '@/lib/services/presentation';
 import { summariseDetails } from '@/lib/orders/details';
 import { formatCentavos } from '@/lib/money';
+import { unratedOrders } from '@/lib/ratings/reviews';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,6 +30,11 @@ export default async function OrdersPage() {
       })
     : [];
 
+  // Asked for once, here, rather than per row: the prompt is about the most
+  // recent unrated delivery, and a badge on every historic order would be
+  // nagging rather than a nudge. It empties itself when the window closes.
+  const unrated = user ? await unratedOrders(user.id) : [];
+
   return (
     <main>
       <header className="bg-surface px-4 pb-4 pt-5">
@@ -37,6 +43,29 @@ export default async function OrdersPage() {
           Every order you have made — food, parcels, rides — in one list.
         </p>
       </header>
+
+      {unrated.length > 0 ? (
+        <section aria-labelledby="rate-heading" className="mx-4 mt-4">
+          <Link
+            href={`/orders/${unrated[0]!.id}`}
+            className="flex items-center justify-between gap-3 rounded-xl bg-brand-50 px-4 py-3"
+          >
+            <span>
+              <span id="rate-heading" className="block text-sm font-semibold">
+                How was {unrated[0]!.orderNumber}?
+              </span>
+              <span className="block text-[11px] text-ink-muted">
+                {unrated.length === 1
+                  ? 'Rate it and help the next person choose.'
+                  : `${unrated.length} orders waiting for a rating.`}
+              </span>
+            </span>
+            <span aria-hidden className="text-lg leading-none text-amber-500">
+              ★★★★★
+            </span>
+          </Link>
+        </section>
+      ) : null}
 
       {orders.length === 0 ? (
         <p className="px-4 py-8 text-sm text-ink-muted">

@@ -372,6 +372,19 @@ async function seedDeliveryFeeRules() {
   console.log(`  delivery fee rules: ${rules.length}`);
 }
 
+/**
+ * NOTE ON RATINGS. These shops deliberately have NO rating.
+ *
+ * They used to be seeded with invented averages — "4.7 from 412 reviews" —
+ * which was harmless while nothing wrote ratings and is not any more:
+ * `Store.ratingAvg` is now DERIVED from `OrderReview`, so a seeded aggregate is
+ * a number no review supports. `npm run db:ratings-recompute` zeroes it and
+ * reports it as drift, which is exactly right.
+ *
+ * So the demo storefront shows "New", which is true. To see a real rating
+ * appear: place an order, walk it to COMPLETED, and rate it from the order
+ * screen.
+ */
 async function seedStores() {
   const stores = [
     {
@@ -383,8 +396,6 @@ async function seedStores() {
       latitude: 14.6152,
       longitude: 120.9899,
       preparationMinutes: 15,
-      ratingAvg: 4.7,
-      ratingCount: 412,
       serviceKeys: [ServiceKey.FOOD],
       menu: [
         { name: 'Adobong Manok with Rice', category: 'Rice meals', priceCentavos: 12500 },
@@ -402,8 +413,6 @@ async function seedStores() {
       latitude: 14.6455,
       longitude: 121.0562,
       preparationMinutes: 25,
-      ratingAvg: 4.5,
-      ratingCount: 268,
       serviceKeys: [ServiceKey.FOOD],
       menu: [
         { name: 'Pork BBQ (3 sticks)', category: 'Grilled', priceCentavos: 15000 },
@@ -421,8 +430,6 @@ async function seedStores() {
       latitude: 14.5541,
       longitude: 121.0084,
       preparationMinutes: 10,
-      ratingAvg: 4.8,
-      ratingCount: 903,
       // Already flagged for MART as well: when MART activates, this store is
       // orderable there without a data migration.
       serviceKeys: [ServiceKey.FOOD, ServiceKey.MART],
@@ -757,8 +764,6 @@ async function seedUsers() {
       equipment: ['insulated_bag'],
       homeCityId: 'city_quezon',
       isOnline: false,
-      ratingAvg: 4.9,
-      ratingCount: 156,
       completedOrderCount: 162,
       acceptanceRate: 0.94,
       currentLatitude: 14.6455,
@@ -854,6 +859,9 @@ async function main() {
   console.log('    npm run db:purge-demo            # see what would go');
   console.log('    npm run db:purge-demo -- --confirm');
   console.log('    npm run admin:grant -- 09XXXXXXXXX --reason "..."');
+  console.log('');
+  console.log('  Shops start with no rating, because ratings are derived from');
+  console.log('  real reviews now. Complete an order and rate it to see one.');
   console.log('');
 }
 

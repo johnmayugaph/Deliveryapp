@@ -28,6 +28,7 @@
     "push:keys": "tsx --env-file-if-exists=.env scripts/generate-vapid-keys.ts",
     "db:purge-user": "tsx --env-file-if-exists=.env scripts/purge-user.ts",
     "db:purge-demo": "tsx --env-file-if-exists=.env scripts/purge-demo.ts",
+    "db:ratings-recompute": "tsx --env-file-if-exists=.env scripts/recompute-ratings.ts",
     "admin:grant": "tsx --env-file-if-exists=.env scripts/grant-admin.ts",
     "db:backup": "tsx --env-file-if-exists=.env scripts/backup-db.ts",
     "db:restore-check": "tsx --env-file-if-exists=.env scripts/restore-check.ts"

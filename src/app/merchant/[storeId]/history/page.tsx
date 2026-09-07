@@ -1,4 +1,6 @@
 import { requireStoreAccess } from '@/lib/merchant/access';
+import { storeReviews } from '@/lib/ratings/reviews';
+import { ReviewPanel } from '@/components/ui/ReviewPanel';
 import { loadMerchantHistory } from '@/lib/merchant/queue';
 import { summariseDetails } from '@/lib/orders/details';
 import { statusPresentation } from '@/lib/orders/status-presentation';
@@ -21,11 +23,25 @@ export default async function MerchantHistoryPage({
 }) {
   const { storeId } = await params;
   const access = await requireStoreAccess(storeId);
-  const history = await loadMerchantHistory(access.store.id);
+  const [history, reviews] = await Promise.all([
+    loadMerchantHistory(access.store.id),
+    storeReviews(access.store.id),
+  ]);
+
+  const ratings = (
+    <div className="px-4 pt-4">
+      <ReviewPanel
+        summary={reviews}
+        heading="What customers said"
+        emptyNote="No ratings yet. Customers can rate an order for two weeks after it is delivered."
+      />
+    </div>
+  );
 
   if (history.length === 0) {
     return (
       <main>
+        {ratings}
         <p className="px-4 py-10 text-center text-sm text-ink-muted">
           No finished orders yet.
         </p>
@@ -35,6 +51,8 @@ export default async function MerchantHistoryPage({
 
   return (
     <main className="pb-8">
+      {ratings}
+      <h2 className="px-4 pb-1 pt-5 text-[13px] font-semibold">Finished orders</h2>
       <ul className="divide-y divide-black/5">
         {history.map(({ order, service }) => {
           const { label, tone } = statusPresentation(order.status);

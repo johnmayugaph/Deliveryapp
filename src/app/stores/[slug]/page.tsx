@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { getAllServices } from '@/lib/services/registry';
 import { formatCentavos } from '@/lib/money';
 import { AddToCartControls } from '@/components/cart/AddToCartControls';
+import { RatingBadge } from '@/components/ui/RatingBadge';
 
 export const dynamic = 'force-dynamic';
 
@@ -66,8 +67,12 @@ export default async function StorePage({
         </Link>
         <h1 className="mt-2 text-xl font-bold">{store.name}</h1>
         <p className="mt-0.5 text-xs text-ink-muted">
-          ★ {store.ratingAvg.toFixed(1)} ({store.ratingCount}) ·{' '}
-          {store.preparationMinutes} min prep · {store.city.name}
+          <RatingBadge
+            ratingAvg={store.ratingAvg}
+            ratingCount={store.ratingCount}
+            withCount
+          />{' '}
+          · {store.preparationMinutes} min prep · {store.city.name}
         </p>
         {store.description ? (
           <p className="mt-2 text-xs text-ink-muted">{store.description}</p>

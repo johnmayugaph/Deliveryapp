@@ -1363,6 +1363,123 @@ is.
 
 ---
 
+## Ratings — derived, private, and slow to make a claim
+
+`Store.ratingAvg` and `FleetPartner.ratingAvg` were read in six places from the
+first commit — the storefront, the service listing, search, the home rail, the
+fleet profile, and **dispatch ranking** — and written by nothing except the
+seed. Every one of those was showing or scoring a zero.
+
+### One review per order, two scores
+
+`OrderReview` is keyed `@@unique` on the order, not one row per subject. An
+order is a single experience somebody had and they rate it once; the food and
+the delivery are two scores on that one event rather than two events. Rating
+the same order twice is unrepresentable rather than merely discouraged.
+
+Both scores are optional, and which ones apply is **registry-driven**: a
+vertical whose `requiresMerchant` is false offers no shop to rate, and an order
+nobody was dispatched to offers no rider. Nothing in the flow knows which
+services exist. Somebody who thought the food was fine and the rider was late
+can say exactly that and nothing else.
+
+`storeId` is **snapshotted onto the review**, not read through the order. The
+store lives in the order's `details` JSON and an aggregate query cannot join
+through that — the same reason addresses are snapshotted onto orders.
+
+### The reviews are the truth and the aggregate is derived
+
+The same rule the credits ledger follows, and here for a sharper reason:
+`FleetPartner.ratingAvg` is what dispatch scores on, so an aggregate that has
+drifted does not fail — it quietly offers work to the wrong people and nobody
+can reconcile it afterwards.
+
+So the aggregate is **never incremented**. It is recomputed from the rows,
+inside the same transaction as the review that changed them, and both subjects
+are recomputed every time: an edit that moved a score from the shop to the
+rider changes two aggregates, and recomputing only the one just set leaves the
+other carrying a score it no longer has.
+
+The average is computed in TypeScript rather than with SQL `AVG`, deliberately.
+It means there is exactly one definition of what the average is —
+`averageStars` — covered directly by tests, rather than a rounding rule in SQL
+that happens to agree with it. Two decimals, because the screens round to one
+and rounding 4.65 to 4.7 in the column that decides who is offered work first
+is a change of substance. The cost is a column of small integers per recompute,
+which is the thing to revisit if a shop ever has tens of thousands of reviews.
+
+`npm run db:ratings-recompute` rebuilds everything and **reports what it
+changed**. On a correct database it changes nothing; anything it changes is a
+bug in the write path. Running it the first time immediately found one: the
+seed was writing "4.7 from 412 reviews" for the demo shops, which was harmless
+while nothing wrote ratings and is a number no review supports now. The seed no
+longer invents them, so a demo shop shows "New" — which is true.
+
+### Two privacy rules, enforced by what the functions return
+
+Not by remembering to redact at the call site:
+
+- **`storeReviews` and `partnerReviews` cannot return the author.** A rider who
+  can see who gave them one star also knows that person's address, and a shop
+  that can see who complained can decide how to treat them next time. They get
+  the **order number** instead, which identifies the transaction being
+  described without identifying the person and which they can look up in their
+  own history.
+- **A comment never appears on a public page.** A free-text review on a shop
+  page is a moderation burden and a defamation risk; the same sentence is worth
+  a great deal to the operator and the merchant, who are the ones who can act
+  on it. So the storefront shows stars only.
+
+`adminReviewFeed` is the one place an identity and a comment appear together,
+and the console panel says so on the page. The rating form tells the customer
+both rules right next to the box, because people write differently when they
+think a shop will see their name, and differently again when they think it will
+be published — and neither of those is what happens.
+
+### When a rating is allowed, and when a number is worth showing
+
+Only a **COMPLETED** order, and only for `RATING_WINDOW_DAYS` (14) afterwards.
+
+Not a cancellation and not a failed delivery. That looks harsh — somebody whose
+order never arrived has the strongest opinion of anybody — but a rating is a
+judgement of an experience that happened, and what they need is a refund and a
+person to talk to. Both exist: the timeout sweep refunds automatically and the
+tracking screen offers support. Letting a non-delivery become a one-star review
+would fold two different problems into the one signal dispatch ranking reads.
+
+The window is also what makes the average describe the shop **as it is now**: a
+restaurant that changed hands in March should not be carrying January's
+kitchen. Within it, a review can be edited, which is what somebody who
+mis-tapped a star expects and which costs nothing because the aggregate is
+recomputed either way.
+
+And **below `MIN_REVIEWS_TO_SHOW` (3) no number is shown at all**. One
+five-star review makes a new shop look better than a shop with two hundred
+reviews averaging 4.6, and a customer reading "★ 5.0" has no way to tell which
+they are looking at. `RatingBadge` says "New" instead — true, useful, and not a
+claim. A shop looking at its **own** numbers sees all of them from the first
+review, with the count beside it and a note saying customers do not see a score
+yet; that threshold protects a stranger from a misleading verdict, not a
+merchant from their own data.
+
+### The database guards, and the one that was removed
+
+`prisma/sql/order_reviews.sql` holds two checks: a star is 1–5, and a review
+rates something. A stray 0 or 11 does not error anywhere — it just moves the
+number a shop is judged on — and a row that rates nothing would sit in the
+table looking like feedback while counting towards nobody.
+
+A third was tried and removed, and the reason is worth keeping. "A score
+implies a subject" looks obviously right, but `storeId` is `ON DELETE SET NULL`
+so that removing a shop does not erase the rider's half of the same review —
+which means the cascade nulls the id, the stars stay, and every DELETE of a
+shop with any review on it fails on the check. Verified against the real
+database rather than reasoned about. The invariant is a write-time one and
+lives in `submitReview`, where a score and its subject id are set together or
+neither is, with a test asserting it.
+
+---
+
 ## Notifications — an outbox, not a fire-and-forget
 
 The gap this closes: every screen polled while it was open, so a store or a

@@ -59,6 +59,7 @@ brief's changes already folded in.
 | 21 | Store staff: invite by number, a first owner from the console, an owner who cannot vanish | ✅ Done |
 | 22 | A map for the shop's pin, and three other ways to set it | ✅ Done |
 | 23 | Address search on that map, through the server | ✅ Done |
+| 24 | Ratings: written at last, derived, and private | ✅ Done |
 
 Between phases 11 and 12: the interface was translated to English, the product
 was named TARA, and the typeface and brand blue were set from the brand artwork.
@@ -792,8 +793,14 @@ real file later is one line in `tailwind.config.ts`.
   sold. See Phase 9.
 - **No live location on the tracking screen.** The customer sees statuses, not a
   moving pin, even though partner positions are stored.
-- **No ratings.** `ratingAvg` and `ratingCount` are read by dispatch ranking but
-  nothing writes them.
+- **A rating cannot be left on a delivery that failed.** Deliberate — see
+  Phase 24 — but it means the strongest opinions in the system never reach the
+  average. What those customers get instead is an automatic refund and a
+  support thread, which is the right answer and not the same answer.
+- **Nobody is told they were rated.** A merchant and a rider see their scores
+  on their own screens; neither gets a notification, because a one-star alert
+  is a bad way to learn something and an easy thing to abuse. It does mean a
+  complaint can sit unread.
 - **Support has no public contact channel until somebody sets one.**
   `SUPPORT_PHONE`, `SUPPORT_EMAIL` and `SUPPORT_FACEBOOK` are all optional and
   nothing is invented, because a number nobody answers is worse than no number.
@@ -1594,3 +1601,81 @@ Then again with `GEOCODER_URL=off`: no box, no credit line, everything else
 intact.
 
 870 tests pass; build and lint clean.
+
+---
+
+## Phase 24 — ratings ✅
+
+`Store.ratingAvg` and `FleetPartner.ratingAvg` have been read in six places
+since the first commit — the storefront, the service listing, search, the home
+rail, the fleet profile, and **dispatch ranking** — and written by nothing
+except the seed. Every one of those was showing or scoring a zero.
+
+Now a customer rates a delivered order from the order screen: one review per
+order, two optional scores, and an optional comment. Which scores apply comes
+from the registry — a vertical with no merchant leg has no shop to rate, an
+order nobody was dispatched to has no rider — so nothing in the flow knows
+which services exist.
+
+**The reviews are the truth and the aggregate is derived**, the same rule the
+credits ledger follows and for a sharper reason: dispatch scores on
+`FleetPartner.ratingAvg`, so a drifted average does not fail, it quietly offers
+work to the wrong people. The aggregate is never incremented — it is recomputed
+from the rows inside the transaction that changed them, both subjects every
+time, because an edit that moves a score from the shop to the rider changes two
+of them.
+
+`npm run db:ratings-recompute` rebuilds everything and reports what it changed.
+On a correct database that is nothing.
+
+### Two privacy rules, and they are the design
+
+Enforced by what the functions return rather than by remembering to redact:
+
+- **A shop and a rider never see who rated them.** A rider who can see who gave
+  them one star also knows that person's address. They get the order number
+  instead, which identifies the transaction without identifying the person.
+- **A comment never appears on a public page.** A free-text review on a shop
+  page is a moderation burden and a defamation risk; the same sentence is worth
+  a great deal to the operator and the merchant, who can act on it. The
+  storefront shows stars only, and the form tells the customer both rules right
+  next to the box.
+
+The console's low-rating feed is the one place an identity and a comment appear
+together, and it says so on the page.
+
+### What the work turned up
+
+**A check constraint that made a shop undeletable.** "A score implies a
+subject" looks obviously right. But `storeId` is `ON DELETE SET NULL` so that
+removing a shop does not erase the rider's half of the same review — so the
+cascade nulls the id, the stars stay, and every DELETE of a shop with any
+review on it fails on the check. Found by trying it against the real database,
+which is the same shape of mistake as the RESTRICT foreign key that blocked the
+demo purge in Phase 19. The invariant is a write-time one and now lives in
+`submitReview` with a test on it.
+
+**The seed was inventing ratings.** "4.7 from 412 reviews" was harmless while
+nothing wrote ratings; it is a number no review supports now, and the first run
+of `db:ratings-recompute` reported all four demo aggregates as drift. The seed
+no longer writes them, so a demo shop shows "New" — which is true, and which
+makes the feature demonstrable: complete an order, rate it, watch the number
+appear.
+
+**Every rating display was a claim nobody had earned.** They rendered
+`★ 0.0` before, and one five-star review would have made a new shop look better
+than a shop with two hundred reviews averaging 4.6. Below three reviews the
+customer-facing badge now says "New" instead. A shop looking at its own numbers
+still sees all of them, with a note saying customers do not.
+
+Verified end to end in a real browser, against a real order placed through
+`placeOrder` and walked to COMPLETED through the real state machine: the shop
+shows "New" beforehand, the order list nudges, the form offers both scores and
+explains where the comment goes, submitting clears the nudge — and then the
+merchant sees the comment and the order number but **not** the customer, the
+rider sees the same and their rating row reads 2.0 (1), and the console shows
+the low rating **with** the author. Then arithmetically: three reviews flip the
+badge from "New" to ★ 4.7, editing one review to one star moves the average to
+3.33, and a from-scratch recompute agrees exactly.
+
+908 tests pass; build and lint clean.

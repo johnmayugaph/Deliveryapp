@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import type { Store } from '@prisma/client';
+import { RatingBadge } from '@/components/ui/RatingBadge';
 
 /**
  * Recent stores / reorder shortcuts. Populated from the customer's own order
@@ -41,7 +42,11 @@ export function RecentStores({
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-semibold">{store.name}</span>
                 <span className="mt-0.5 block text-xs text-ink-muted">
-                  ★ {store.ratingAvg.toFixed(1)} · {store.preparationMinutes} min prep
+                  <RatingBadge
+                    ratingAvg={store.ratingAvg}
+                    ratingCount={store.ratingCount}
+                  />{' '}
+                  · {store.preparationMinutes} min prep
                   {store.isOpen ? '' : ' · Sarado'}
                 </span>
               </span>

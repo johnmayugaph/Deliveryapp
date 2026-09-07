@@ -17,6 +17,9 @@ import { OrderLiveRefresh } from '@/components/orders/OrderLiveRefresh';
 import { CancelOrderButton } from '@/components/orders/CancelOrderButton';
 import { OrderActor, OrderStatus } from '@prisma/client';
 import { cancellationStatusForActor } from '@/lib/orders/state-machine';
+import { reviewableOrder } from '@/lib/ratings/reviews';
+import { REVIEW_REFUSAL_MESSAGE } from '@/lib/ratings/policy';
+import { RatingForm } from '@/components/orders/RatingForm';
 
 export const dynamic = 'force-dynamic';
 
@@ -62,6 +65,14 @@ export default async function OrderDetailPage({
     isActorPermitted(order.serviceType, customerCancellation, OrderActor.CUSTOMER);
 
   const isLive = isInProgress(order.serviceType, order.status);
+
+  // Only for a completed order: `reviewableOrder` resolves what there is to
+  // rate from the registry and the order's own dispatch record, and asking it
+  // about a live order would be a query for nothing.
+  const reviewable =
+    order.status === OrderStatus.COMPLETED
+      ? await reviewableOrder({ orderId: order.id, userId: user.id })
+      : null;
 
   // The "what happens next" hint should show the forward path only. Listing
   // every cancellation state reads as a menu of ways the order might fail.
@@ -191,6 +202,29 @@ export default async function OrderDetailPage({
       {canCustomerCancel ? (
         <section className="mx-4 mt-4">
           <CancelOrderButton orderId={order.id} />
+        </section>
+      ) : null}
+
+      {/* Above support, not below it. Somebody whose order went well should
+          find the rating first, and somebody whose order went badly is not
+          going to miss the help link. */}
+      {reviewable && (reviewable.store || reviewable.partner) ? (
+        <section className="mx-4 mt-4">
+          {reviewable.eligibility.allowed ? (
+            <RatingForm
+              orderId={order.id}
+              store={reviewable.store}
+              partner={reviewable.partner}
+              existing={reviewable.existing}
+            />
+          ) : reviewable.existing ? (
+            <div className="rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5">
+              <p className="text-sm font-semibold">You rated this order</p>
+              <p className="mt-1 text-xs leading-relaxed text-ink-muted">
+                {REVIEW_REFUSAL_MESSAGE[reviewable.eligibility.reason]}
+              </p>
+            </div>
+          ) : null}
         </section>
       ) : null}
 

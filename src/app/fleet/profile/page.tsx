@@ -10,6 +10,8 @@ import { computeAcceptanceRate } from '@/lib/fleet/offer-policy';
 import { getAllServices } from '@/lib/services/registry';
 import { ApplyForServiceButton } from '@/components/fleet/ApplyForServiceButton';
 import { formatCentavos } from '@/lib/money';
+import { partnerReviews } from '@/lib/ratings/reviews';
+import { ReviewPanel } from '@/components/ui/ReviewPanel';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,11 +44,12 @@ export default async function FleetProfilePage() {
     redirect('/fleet/apply');
   }
 
-  const [verifications, earnings, tallies, services] = await Promise.all([
+  const [verifications, earnings, tallies, services, reviews] = await Promise.all([
     listVerifications(partner.id),
     getPartnerEarnings(partner),
     getOfferTallies(partner.id),
     getAllServices(),
+    partnerReviews(partner.id),
   ]);
 
   const applied = new Set(verifications.map((row) => row.serviceType));
@@ -160,6 +163,16 @@ export default async function FleetProfilePage() {
         <p className="mt-2 text-[11px] text-ink-faint">
           Contact support to change vehicles.
         </p>
+      </section>
+
+      {/* Their own numbers, in full — the customer-facing threshold does not
+          apply to somebody looking at their own record. */}
+      <section className="mt-4 px-4 pb-8">
+        <ReviewPanel
+          summary={reviews}
+          heading="What customers said"
+          emptyNote="No ratings yet. Customers can rate a delivery for two weeks afterwards."
+        />
       </section>
     </main>
   );

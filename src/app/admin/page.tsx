@@ -3,6 +3,8 @@ import { formatCentavos } from '@/lib/money';
 import { requireAdmin } from '@/lib/admin/access';
 import { deliveryHealth, platformSummary, serviceHealth } from '@/lib/admin/queries';
 import { supportSummary } from '@/lib/support/queries';
+import { adminReviewFeed, ratingSummary } from '@/lib/ratings/reviews';
+import { displayNameFor } from '@/lib/auth/session';
 import { describeWait } from '@/lib/support/policy';
 import { listOrders, attachStores } from '@/lib/admin/queries';
 import {
@@ -35,12 +37,15 @@ export const dynamic = 'force-dynamic';
 export default async function AdminOverviewPage() {
   await requireAdmin();
 
-  const [summary, services, health, liveOrders, support] = await Promise.all([
+  const [summary, services, health, liveOrders, support, ratings, lowReviews] =
+    await Promise.all([
     platformSummary(),
     serviceHealth(),
     deliveryHealth(),
     listOrders({ liveOnly: true, limit: 12 }).then(attachStores),
     supportSummary(),
+    ratingSummary(),
+    adminReviewFeed(8),
   ]);
 
   const failedTotal = health.byChannel.reduce((sum, row) => sum + row.failed, 0);
@@ -55,7 +60,7 @@ export default async function AdminOverviewPage() {
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
         <Stat
           label="Orders in flight"
           value={String(services.reduce((sum, row) => sum + row.liveOrders, 0))}
@@ -81,6 +86,15 @@ export default async function AdminOverviewPage() {
           value={String(failedTotal)}
           note={pendingTotal > 0 ? `${pendingTotal} still queued` : 'nothing queued'}
         />
+        <Stat
+          label="Ratings this week"
+          value={String(ratings.reviewsThisWeek)}
+          note={
+            ratings.reviews === 0
+              ? 'nobody has rated anything yet'
+              : `${ratings.lowRatings} at two stars or less, all time`
+          }
+        />
         {/* Always shown, including as a zero. A number that only appears when
             it is bad is one nobody learns to read. */}
         <Stat
@@ -95,6 +109,59 @@ export default async function AdminOverviewPage() {
           }
         />
       </div>
+
+      {/* The most actionable thing in the application: a low score with a
+          sentence attached. This is the ONE place a comment appears next to who
+          wrote it — the merchant and the rider see the comment without the
+          name, because a rider who knows who gave them one star also knows
+          that person's address. */}
+      {lowReviews.length > 0 ? (
+        <Panel
+          title="Low ratings"
+          description="Three stars or fewer, newest first. The customer's name is shown here and nowhere else; the shop and the rider see the comment without it."
+        >
+          <ul className="divide-y divide-black/5">
+            {lowReviews.map((review) => (
+              <li key={review.id} className="px-4 py-3">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <span className="text-[13px]">
+                    {review.storeStars !== null && review.store ? (
+                      <span className="mr-3">
+                        <span aria-hidden className="text-amber-500">
+                          {'★'.repeat(review.storeStars)}
+                        </span>{' '}
+                        <span className="font-semibold">{review.store.name}</span>
+                      </span>
+                    ) : null}
+                    {review.partnerStars !== null && review.fleetPartner ? (
+                      <span>
+                        <span aria-hidden className="text-amber-500">
+                          {'★'.repeat(review.partnerStars)}
+                        </span>{' '}
+                        <span className="font-semibold">
+                          {displayNameFor(review.fleetPartner.user)}
+                        </span>
+                        <span className="text-[11px] text-ink-faint"> (rider)</span>
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="shrink-0 text-[11px] text-ink-faint">
+                    {review.order.orderNumber} · {manilaTime(review.createdAt)}
+                  </span>
+                </div>
+                {review.comment ? (
+                  <p className="mt-1 text-xs leading-relaxed">{review.comment}</p>
+                ) : (
+                  <p className="mt-1 text-xs italic text-ink-faint">No comment left.</p>
+                )}
+                <p className="mt-1 text-[11px] text-ink-faint">
+                  From <PersonLink user={review.author} />
+                </p>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      ) : null}
 
       <Panel
         title="Services"

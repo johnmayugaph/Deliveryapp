@@ -7,6 +7,7 @@ import { getService, ServiceNotActiveError, UnknownServiceError } from '@/lib/se
 import { ORDER_DETAILS_SPECS } from '@/lib/orders/details';
 import { serviceGlyph } from '@/lib/services/presentation';
 import { formatCentavosCompact } from '@/lib/money';
+import { RatingBadge } from '@/components/ui/RatingBadge';
 
 export const dynamic = 'force-dynamic';
 
@@ -114,7 +115,10 @@ export default async function ServicePage({
                   <span className="flex items-baseline justify-between gap-2">
                     <span className="truncate text-sm font-semibold">{store.name}</span>
                     <span className="shrink-0 text-xs text-ink-muted">
-                      ★ {store.ratingAvg.toFixed(1)}
+                      <RatingBadge
+                        ratingAvg={store.ratingAvg}
+                        ratingCount={store.ratingCount}
+                      />
                     </span>
                   </span>
                   <span className="mt-0.5 block text-xs text-ink-muted">

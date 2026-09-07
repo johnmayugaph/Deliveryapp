@@ -396,6 +396,7 @@ model User {
   grantedStoreAccess      StoreMember[]                     @relation("StoreAccessGranted")
   storeInvitesSent        StoreInvite[]                     @relation("StoreInvitesSent")
   storeInvitesAccepted    StoreInvite[]                     @relation("StoreInvitesAccepted")
+  reviewsWritten          OrderReview[]
   fleetDecisions          FleetPartnerServiceVerification[] @relation("FleetVerificationDecider")
   grantedSubscriptions    UserSubscription[]                @relation("SubscriptionGrants")
   notifications           Notification[]
@@ -606,6 +607,10 @@ model Store {
   /// checkout so a later menu edit cannot rewrite history.
   preparationMinutes Int @default(20)
 
+  /// DERIVED from `OrderReview`, never incremented. Recomputed from the rows
+  /// inside the same transaction as the review that changed them — the same
+  /// rule the credits ledger follows, for the same reason: an aggregate that
+  /// drifts is one nobody can reconcile, and dispatch ranking reads it.
   ratingAvg   Float @default(0)
   ratingCount Int   @default(0)
 
@@ -613,6 +618,7 @@ model Store {
   updatedAt DateTime @updatedAt
 
   menuItems MenuItem[]
+  reviews   OrderReview[]
   members   StoreMember[]
   invites   StoreInvite[]
 
@@ -725,6 +731,60 @@ model StoreMember {
 
   @@unique([storeId, userId])
   @@index([userId])
+}
+
+/// One review per completed order.
+///
+/// ONE ROW, not one per subject. An order is a single experience the customer
+/// had, and they rate it once — the food and the delivery are two scores on
+/// that one event rather than two events. `@@unique` on `orderId` makes rating
+/// the same order twice unrepresentable rather than merely discouraged.
+///
+/// Both scores are OPTIONAL, and which ones apply comes from the registry: a
+/// vertical with no merchant leg has no store to rate, and an order nobody was
+/// dispatched to has no partner. Nothing here knows which services exist.
+///
+/// TWO PRIVACY RULES, both enforced in `lib/ratings/reviews.ts` rather than
+/// here, and both deliberate:
+///
+///   - The COMMENT is never shown publicly. A free-text review on a shop page
+///     is a moderation burden and a defamation risk; the same text is worth a
+///     great deal to the operator and the merchant. So it is collected and
+///     shown to them, and the storefront shows stars only.
+///   - The AUTHOR is never shown to the store or the partner. A rider who can
+///     see who gave them one star also knows that person's address. Only an
+///     administrator sees who wrote what.
+model OrderReview {
+  id      String @id @default(cuid())
+  orderId String @unique
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  authorId String
+  author   User   @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  /// SNAPSHOTTED from the order, not read through it. The store lives in the
+  /// order's `details` JSON, and an aggregate query cannot join through that.
+  /// SetNull rather than Cascade: deleting a shop must not erase the rider's
+  /// half of the same review.
+  storeId    String?
+  store      Store?  @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  storeStars Int?
+
+  fleetPartnerId String?
+  fleetPartner   FleetPartner? @relation(fields: [fleetPartnerId], references: [id], onDelete: SetNull)
+  partnerStars   Int?
+
+  /// Not shown on the storefront. See the note above.
+  comment String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// The aggregate recomputes read these, and the merchant and fleet screens
+  /// list them newest first.
+  @@index([storeId, createdAt(sort: Desc)])
+  @@index([fleetPartnerId, createdAt(sort: Desc)])
+  @@index([authorId])
 }
 
 /// An offer of store access to a PHONE NUMBER rather than to an account.
@@ -842,6 +902,7 @@ model Order {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  review             OrderReview?
   statusEvents       OrderStatusEvent[]
   dispatchOffers     DispatchOffer[]
   walletTransactions WalletTransaction[]
@@ -950,6 +1011,9 @@ model FleetPartner {
   currentLongitude  Float?
   locationUpdatedAt DateTime?
 
+  /// DERIVED from `OrderReview`. See the note on `Store.ratingAvg`; this pair
+  /// is the one dispatch ranking actually scores on, so a stale value quietly
+  /// misroutes work.
   ratingAvg           Float @default(0)
   ratingCount         Int   @default(0)
   completedOrderCount Int   @default(0)
@@ -957,6 +1021,8 @@ model FleetPartner {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  reviews OrderReview[]
 
   serviceVerifications FleetPartnerServiceVerification[]
   orders               Order[]
