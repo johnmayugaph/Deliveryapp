@@ -14,7 +14,7 @@ import { NextResponse, type NextRequest } from 'next/server';
  * so nothing here is load-bearing for security.
  */
 
-const SESSION_COOKIE = 'deliveryapp_session';
+const SESSION_COOKIE = 'tara_session';
 
 /** Reachable without signing in. */
 const PUBLIC_PREFIXES = ['/login', '/icon.svg', '/_next', '/favicon.ico'];

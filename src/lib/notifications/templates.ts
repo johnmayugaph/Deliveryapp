@@ -50,13 +50,13 @@ const orderRef = (context: NotificationContext) =>
   context.orderNumber ? ` (${context.orderNumber})` : '';
 
 /** The vertical's own name where there is one, the product's where there is not. */
-const serviceName = (context: NotificationContext) => context.serviceName ?? 'Deliveryapp';
+const serviceName = (context: NotificationContext) => context.serviceName ?? 'TARA';
 
 export const NOTIFICATION_TEMPLATES: Readonly<Record<NotificationKind, Template>> = {
   [NotificationKind.ORDER_SUBMITTED]: (context) => ({
     title: 'New order',
     body: `A new ${serviceName(context)} order is waiting for your answer${orderRef(context)}.`,
-    sms: `New Deliveryapp order${orderRef(context)}. Accept or reject within 8 minutes, or it is cancelled.`,
+    sms: `New TARA order${orderRef(context)}. Accept or reject within 8 minutes, or it is cancelled.`,
   }),
 
   [NotificationKind.ORDER_ACCEPTED]: (context) => ({
@@ -132,7 +132,7 @@ export const NOTIFICATION_TEMPLATES: Readonly<Record<NotificationKind, Template>
       .filter(Boolean)
       .join(' '),
     sms: [
-      'New Deliveryapp job',
+      'New TARA job',
       context.earningsCentavos ? ` — ${formatCentavos(context.earningsCentavos)}` : '',
       context.secondsToAnswer ? `, ${context.secondsToAnswer}s to answer.` : '.',
     ].join(''),
@@ -148,13 +148,13 @@ export const NOTIFICATION_TEMPLATES: Readonly<Record<NotificationKind, Template>
     ]
       .filter(Boolean)
       .join(' '),
-    sms: `You have ${context.creditsCentavos ? formatCentavos(context.creditsCentavos) : ''} in Deliveryapp credits.`,
+    sms: `You have ${context.creditsCentavos ? formatCentavos(context.creditsCentavos) : ''} in TARA credits.`,
   }),
 
   [NotificationKind.SUBSCRIPTION_ENDED]: (context) => ({
     title: 'Your plan has ended',
     body: `Your ${context.planName ?? 'plan'} has ended, so no benefits apply at checkout for now.`,
-    sms: `Your Deliveryapp ${context.planName ?? 'plan'} has ended.`,
+    sms: `Your TARA ${context.planName ?? 'plan'} has ended.`,
   }),
 };
 

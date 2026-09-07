@@ -1,8 +1,11 @@
-# Deliveryapp
+# TARA
 
 A multi-service delivery app for the Philippine market: **Food**, **Mart**,
 **Parcel**, **Errands**, and **Rides** — one product, not five apps sharing a
 login.
+
+*Tara* is the invitation everyone already uses — *let's go* — which is the
+whole product in one word.
 
 The interface is in English. Service names live in the `Service` table, so
 renaming a vertical — or shipping a Filipino build — is a row edit, not a code
@@ -57,7 +60,7 @@ output.
 ```
   ┌─ SMS (development) ─────────────────────────────
   │ to:   +639171234567  (0917 ••• 4567)
-  │ body: 428913 ang Deliveryapp code mo. …
+  │ body: 428913 is your TARA code. Do not share it with anyone. …
   └─────────────────────────────────────────────────
 ```
 
@@ -101,7 +104,7 @@ merchants and the customer profile offers a link in:
 
 ### The subscription tier
 
-*Deliveryapp Plus* is seeded **inactive**. `npm run plan:activate -- plus-monthly`
+*TARA Plus* is seeded **inactive**. `npm run plan:activate -- plus-monthly`
 turns it on everywhere — the pricing engine, `/plus` and enrollment all read that
 one flag.
 

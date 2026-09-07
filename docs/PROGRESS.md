@@ -636,9 +636,10 @@ order. A test asserts the file handles no `P2002`.
 - **A browser run** of the whole loop: a customer places an order, the cron texts
   both store members, the store sees a badge it did not ask for, opening the
   notification marks it read and lands on the queue, a partner is texted
-  *"May bagong job sa Deliveryapp — ₱89.00, 60s para sagutin"*, and the customer
+  *"New TARA job — ₱89.00, 60s to answer"*, and the customer
   ends with six inbox rows of which exactly one was texted.
-- **One copy bug the real send caught**: `"Deliveryapp— ₱89.00"`, a missing space
+- **One copy bug the real send caught**: `"Deliveryapp— ₱89.00"` (the product
+  still had that name then), a missing space
   from a joined string. Now a test that fails against it.
 
 ---
@@ -682,6 +683,35 @@ Two things worth noting from doing it:
   "Newng order". The second attempt matched whole phrases only.
 
 `<html lang>` is now `en-PH`.
+
+---
+
+## Name: TARA ✅
+
+The product is called **TARA**. *Tara* is the invitation everybody already uses
+— *let's go* — which is the whole app in one word, and it survives being read in
+English.
+
+What moved:
+
+- **Display copy** — the login wordmark, page title, the plan (*TARA Plus*), the
+  origin label *Given by TARA*, and every SMS: *"123456 is your TARA code"*,
+  *"New TARA order"*, *"New TARA job"*.
+- **Identifiers** — the session cookie is `tara_session`, the cart's local
+  storage key is `tara.cart.v1`, the package is `tara`, and `.env.example`
+  points at a `tara` database.
+- **Docs** — README, architecture and this file.
+
+Two consequences worth stating rather than discovering:
+
+- **Renaming the session cookie signs everybody out.** There are no real users,
+  so it costs nothing now; doing it after launch would need the old name read as
+  a fallback for a release or two.
+- **Renaming the cart key drops carts in progress**, for the same reason and with
+  the same fix if it ever matters.
+
+The `Service` display names are untouched by this: they are rows, and the app
+name is not one of them.
 
 ---
 

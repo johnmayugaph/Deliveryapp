@@ -22,7 +22,7 @@ import { EMPTY_CART, type Cart, type CartLine } from '@/lib/cart/types';
  * asking — silently discarding someone's basket is worse than an extra tap.
  */
 
-const STORAGE_KEY = 'deliveryapp.cart.v1';
+const STORAGE_KEY = 'tara.cart.v1';
 
 interface CartContextValue {
   cart: Cart;

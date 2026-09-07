@@ -23,7 +23,7 @@ export { pruneSessions } from '@/lib/auth/prune';
  * user is a customer — roles live in `user.roles`, which is an array.
  */
 
-export const SESSION_COOKIE = 'deliveryapp_session';
+export const SESSION_COOKIE = 'tara_session';
 
 /** How long a session lasts without use. */
 const SESSION_TTL_DAYS = 30;

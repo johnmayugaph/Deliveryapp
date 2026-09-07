@@ -3,8 +3,8 @@
  * The launch switch.
  *
  *     npm run plan:activate                          # list plans and their state
- *     npm run plan:activate -- deliveryapp-plus      # launch it
- *     npm run plan:activate -- deliveryapp-plus --off  # pull it
+ *     npm run plan:activate -- plus-monthly          # launch it
+ *     npm run plan:activate -- plus-monthly --off    # pull it
  *
  * `SubscriptionPlan.isActive` is the entire launch mechanism: the pricing
  * engine, the plan screen and the enrollment layer all gate on it, so this flag

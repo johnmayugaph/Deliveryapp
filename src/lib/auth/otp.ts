@@ -49,7 +49,7 @@ export interface RequestCodeInput {
 function messageBody(code: string): string {
   // Short, names the app, and says the two things that matter: the code, and
   // that we will never ask for it.
-  return `${code} is your Deliveryapp code. Do not share it with anyone. It expires in 5 minutes.`;
+  return `${code} is your TARA code. Do not share it with anyone. It expires in 5 minutes.`;
 }
 
 /**

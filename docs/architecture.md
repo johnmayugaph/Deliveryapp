@@ -1,6 +1,6 @@
 # Architecture
 
-Deliveryapp is a multi-service delivery app for the Philippine market. It runs
+TARA is a multi-service delivery app for the Philippine market. It runs
 five verticals — **Food**, **Mart**, **Parcel**, **Errands**, and **Rides** — as
 one product rather than five apps sharing
 a login.
@@ -749,7 +749,7 @@ An **inactive plan grants nothing**, even to someone already subscribed —
 `getActiveSubscription()` filters on `plan: { isActive: true }`. That is what
 makes the seeded plan safe to leave in place.
 
-**Seeded plan:** *Deliveryapp Plus*, ₱99/month, `isActive: false`. Free delivery
+**Seeded plan:** *TARA Plus*, ₱99/month, `isActive: false`. Free delivery
 over ₱299 (8×/month), 5% off Food (₱100 cap), 2% credits back (₱200/month
 cap). It stays off until there is a decision to launch it.
 

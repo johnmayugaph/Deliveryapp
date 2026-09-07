@@ -237,7 +237,7 @@ async function seedSubscriptionPlan() {
   const plan = await prisma.subscriptionPlan.upsert({
     where: { slug: 'plus-monthly' },
     create: {
-      name: 'Deliveryapp Plus',
+      name: 'TARA Plus',
       slug: 'plus-monthly',
       tagline: 'Free delivery and credits back',
       monthlyPriceCentavos: 9900, // ₱99/month
@@ -245,7 +245,7 @@ async function seedSubscriptionPlan() {
       sortOrder: 0,
     },
     update: {
-      name: 'Deliveryapp Plus',
+      name: 'TARA Plus',
       tagline: 'Free delivery and credits back',
       monthlyPriceCentavos: 9900,
       sortOrder: 0,
@@ -700,7 +700,7 @@ async function seedUsers() {
 }
 
 async function main() {
-  console.log('Seeding Deliveryapp...');
+  console.log('Seeding TARA...');
   await seedCities();
   await seedServices();
   await seedDeliveryFeeRules();

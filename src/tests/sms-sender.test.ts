@@ -62,7 +62,7 @@ describe('the Semaphore adapter', () => {
     const fetchImpl = stubFetch(
       () => new Response(JSON.stringify([{ message_id: 42 }]), { status: 200 }),
     );
-    const sender = new SemaphoreSmsSender('secret-key', 'DELIVERYAPP', 'https://example.test', fetchImpl as unknown as typeof fetch);
+    const sender = new SemaphoreSmsSender('secret-key', 'TARA', 'https://example.test', fetchImpl as unknown as typeof fetch);
 
     const result = await sender.send(message);
 
@@ -73,7 +73,7 @@ describe('the Semaphore adapter', () => {
     expect(body.get('apikey')).toBe('secret-key');
     expect(body.get('number')).toBe('+639171234567');
     expect(body.get('message')).toBe(message.body);
-    expect(body.get('sendername')).toBe('DELIVERYAPP');
+    expect(body.get('sendername')).toBe('TARA');
     expect(result).toEqual({ providerMessageId: '42', provider: 'semaphore' });
   });
 

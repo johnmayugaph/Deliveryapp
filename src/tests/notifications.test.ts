@@ -253,7 +253,7 @@ describe('templates', () => {
         distanceLabel: '1.9 km',
         creditsCentavos: 780,
         creditsReason: 'Credits back.',
-        planName: 'Deliveryapp Plus',
+        planName: 'TARA Plus',
       });
       expect(rendered.title.length, kind).toBeGreaterThan(0);
       expect(rendered.body.length, kind).toBeGreaterThan(0);
@@ -265,7 +265,7 @@ describe('templates', () => {
   });
 
   it('leaves a space around punctuation in the short forms', () => {
-    // "Deliveryapp— ₱89.00" is what happens when a joined string forgets one,
+    // "TARA— ₱89.00" is what happens when a joined string forgets one,
     // and it is the kind of thing only a real send makes obvious.
     for (const kind of Object.values(NotificationKind)) {
       const rendered = renderNotification(kind, {

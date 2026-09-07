@@ -20,7 +20,7 @@ import { formatCentavos } from '@/lib/money';
 export const dynamic = 'force-dynamic';
 
 /**
- * Deliveryapp Plus.
+ * TARA Plus.
  *
  * The card is assembled from the plan's benefit ROWS — label, scope and terms
  * all come from the same columns the pricing engine reads, so this screen cannot
@@ -35,7 +35,7 @@ export const dynamic = 'force-dynamic';
 
 const ORIGIN_LABELS: Readonly<Record<SubscriptionOrigin, string>> = {
   [SubscriptionOrigin.PAID]: 'Paid plan',
-  [SubscriptionOrigin.COMPED]: 'Given by Deliveryapp',
+  [SubscriptionOrigin.COMPED]: 'Given by TARA',
   [SubscriptionOrigin.PROMOTIONAL]: 'From a promo',
 };
 
@@ -84,7 +84,7 @@ export default async function PlusPage() {
   if (!shown) {
     return (
       <main className="px-4 py-6">
-        <h1 className="text-xl font-bold">Deliveryapp Plus</h1>
+        <h1 className="text-xl font-bold">TARA Plus</h1>
         <p className="mt-2 max-w-prose text-sm text-ink-muted">
           No subscription plan is open yet. We will tell you when one is.
         </p>
