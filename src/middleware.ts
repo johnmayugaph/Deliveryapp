@@ -16,8 +16,23 @@ import { NextResponse, type NextRequest } from 'next/server';
 
 const SESSION_COOKIE = 'tara_session';
 
-/** Reachable without signing in. */
-const PUBLIC_PREFIXES = ['/login', '/icon.svg', '/_next', '/favicon.ico'];
+/**
+ * Reachable without signing in.
+ *
+ * `/sw.js` is here because the service worker script must be fetchable on its
+ * own terms. It happens to work for a signed-in visitor, whose cookie rides
+ * along — but a redirect to /login served as a service worker is a registration
+ * failure with a confusing cause, and the file contains nothing private.
+ */
+const PUBLIC_PREFIXES = [
+  '/login',
+  '/icon.svg',
+  '/sw.js',
+  '/icon-192.png',
+  '/badge-72.png',
+  '/_next',
+  '/favicon.ico',
+];
 
 export function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;

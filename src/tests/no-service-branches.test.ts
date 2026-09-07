@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { isOrderableIn } from '@/lib/services/registry';
 import { readFileSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
@@ -153,5 +154,41 @@ describe('per-service config maps stay exhaustive', () => {
       expect(isDetailsShapeImplemented(key)).toBe(false);
       expect(() => parseOrderDetails(key, {})).toThrow(ServiceDetailsNotImplementedError);
     }
+  });
+});
+
+// -----------------------------------------------------------------------------
+// City availability
+// -----------------------------------------------------------------------------
+
+describe('live somewhere is not live here', () => {
+  const mart = { isActive: true, availableCityIds: ['city_cebu'] };
+  const food = { isActive: true, availableCityIds: ['city_manila', 'city_cebu'] };
+  const parcel = { isActive: false, availableCityIds: [] };
+
+  it('is orderable in a city it launched in', () => {
+    expect(isOrderableIn(mart, 'city_cebu')).toBe(true);
+    expect(isOrderableIn(food, 'city_manila')).toBe(true);
+  });
+
+  it('is NOT orderable in a city it has not launched in', () => {
+    // The mistake this prevents: a tile tappable in Manila for a vertical that
+    // only operates in Cebu, which fails at checkout rather than at the tile.
+    expect(isOrderableIn(mart, 'city_manila')).toBe(false);
+  });
+
+  it('is never orderable while switched off', () => {
+    expect(isOrderableIn(parcel, 'city_manila')).toBe(false);
+    // Not even in a city somebody has listed by mistake.
+    expect(isOrderableIn({ isActive: false, availableCityIds: ['city_manila'] }, 'city_manila')).toBe(
+      false,
+    );
+  });
+
+  it('falls back to "live at all" when we do not know the city', () => {
+    // A visitor who has told us nothing sees the live tiles and resolves the
+    // city at checkout, which is better than seeing nothing.
+    expect(isOrderableIn(mart, undefined)).toBe(true);
+    expect(isOrderableIn(parcel, undefined)).toBe(false);
   });
 });

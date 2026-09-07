@@ -28,7 +28,7 @@ export default async function HomePage() {
 
   const activeServiceNames = data.serviceGroups
     .flatMap((group) => group.services)
-    .filter((service) => service.isActive)
+    .filter((service) => service.orderableHere)
     .map((service) => service.displayName);
 
   return (

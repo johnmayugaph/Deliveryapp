@@ -91,34 +91,66 @@ export async function assertServiceOrderable(
   return service;
 }
 
+/**
+ * A service as it appears to somebody standing in a particular city.
+ *
+ * `orderableHere` is the field the tile actually needs, and it is NOT the same
+ * as `isActive`. A vertical launches one city at a time — that is how this
+ * business works — so "live" and "live where you are" diverge from the first
+ * launch onwards, and a component that reads `isActive` to decide whether to
+ * make a tile tappable would offer Cebu's Mart to somebody in Manila.
+ */
+export type ServiceAvailability = Service & { orderableHere: boolean };
+
+/**
+ * Whether somebody standing in `cityId` can order this service right now.
+ *
+ * Pure, and exported, because it is the one rule the tiles, the search hints
+ * and the console all have to agree on. With no city (a visitor who has told
+ * us nothing) the answer falls back to whether the service is live at all —
+ * we would rather show a tile and resolve the city at checkout than show
+ * nothing to somebody who has not set an address.
+ */
+export function isOrderableIn(
+  service: Pick<Service, 'isActive' | 'availableCityIds'>,
+  cityId?: string,
+): boolean {
+  if (!service.isActive) return false;
+  if (cityId === undefined) return true;
+  return service.availableCityIds.includes(cityId);
+}
+
 export interface ServiceGroup {
   group: IntentGroup;
   presentation: IntentGroupPresentation;
-  services: Service[];
+  services: ServiceAvailability[];
 }
 
 /**
  * Services bucketed by intent group, in group order then `sortOrder`. Empty
  * groups are omitted, so the PAY section simply does not render until something
  * lives in it.
+ *
+ * A service that is live but not in THIS city stays visible, as something to
+ * anticipate rather than something to tap. Dropping it — which this function
+ * used to do — meant a vertical launched in Cebu vanished from Manila
+ * entirely: neither usable nor coming, just absent, with no way for anybody in
+ * Manila to know it existed. That is the wrong answer to "we launched
+ * somewhere", and it is only reachable now that the console can put a service
+ * into that state.
  */
 export async function getServicesByIntentGroup(options?: {
   cityId?: string;
 }): Promise<ServiceGroup[]> {
   const services = await getAllServices();
 
-  const visible = services.filter((service) => {
+  const visible: ServiceAvailability[] = services
     // A service the customer can neither use nor anticipate is noise.
-    if (!service.isActive && !service.isComingSoon) {
-      return false;
-    }
-    // Coming-soon tiles show everywhere; a live service only shows where it is
-    // actually live, so we never take an order we cannot fulfil.
-    if (service.isActive && options?.cityId) {
-      return service.availableCityIds.includes(options.cityId);
-    }
-    return true;
-  });
+    .filter((service) => service.isActive || service.isComingSoon)
+    .map((service) => ({
+      ...service,
+      orderableHere: isOrderableIn(service, options?.cityId),
+    }));
 
   return INTENT_GROUPS_IN_ORDER.map((group) => ({
     group,

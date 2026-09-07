@@ -1,16 +1,20 @@
 import Link from 'next/link';
-import type { Service } from '@prisma/client';
+import type { ServiceAvailability } from '@/lib/services/registry';
 import { accentClasses, serviceGlyph } from '@/lib/services/presentation';
 
 /**
  * One service tile.
  *
- * An active service is a link. A coming-soon service renders DIMMED with a
+ * A service orderable HERE is a link. Anything else renders DIMMED with a
  * "Coming soon" label and is NOT tappable — not a disabled link, but no link at
  * all, so keyboard and screen-reader users are not offered a dead target
  * either. Every visual difference comes from the `Service` row.
+ *
+ * The condition is `orderableHere`, not `isActive`: a vertical live in Cebu is
+ * still coming soon to somebody in Manila, and a tappable tile that fails at
+ * checkout is the outcome that reads as broken.
  */
-export function ServiceTile({ service }: { service: Service }) {
+export function ServiceTile({ service }: { service: ServiceAvailability }) {
   const accent = accentClasses(service.accentToken);
   const glyph = serviceGlyph(service.icon);
 
@@ -31,7 +35,7 @@ export function ServiceTile({ service }: { service: Service }) {
     </>
   );
 
-  if (!service.isActive) {
+  if (!service.orderableHere) {
     return (
       <div
         // Presentational, not interactive: there is nothing to activate.

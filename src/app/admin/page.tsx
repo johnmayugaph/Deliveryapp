@@ -1,0 +1,205 @@
+import Link from 'next/link';
+import { formatCentavos } from '@/lib/money';
+import { requireAdmin } from '@/lib/admin/access';
+import { deliveryHealth, platformSummary, serviceHealth } from '@/lib/admin/queries';
+import { listOrders, attachStores } from '@/lib/admin/queries';
+import {
+  Empty,
+  Panel,
+  PersonLink,
+  Pill,
+  Stat,
+  StatusPill,
+  TableScroll,
+  Td,
+  Th,
+  manilaTime,
+} from '@/components/admin/primitives';
+
+export const dynamic = 'force-dynamic';
+
+/**
+ * The overview.
+ *
+ * Answers one question: is anything wrong right now. So the things on it are
+ * the things that go wrong — orders stuck waiting, deliveries that failed, a
+ * credit float that moved — rather than the numbers that look good in a deck.
+ *
+ * The service table includes the four unlaunched verticals on purpose. A
+ * dashboard that shows only what is running makes "we said we would launch
+ * Mart and have not" invisible, and that is the most important fact about this
+ * product.
+ */
+export default async function AdminOverviewPage() {
+  await requireAdmin();
+
+  const [summary, services, health, liveOrders] = await Promise.all([
+    platformSummary(),
+    serviceHealth(),
+    deliveryHealth(),
+    listOrders({ liveOnly: true, limit: 12 }).then(attachStores),
+  ]);
+
+  const failedTotal = health.byChannel.reduce((sum, row) => sum + row.failed, 0);
+  const pendingTotal = health.byChannel.reduce((sum, row) => sum + row.pending, 0);
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-lg font-bold">Overview</h1>
+        <p className="mt-0.5 text-xs text-ink-muted">
+          Everything happening right now, across every service.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <Stat
+          label="Orders in flight"
+          value={String(services.reduce((sum, row) => sum + row.liveOrders, 0))}
+          note="somebody is waiting"
+        />
+        <Stat
+          label="Credits outstanding"
+          value={formatCentavos(summary.creditFloatCentavos)}
+          note={`${formatCentavos(summary.creditsGrantedTodayCentavos)} granted today`}
+        />
+        <Stat
+          label="Fleet online"
+          value={`${summary.fleetOnline} / ${summary.fleetApproved}`}
+          note="online / approved"
+        />
+        <Stat
+          label="Stores open"
+          value={String(summary.storesOpen)}
+          note={`${summary.liveSubscriptions} live subscriptions`}
+        />
+        <Stat
+          label="Deliveries failed"
+          value={String(failedTotal)}
+          note={pendingTotal > 0 ? `${pendingTotal} still queued` : 'nothing queued'}
+        />
+      </div>
+
+      <Panel
+        title="Services"
+        description="Every vertical in the registry, launched or not. Today's numbers are Manila time."
+        action={
+          <Link href="/admin/services" className="text-[12px] font-semibold text-brand-700">
+            Launch switches →
+          </Link>
+        }
+      >
+        <TableScroll>
+          <thead>
+            <tr>
+              <Th>Service</Th>
+              <Th>State</Th>
+              <Th numeric>Cities</Th>
+              <Th numeric>In flight</Th>
+              <Th numeric>Today</Th>
+              <Th numeric>Delivered</Th>
+              <Th numeric>Cancelled</Th>
+              <Th numeric>Gross today</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {services.map((service) => (
+              <tr key={service.key}>
+                <Td>
+                  <span className="font-semibold">{service.displayName}</span>
+                </Td>
+                <Td>
+                  {service.isActive ? (
+                    <Pill tone="good">Live</Pill>
+                  ) : service.isComingSoon ? (
+                    <Pill tone="warn">Coming soon</Pill>
+                  ) : (
+                    <Pill>Off</Pill>
+                  )}
+                </Td>
+                <Td numeric muted={service.cityCount === 0}>
+                  {service.cityCount}
+                </Td>
+                <Td numeric>{service.liveOrders}</Td>
+                <Td numeric>{service.ordersToday}</Td>
+                <Td numeric>{service.completedToday}</Td>
+                <Td numeric muted={service.cancelledToday === 0}>
+                  {service.cancelledToday}
+                </Td>
+                <Td numeric>{formatCentavos(service.grossTodayCentavos)}</Td>
+              </tr>
+            ))}
+          </tbody>
+        </TableScroll>
+      </Panel>
+
+      <Panel
+        title="In flight"
+        description="The oldest are the ones to look at."
+        action={
+          <Link href="/admin/orders" className="text-[12px] font-semibold text-brand-700">
+            All orders →
+          </Link>
+        }
+      >
+        {liveOrders.length === 0 ? (
+          <Empty>Nothing in flight.</Empty>
+        ) : (
+          <TableScroll>
+            <thead>
+              <tr>
+                <Th>Order</Th>
+                <Th>Service</Th>
+                <Th>Status</Th>
+                <Th>Customer</Th>
+                <Th>Store</Th>
+                <Th>Partner</Th>
+                <Th numeric>Total</Th>
+                <Th>Placed</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {liveOrders.map((order) => (
+                <tr key={order.id}>
+                  <Td>
+                    <Link
+                      href={`/admin/orders/${order.orderNumber}`}
+                      className="font-mono text-[11px] font-semibold text-brand-700 hover:underline"
+                    >
+                      {order.orderNumber}
+                    </Link>
+                  </Td>
+                  <Td>{order.serviceType}</Td>
+                  <Td>
+                    <StatusPill status={order.status} />
+                  </Td>
+                  <Td>
+                    <PersonLink user={order.customer} />
+                  </Td>
+                  <Td muted={!order.storeName}>{order.storeName ?? '—'}</Td>
+                  <Td muted={!order.assignedRider}>
+                    {order.assignedRider?.user.fullName ?? '—'}
+                  </Td>
+                  <Td numeric>{formatCentavos(order.totalCentavos)}</Td>
+                  <Td muted>{manilaTime(order.createdAt)}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </TableScroll>
+        )}
+      </Panel>
+
+      <Panel
+        title="People and devices"
+        description="Push devices are browsers that can still be reached."
+      >
+        <div className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-4">
+          <Stat label="Accounts" value={String(summary.people)} note={`${summary.onboarded} onboarded`} />
+          <Stat label="Blocked" value={String(summary.blocked)} />
+          <Stat label="Push devices" value={String(summary.pushDevices)} note={`${health.expiredPushDevices} gone`} />
+          <Stat label="Fleet approved" value={String(summary.fleetApproved)} note="for at least one service" />
+        </div>
+      </Panel>
+    </div>
+  );
+}

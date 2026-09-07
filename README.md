@@ -106,13 +106,33 @@ about a new order is bounded by how often this runs.
 ### Notifications
 
 One inbox per account at `/notifications`, shared across all three apps, plus
-SMS for the messages where somebody is waiting on an action: a new order, a
-dispatch offer, a rider at the door, a cancellation. Progress updates are
-inbox-only — every informational text is a peso spent to be slightly annoying.
+two channels that reach a closed tab.
+
+**Push** carries everything, because it costs nothing per message. It needs a
+VAPID key pair, generated once:
+
+    npm run push:keys        # then paste the three lines into .env
+
+Keep that pair. Rotating it does not rotate a credential — it invalidates every
+existing subscription, because each browser bound its subscription to the public
+key it was handed. RFC 8291 encryption and RFC 8292 tokens are implemented here
+rather than pulled in, and the output is pinned byte-for-byte against the
+reference implementation in `src/tests/push-crypto.test.ts`.
+
+**SMS** is the expensive fallback, for the messages where somebody is waiting on
+an action: a new order, a dispatch offer, a rider at the door, a cancellation.
+Progress updates never text — every informational text is a peso spent to be
+slightly annoying. To prove a gateway works before trusting it:
+
+    npm run sms:send-one -- 09171234567
 
 In development the texts print to the `npm run dev` console like login codes do.
-Quiet hours are 22:00–06:00 Manila: informational texts wait for morning,
-operational ones do not.
+Quiet hours are 22:00–06:00 Manila and apply to both channels: informational
+messages wait for morning, operational ones do not.
+
+With a channel unconfigured, its deliveries stay PENDING rather than being
+discarded — `/admin/health` is where that shows up, and the backlog goes out on
+the first pass after the keys appear.
 
 ### The merchant side
 
@@ -125,6 +145,34 @@ merchants and the customer profile offers a link in:
 | `0917 000 2222` | Ben Ocampo | Owner of two stores — exercises the picker |
 | `0917 000 3333` | Rosa Lim | Staff at Nena's: queue only, no prices |
 | `0917 000 9999` | Ops Admin | Grants subscriptions and ledger adjustments |
+
+### The admin console
+
+`/admin`, for an account with the `ADMIN` role. The seed creates one:
+`+639170009999`.
+
+Six screens: an overview of what is happening right now across every service,
+orders with registry-driven filters, people by search, the launch switches, the
+notification delivery health, and the audit log.
+
+Three things about it are load-bearing rather than incidental:
+
+- **Every action is authorised server-side, in the action itself.** Not in
+  middleware — that runs on the edge runtime where Prisma is unavailable, so it
+  can see a session cookie but not whose it is. Not only in the layout either: a
+  server action is its own entry point.
+- **Nothing privileged happens without an audit row**, written in the same
+  transaction as the change it describes, with a reason of at least eight
+  characters. The table refuses UPDATE and DELETE by trigger, so the log cannot
+  be edited by the people it is about.
+- **Credits go through the ledger.** The console cannot set a balance; it calls
+  `recordAdjustment`, which writes a `WalletTransaction` and recalculates. A
+  single adjustment is capped at ₱500 — a support tool that can issue unlimited
+  credit is a support tool that will.
+
+Launching a vertical is two form posts on `/admin/services`: available in a
+city, then live. No deploy. A service with no city cannot be switched on, and
+withdrawing its last city switches it off.
 
 ### The subscription tier
 
@@ -183,12 +231,14 @@ touching by hand.
 | `npm run fleet:approve` | Approve or reject a fleet partner for a service |
 | `npm run plan:activate` | List plans, or launch/pull one — the whole launch switch |
 | `npm run plan:comp` | Grant or end a subscription, attributed to an admin |
+| `npm run push:keys` | Generate the VAPID pair. Once, ever — see Notifications |
+| `npm run sms:send-one` | Send one real SMS, to prove a gateway works |
 
 ## Layout
 
 ```
 prisma/
-  schema.prisma          the source of truth: 28 models, 18 enums
+  schema.prisma          the source of truth: 33 models, 24 enums
   seed.ts                the ONLY file that enumerates the five services
   sql/                   invariants Prisma's schema language cannot express
 src/
@@ -203,9 +253,11 @@ src/
     fleet/               dispatch, offers, and the partner's own view
     subscriptions/       plans, enrollment, renewal, and the unbuilt charge seam
     notifications/       the outbox: policy, templates, channels, delivery
+      push/              RFC 8291 encryption, RFC 8292 tokens, the send
+    admin/               console authorisation, the audit trail, its queries
     merchant/            store access and the order queue
     support/             unified tickets
-  tests/                 287 tests, database-free
+  tests/                 396 tests, database-free
 ```
 
 ## Money

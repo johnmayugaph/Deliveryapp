@@ -759,8 +759,12 @@ real file later is one line in `tailwind.config.ts`.
   one cron tick late.
 - **Dispatch has no worker.** Offers are created by cron, so how fast a partner
   sees a job depends on how often it runs.
-- **No admin console.** Fleet approval, plan activation and subscription grants
-  are CLI scripts; store membership is seeded or edited by hand.
+- **The console does not cover everything the CLI does.** `/admin` handles
+  services, people, credits, delivery health and the audit log. Fleet approval
+  (`npm run fleet:approve`), plan activation (`npm run plan:activate`) and
+  subscription grants (`npm run plan:comp`) are still CLI scripts, and store
+  membership is seeded or edited by hand — there is no UI to invite staff or
+  change a role.
 - **No subscription payment rail.** A tier exists and can be granted, but not
   sold. See Phase 9.
 - **No live location on the tracking screen.** The customer sees statuses, not a
@@ -769,15 +773,27 @@ real file later is one line in `tailwind.config.ts`.
   nothing writes them.
 - **Store membership is seeded, not managed.** There is no UI to invite staff or
   change a role — `StoreMember` rows are written by the seed or by hand.
-- **The Semaphore SMS adapter is unverified against the live API.** Written from
-  its documented request shape and exercised only against a stub; this codebase
-  has no gateway account. Now that notifications ride on it too, one real send
-  proves out both the login codes and the whole outbox.
+- **No real SMS has ever been sent.** The adapter is now verified at the wire —
+  `sms-wire.test.ts` asserts the exact bytes a gateway receives over a real
+  socket, and `npm run sms:send-one` sends one real message and prints the full
+  result. What remains unverified is Semaphore's own side: whether a key is
+  live, whether the sender name is registered, what a message costs, whether a
+  handset rings. It could not be answered from the development environment,
+  whose network policy answers 403 to CONNECT for every SMS gateway. It needs a
+  machine with egress and an account.
+
+- **No push subscription from a real push service.** The crypto is pinned
+  byte-for-byte against the reference implementation and the whole server path
+  is verified against a stand-in service over real TLS, but Chrome refuses the
+  Push API in the incognito profile Playwright uses and the environment blocks
+  the push services outright, so no endpoint could be obtained. The error path
+  a person would see is verified; the happy path with a real endpoint is not.
 - **No account recovery.** Losing the phone number means losing the account —
   there is no email fallback and no support-assisted transfer.
 - **No CAPTCHA.** The three throttles are the only abuse defence on code
   requests, which is thin if someone brings many source addresses.
-- **No realtime.** Tracking polls every 15 seconds; there is no push.
+- **No realtime.** Tracking polls every 15 seconds. Push now reaches a closed
+  tab, but the open tab still polls — a live pin would need a socket or SSE.
 - **Menu categories sort alphabetically**, so "Add-ons" leads the menu ahead of
   "Rice meals". Needs a sort field on the category, or categories as rows.
 - **Icons are emoji.** `serviceGlyph()` is a lookup, so swapping in a real icon
@@ -790,3 +806,59 @@ real file later is one line in `tailwind.config.ts`.
   plus haversine distance at a fixed average speed, not routing.
 - **`prisma/sql` guards need `psql`** on the deploy host, and must be applied
   after every `migrate deploy` (`npm run db:setup` does both).
+
+---
+
+## Phase 12 — the second and third channels, and the console
+
+**Real SMS: verified at the wire, unsent in fact.**
+`src/tests/sms-wire.test.ts` runs the Semaphore adapter against a real HTTP
+server on a loopback socket and asserts what a gateway actually receives: the
+method, the content type, the four field names, and — the one that would be a
+silent, billable bug — that the leading `+` of an E.164 number is
+percent-encoded rather than sent raw, where a form decoder turns it into a
+space. Plus every response path: the queued array, a bare object, a 200 with an
+unreadable body, a 422 carrying its reason, a refused connection, and a gateway
+that accepts the socket and then never answers.
+
+`npm run sms:send-one` is the part testing cannot do. One recipient per
+invocation; it refuses a second positional argument, because a script that can
+send to a list is a script that can empty a prepaid balance by accident.
+`SEMAPHORE_ENDPOINT` redirects sends so development can aim at a stub, and is
+ignored when `NODE_ENV=production` — a variable that can point message delivery
+somewhere else is a way to capture login codes. There is a test for the
+*ignoring*, not just the honouring.
+
+The send itself did not happen: the environment's network policy answers 403 to
+CONNECT for api.semaphore.co, api.twilio.com, rest.nexmo.com and api.movider.co.
+
+**Web push, as the third channel.** `NotificationChannelAdapter` claimed a new
+channel would be a file rather than a refactor, and this was the test. It was.
+RFC 8291 encryption and RFC 8292 tokens are written out rather than pulled in,
+because a payload encrypted wrongly is *accepted* by the push service and
+silently discarded by the browser with nothing raising anywhere — and the output
+is pinned byte-for-byte against `http_ece` (the RFC author's own
+implementation) across a fixed vector, a decrypt round-trip, and 200 randomised
+rounds. Push carries every kind because it is free; SMS keeps its restraint;
+quiet hours still apply to informational push.
+
+Verified end to end against a stand-in push service over real TLS that decrypts
+what it receives, and in a real browser via the Chrome DevTools Protocol: the
+worker registers, renders the right title/body/tag/href, replaces a same-tag
+notification, and falls back to something on an unparseable payload.
+
+**The admin console.** Six screens at `/admin`. Every server action calls
+`requireAdmin()` itself — a server action is its own entry point and a layout
+check does not cover it — and a grep test enforces that, along with a required
+reason and an audit row, on every exported action. `AdminAuditEvent` is
+append-only by trigger and its `reason` is at least eight non-blank characters by
+CHECK, both verified against a live database. Credits go through
+`recordAdjustment` and are capped at ₱500. The console deliberately cannot force
+an order's status, edit roles or phone numbers, or list every account.
+
+**A bug the launch switch exposed.** `getServicesByIntentGroup()` hid a service
+that was live in another city — so a vertical launched in Cebu vanished from
+Manila entirely, neither usable nor coming. Unreachable until the console could
+put a service into that state, and the outcome of the first real launch if it
+had shipped. `isOrderableIn(service, cityId)` now separates "live" from "live
+where you are", and the tile reads `orderableHere`.

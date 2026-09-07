@@ -1032,19 +1032,195 @@ do with the messages. The cron says so out loud when it happens.
 How fast a store hears about an order is bounded by how often the cron runs.
 That is the same limitation dispatch has, for the same reason: no worker.
 
-### Push is the next adapter, not the next rewrite
+### Push, which was the test of this design
 
-`NotificationChannelAdapter` is one interface with two implementations. Web push
-lands as a third — a subscription table, VAPID keys from the environment, the
-same `deliver()` signature — and nothing above that layer changes. That is the
-test of whether this design was worth building: the channel that reaches a
-closed tab *for free* should be a file, not a phase.
+`NotificationChannelAdapter` was one interface with two implementations, and the
+claim was that a third would be a file rather than a refactor. It was:
+`push/channel.ts` implements the same `deliver()`, `resolveChannels()` gained
+three lines, and nothing above the adapter layer changed. `KIND_POLICY` and
+`CHANNEL_DEFAULTS` are keyed by every enum member, so adding `PUSH` to
+`NotificationChannel` was a compile error until somebody decided its defaults —
+which is what those exhaustive records are for.
+
+**Push carries every kind. SMS keeps its restraint.** That is the whole reason
+both exist. Push costs nothing per message and reaches a closed tab, so
+withholding it from a message worth writing down would need a reason and there
+isn't one. SMS reaches a phone with no browser permission granted, which is the
+one thing push cannot do, and each message costs a peso. Quiet hours still apply
+to informational push — free does not mean welcome at 2am — which is why `PUSH`
+is deliberately *not* in `ALWAYS_ON_CHANNELS`.
+
+#### The crypto is written out, not pulled in
+
+RFC 8291 payload encryption and RFC 8292 (VAPID) tokens are about two hundred
+lines in `src/lib/notifications/push/`. The reason to own them rather than add a
+dependency is the failure mode: a payload encrypted wrongly is **accepted** by
+the push service, which answers 201, and the browser silently discards a message
+it cannot decrypt. Nothing raises anywhere. Code that can fail that way should be
+readable.
+
+Which also means it cannot be verified by reasoning about it. So:
+
+- The encrypted output is **byte-identical to `http_ece`** — the reference
+  implementation, written by the author of RFC 8291 — across a fixed vector, a
+  decrypt round-trip, and 200 randomised rounds with fresh keys, salts and
+  payload sizes.
+- The VAPID tokens verify under `jws` (the library `web-push` uses) across 50
+  fresh key pairs, in both directions.
+- Neither reference library is a dependency of this project. What is committed
+  is the *agreed output*: two pinned vectors in `push-crypto.test.ts` that fail
+  if a single byte changes, plus a decryptor written independently of the
+  encryptor, so agreement means the derivation is right rather than merely
+  self-consistent.
+
+#### GONE is not FAILED
+
+The distinction `send.ts` exists for. A 404 or 410 means the browser threw the
+subscription away: the row is marked dead and never retried. Anything else might
+be transient. Conflating them either retries a device uninstalled last month
+forever, or discards a live one over a single 500. Both directions have tests.
+
+The fan-out lives in the adapter, not the delivery table: one
+`NotificationDelivery` row per channel, every live browser behind it, succeeding
+if *any* browser took it — because the person was reached. A row per device would
+make "was this person told" a question you answer by counting rows and guessing.
+
+#### Two smaller judgements
+
+**Enqueue skips push when the account has no live subscription.** Push is on by
+default for every kind, so without that check every notification for every
+account that never granted permission writes a PENDING row for the cron to
+attempt against nothing. That is most accounts and most notifications. Deciding
+it at enqueue makes it one SKIPPED row, written once, and the record still says
+what we would have done.
+
+**The service worker handles push and nothing else.** No `fetch` handler. One
+that intercepts requests is a second, stale copy of the app that can serve
+yesterday's prices, and that belongs in a considered caching strategy rather
+than as a side effect of wanting notifications.
+
+#### What is not verified
+
+A subscription from a real push service. Chrome refuses the Push API in the
+incognito profile Playwright uses, and the development environment's network
+policy blocks the push services outright, so no endpoint could be obtained. The
+whole server path *is* verified end to end against a stand-in push service over
+real TLS that decrypts what it receives, and the browser half is verified with
+a push delivered through the Chrome DevTools Protocol: the worker registers,
+renders the right title, body, tag and href, replaces a same-tag notification,
+and falls back to something rather than nothing on an unparseable payload.
+
+---
+
+## The admin console
+
+Six screens at `/admin`, for an account carrying `UserRole.ADMIN`. It is the
+first surface in this codebase that can change somebody else's data, so the
+question it is designed around is not "what can an operator do" but **"how does
+anybody later reconstruct what an operator did"**.
+
+### Authorisation is in the action, not the route
+
+Three layers, and only one of them is real.
+
+`middleware.ts` checks that a session cookie exists. It runs on the edge runtime
+where Prisma is unavailable, so it cannot tell whose cookie it is or what roles
+it carries. It is a bounce for obviously signed-out traffic and nothing more.
+
+The layout calls `getAdminUser()` and returns `notFound()` — a 404, not a 403.
+A 403 tells somebody probing the app that `/admin` exists and that they merely
+lack the role.
+
+**Every server action calls `requireAdmin()` itself.** This is the boundary. A
+server action is its own entry point, reachable by anybody who can post to the
+app, and a layout check does not cover it. `admin-access.test.ts` asserts this
+by reading the source: every exported `*Action` must contain `requireAdmin()`,
+`normaliseReason()` and `recordAdminAction()`. It is exactly the rule that gets
+broken by adding one more function that looks like the others.
+
+`getAdminUser()` also checks `isBlocked` separately from the role, because
+blocking an account that happens to be an admin should stop them using the
+console rather than only stop them ordering lunch.
+
+### The audit trail is append-only, in the database
+
+`AdminAuditEvent` gets the same treatment as the credits ledger, for the same
+reason: an audit trail the people it describes can edit answers no question
+worth asking. A trigger raises on UPDATE and DELETE. A mistaken entry is
+corrected by a later entry.
+
+The write and its audit row **commit in one transaction**. Logging afterwards
+loses the record exactly when the process dies mid-action, which is the case
+somebody will later need to reconstruct.
+
+`reason` is `NOT NULL` and, by CHECK constraint, at least eight non-blank
+characters. Not decoration — it is the only field that answers *was this
+legitimate*, and `"."` satisfies `NOT NULL` while answering nothing. The subject
+is identified twice, by id and by a denormalised `subjectLabel`, so the log still
+reads after the subject has been renamed or deleted.
+
+`AdminAction` is a closed enum rather than free text, and `ADMIN_ACTION_LABEL` is
+keyed by all of it: a new kind of privileged action is a decision plus a line of
+English, not a string somebody typed.
+
+### The credits control cannot become a top-up
+
+`adjustCreditsAction` calls `recordAdjustment`, which is the same one function
+every balance change goes through. The console does not touch a balance field
+and cannot: the ledger table refuses UPDATE and DELETE, an `ADJUSTMENT` without
+an `adminUserId` fails a CHECK, and a grep test asserts this file never writes
+`balanceCentavos` and contains no top-up, transfer or withdrawal.
+
+A single adjustment is capped at **₱500**. A support tool that can issue
+unlimited credit is a support tool that will. A promotion belongs in a campaign
+with its own approval, not in one form field.
+
+### What the console deliberately cannot do
+
+- **Force an order's status.** A state machine with a manual override is not a
+  state machine: an order pushed straight to `DELIVERED` skips the credit-back
+  grant and the notification, and the next person to look wonders why the
+  ledger disagrees with the timeline. Fixing a stuck order means fixing the
+  transition that stuck. The order screen is read-only.
+- **Edit roles.** A role change has consequences across three apps and belongs
+  in a reviewed script, not a dropdown.
+- **Edit a phone number.** The phone *is* the identity; changing it is an
+  account takeover with extra steps.
+- **List every account.** People are found by search only, minimum three
+  characters. A console that opens onto everybody's records invites browsing,
+  and browsing other people's records is the behaviour the audit trail exists to
+  discourage — much easier to discourage by not offering the list.
+
+### The launch switches, and the bug they exposed
+
+`/admin/services` is the payoff for making the registry data. Launching a
+vertical is two form posts — available in a city, then live — with no deploy and
+no code change. The page names no service and no city; it reads both from the
+database, which is the one thing the registry exists for.
+
+Two guards keep the two switches consistent. A service available in no city
+cannot be switched on, and withdrawing its last city switches it off, because a
+tappable tile that fails at checkout is worse than an honest "coming soon".
+
+Building the switch immediately exposed a real bug in
+`getServicesByIntentGroup()`, which had been unreachable until something could
+put a service into the state that triggers it. The old rule was "coming-soon
+tiles show everywhere; a live service only shows where it is live" — so a
+vertical launched in Cebu **vanished from Manila entirely**: neither usable nor
+coming, just absent, with no way for anyone in Manila to know it existed. Since
+this business launches one city at a time, that would have been the outcome of
+the first real launch.
+
+The fix separates two questions that had been one. `isOrderableIn(service,
+cityId)` is now the tile's condition, distinct from `Service.isActive`; a
+service live elsewhere stays visible as something to anticipate. `ServiceTile`
+reads `orderableHere`, never `isActive`.
 
 ---
 
 ## Verification
 
-Database-free, in CI (`npm run verify`) — **62 tests**:
+Database-free, in CI (`npm run verify`) — **396 tests**:
 
 | File | Covers |
 | --- | --- |
@@ -1059,6 +1235,10 @@ Database-free, in CI (`npm run verify`) — **62 tests**:
 | `sms-sender.test.ts` | Sender selection, the production refusal, the Semaphore request shape |
 | `merchant-queue.test.ts` | Role ranking, store-id extraction, queue coverage of every merchant-actionable status |
 | `fleet-offers.test.ts` | Acceptance-rate maths, offer windows, earnings, active-job coverage, per-vertical partner steps |
+| `sms-wire.test.ts` | The exact bytes a gateway receives, over a real loopback socket |
+| `push-crypto.test.ts` | RFC 8291 output pinned to the reference implementation; an independent decryptor; VAPID signing and refusals |
+| `push-send.test.ts` | The Web Push request over a real socket; GONE versus FAILED on every status; what a browser may register |
+| `admin-access.test.ts` | Who counts as an admin, the reason rule, Manila day boundaries, and grep rules that every action is authorised, reasoned and logged |
 
 Verified separately against a live PostgreSQL 16 with the SQL guards applied:
 

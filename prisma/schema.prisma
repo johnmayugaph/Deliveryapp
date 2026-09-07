@@ -380,6 +380,7 @@ model User {
   notifications           Notification[]
   notificationPreferences NotificationPreference[]
   pushSubscriptions       WebPushSubscription[]
+  adminActions            AdminAuditEvent[]                 @relation("AdminAuditActor")
 
   @@index([roles], type: Gin)
   @@index([preferredCityId])
@@ -1481,4 +1482,69 @@ model WebPushSubscription {
 
   /// The delivery pass reads live subscriptions for one user, in this order.
   @@index([userId, expiredAt])
+}
+
+// -----------------------------------------------------------------------------
+// 12. The admin console, and what it did
+// -----------------------------------------------------------------------------
+
+/// What an admin did. Named after the effect, not the screen it happened on.
+///
+/// Deliberately a closed set rather than a free-text action: a log you can
+/// filter is a log somebody reads, and a new kind of privileged action should
+/// be a decision, not a string somebody typed.
+enum AdminAction {
+  /// A vertical was switched on or off for everyone.
+  SERVICE_AVAILABILITY_CHANGED
+  /// A vertical was launched in, or withdrawn from, a city.
+  SERVICE_CITY_CHANGED
+  /// Somebody was blocked or unblocked.
+  USER_BLOCK_CHANGED
+  /// A signed correction to a credits balance, through the ledger.
+  CREDITS_ADJUSTED
+  /// A failed notification delivery was put back in the queue.
+  DELIVERY_REQUEUED
+  /// A complimentary subscription was granted or ended.
+  SUBSCRIPTION_CHANGED
+}
+
+/// One privileged action, and why.
+///
+/// APPEND-ONLY, enforced by a trigger, for the same reason the credits ledger
+/// is: an audit trail that can be edited answers no question worth asking. A
+/// mistaken entry is corrected by a later entry.
+///
+/// `reason` is NOT NULL and non-trivial by CHECK constraint. An audit row
+/// saying only that somebody's balance changed is a row nobody can act on —
+/// support needs to know it was ticket #482, and the person deciding whether
+/// this was legitimate needs it more.
+model AdminAuditEvent {
+  id String @id @default(cuid())
+
+  actorId String
+  actor   User   @relation("AdminAuditActor", fields: [actorId], references: [id])
+
+  action AdminAction
+
+  /// The model that was touched, e.g. "User", "Service". A plain string rather
+  /// than a relation because the subject can be any table, and a nullable
+  /// foreign key per table would be a column per table.
+  subjectType  String
+  subjectId    String
+  /// Something a person recognises without a lookup — a phone, a service key,
+  /// an order number. Denormalised on purpose: the subject may later be
+  /// renamed or deleted, and the log should still read.
+  subjectLabel String
+
+  reason String
+
+  /// What changed, as before/after. Read-only, and never used for logic.
+  detail Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([actorId, createdAt])
+  @@index([subjectType, subjectId, createdAt])
+  @@index([action, createdAt])
 }
