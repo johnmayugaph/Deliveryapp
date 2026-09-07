@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { getCurrentCityId, getCurrentUser } from '@/lib/auth/session';
 import { loadHomeData } from '@/lib/home/home-data';
 import { LocationHeader } from '@/components/home/LocationHeader';
@@ -13,6 +14,11 @@ export const dynamic = 'force-dynamic';
 /**
  * The customer home screen, built around SERVICE SELECTION rather than dropping
  * straight into a restaurant list.
+ *
+ * PUBLIC. Everything here renders for somebody with no account: the tiles, the
+ * promotions and a well-rated-stores fallback in place of reorder shortcuts.
+ * `loadHomeData` takes a null user throughout, and the one thing that cannot
+ * work anonymously — a saved address — reads as an invitation to set one.
  *
  * Order, top to bottom:
  *   1. Current delivery location, tap to change.
@@ -37,7 +43,21 @@ export default async function HomePage() {
         <LocationHeader
           addressLabel={data.currentAddressLabel}
           cityName={data.currentCityName}
-          bell={user ? <NotificationBell userId={user.id} /> : null}
+          bell={
+            user ? (
+              <NotificationBell userId={user.id} />
+            ) : (
+              /* The door, for somebody who arrived without one. The home
+                 screen is public, so this is the only thing on it that says
+                 an account exists at all. */
+              <Link
+                href="/login?next=%2F"
+                className="shrink-0 rounded-full bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500"
+              >
+                Sign in
+              </Link>
+            )
+          }
         />
         <GlobalSearch activeServiceNames={activeServiceNames} />
       </div>
@@ -46,6 +66,7 @@ export default async function HomePage() {
         groups={data.serviceGroups}
         cityName={data.currentCityName}
         askedFor={data.askedFor}
+        signedIn={user !== null}
       />
 
       <ActiveOrderStrip orders={data.activeOrders} />

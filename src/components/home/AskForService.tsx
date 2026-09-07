@@ -31,6 +31,7 @@ export function AskForService({
   displayName,
   cityName,
   askedByMe,
+  signedIn,
   tileBackground,
   children,
 }: {
@@ -39,6 +40,14 @@ export function AskForService({
   cityName: string;
   /** From the database, for a signed-in person. */
   askedByMe: boolean;
+  /**
+   * Whether this viewer has an account.
+   *
+   * The tile cannot promise to tell somebody it has no way of reaching, and
+   * the home screen is public now, so most people tapping this may well have
+   * no account at all.
+   */
+  signedIn: boolean;
   tileBackground: string;
   children: React.ReactNode;
 }) {
@@ -114,11 +123,15 @@ export function AskForService({
           {pending
             ? 'Noting…'
             : result?.ok
-              ? describeAskCount(result.accounts)
+              ? describeAskCount(result.accounts, {
+                  canBeTold: result.canBeTold ?? signedIn,
+                })
               : result
                 ? result.message
                 : asked
-                  ? 'We will tell you'
+                  ? signedIn
+                    ? 'We will tell you'
+                    : 'Sign in to be told'
                   : 'Want this? Tap'}
         </span>
       </button>

@@ -24,8 +24,17 @@ import {
 export interface InterestActionResult {
   ok: boolean;
   message: string;
-  /** Accounts that have asked, including this one. Absent on failure. */
+  /** Accounts that have asked. Absent on failure. */
   accounts?: number;
+  /**
+   * Whether the person who just asked can be told when it launches.
+   *
+   * False for a visitor with no account, and the tile has to know: there is no
+   * way to reach them, so a tile that says "we will tell you" is lying, and a
+   * count that says "you and 33 others" counts them among people they are not
+   * one of.
+   */
+  canBeTold?: boolean;
 }
 
 export async function registerInterestAction(
@@ -48,9 +57,13 @@ export async function registerInterestAction(
     return {
       ok: true,
       accounts: outcome.tally.accounts,
-      message: outcome.firstTime
-        ? 'Noted — we will tell you when it opens here.'
-        : 'Already noted. We will tell you when it opens here.',
+      canBeTold: user !== null,
+      message:
+        user === null
+          ? 'Noted. Sign in and we can tell you when it opens here.'
+          : outcome.firstTime
+            ? 'Noted — we will tell you when it opens here.'
+            : 'Already noted. We will tell you when it opens here.',
     };
   } catch (error) {
     if (error instanceof ServiceAlreadyLiveError) {

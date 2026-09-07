@@ -1264,11 +1264,47 @@ asked us to note that they wanted Mart; they did not ask to be texted, and a
 launch announcement to a waiting list at a peso a head is the message that
 teaches people to ignore texts from us.
 
-**One thing this does not measure yet.** Every route is behind the login wall,
-including `/`, so today only signed-in people ever see a tile. The anonymous
-path is built, tested and unreachable — `loadHomeData` already accepts a null
-user — and becomes live the moment `/` is added to the middleware's public
-prefixes. Until then the accounts number is the only one that moves.
+### The storefront is public
+
+A delivery app whose front door demands a phone number has already lost the
+customer, and the demand signal above was measuring the wrong population: only
+people who had already signed up could see a tile at all.
+
+So `/`, `/services/…`, `/stores/…`, `/search` and `/help` are reachable with no
+account. Nothing under them renders anything about a person — no contact
+details, no order history, no saved addresses. A stranger browses the tiles, a
+service's stores and a store's menu, taps a coming-soon tile, and fills a cart,
+which lives in their own browser and survives the login detour. Signing in is
+asked for at the first point it is actually needed: `/checkout`, which redirects
+there itself, and anything about a person rather than a product.
+
+**Two lists, matched differently, and the difference is the point.**
+`PUBLIC_PATHS` is exact; `PUBLIC_SUBTREES` matches on a path **boundary** —
+`/services` or `/services/anything`, never `/servicesomething`. A plain
+`startsWith` has two traps in it: `'/'` in the list makes the entire
+application public because `'/admin'.startsWith('/')` is true, and `/help` in
+the list makes a future `/helpdesk` public. Neither fails loudly. Both are
+asserted in `src/tests/public-routes.test.ts`, in both directions — sixteen
+private paths bounce, and the storefront does not.
+
+**What being public changed about the tiles.** Two things a tile said were
+true only for a signed-in reader, and became lies the moment a stranger could
+tap one:
+
+- *"you and 33 others"* counted them among 33 accounts they are not one of;
+- *"we will tell you"* promised a message to somebody the product has no way to
+  reach.
+
+So the action returns `canBeTold`, and a visitor with no account gets
+**"Noted — sign in to be told"**: true, and the one thing that would let us
+keep the promise. Their tap is still counted, anonymously, in the shared
+counter.
+
+**A caveat on the anonymous numbers.** `getCurrentCityId()` falls back to
+`NEXT_PUBLIC_DEFAULT_CITY_ID` for somebody with no saved address, so every
+anonymous tap is attributed to the default city. The per-city breakdown is only
+as good as the accounts column — which is the column the console already tells
+you to trust.
 
 ## Demo data, and why it cannot be allowed to matter
 

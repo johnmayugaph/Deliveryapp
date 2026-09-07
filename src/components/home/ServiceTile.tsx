@@ -20,12 +20,15 @@ export function ServiceTile({
   service,
   cityName,
   askedByMe = false,
+  signedIn,
 }: {
   service: ServiceAvailability;
   /** Where the visitor is standing, for the tile's own copy. */
   cityName: string;
   /** Whether this signed-in person has already asked for it here. */
   askedByMe?: boolean;
+  /** Whether there is an account to reach, if this one launches. */
+  signedIn: boolean;
 }) {
   const accent = accentClasses(service.accentToken);
   const glyph = serviceGlyph(service.icon);
@@ -54,6 +57,7 @@ export function ServiceTile({
         displayName={service.displayName}
         cityName={cityName}
         askedByMe={askedByMe}
+        signedIn={signedIn}
         tileBackground={accent.tileBackground}
       >
         {inner}

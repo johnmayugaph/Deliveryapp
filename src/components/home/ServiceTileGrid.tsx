@@ -12,12 +12,15 @@ export function ServiceTileGrid({
   groups,
   cityName,
   askedFor,
+  signedIn,
 }: {
   groups: ServiceGroup[];
   /** Where the visitor is standing. The coming-soon tiles say it out loud. */
   cityName: string;
   /** Service keys this signed-in person has already asked for, in this city. */
   askedFor: readonly string[];
+  /** Whether this visitor has an account. The screen is public. */
+  signedIn: boolean;
 }) {
   if (groups.length === 0) {
     return (
@@ -45,6 +48,7 @@ export function ServiceTileGrid({
                 service={service}
                 cityName={cityName}
                 askedByMe={askedFor.includes(service.key)}
+                signedIn={signedIn}
               />
             ))}
           </div>

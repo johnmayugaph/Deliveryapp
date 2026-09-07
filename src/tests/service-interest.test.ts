@@ -124,20 +124,47 @@ describe('counting who asked', () => {
 });
 
 describe('what the tile says back', () => {
+  const told = { canBeTold: true };
+
   it('tells the first person they are the first', () => {
-    expect(describeAskCount(1)).toBe('Noted — you are the first');
+    expect(describeAskCount(1, told)).toBe('Noted — you are the first');
   });
 
   it('counts the others, not the total', () => {
     // "you and 33 others" reads as a crowd; "34 people" reads as a statistic
     // and makes the reader wonder whether they are included.
-    expect(describeAskCount(2)).toBe('Noted — you and 1 other');
-    expect(describeAskCount(34)).toBe('Noted — you and 33 others');
+    expect(describeAskCount(2, told)).toBe('Noted — you and 1 other');
+    expect(describeAskCount(34, told)).toBe('Noted — you and 33 others');
   });
 
   it('never says nothing, even with no count to show', () => {
-    expect(describeAskCount(undefined)).toBe('Noted — you are the first');
-    expect(describeAskCount(0)).toBe('Noted — you are the first');
+    expect(describeAskCount(undefined, told)).toBe('Noted — you are the first');
+    expect(describeAskCount(0, told)).toBe('Noted — you are the first');
+  });
+
+  /**
+   * The home screen is public, so most people tapping a tile may have no
+   * account. Two things are wrong to say to them, and both were said before
+   * the storefront was opened up and nobody anonymous could reach a tile:
+   *
+   *   - "you and 33 others" counts them among 33 accounts they are not one of;
+   *   - "we will tell you" promises a message to somebody the product has no
+   *     way to reach at all.
+   */
+  it('does not count a stranger among the accounts', () => {
+    const line = describeAskCount(34, { canBeTold: false });
+    expect(line).not.toMatch(/33|34|other/);
+  });
+
+  it('offers a stranger the thing that would let us tell them', () => {
+    expect(describeAskCount(34, { canBeTold: false })).toBe('Noted — sign in to be told');
+    expect(describeAskCount(0, { canBeTold: false })).toBe('Noted — sign in to be told');
+  });
+
+  it('still confirms the tap was recorded', () => {
+    // Their tap IS counted — anonymously, in a shared counter. Saying nothing
+    // would suggest it was refused.
+    expect(describeAskCount(1, { canBeTold: false })).toMatch(/^Noted/);
   });
 });
 
@@ -185,6 +212,13 @@ describe('telling people when it launches', () => {
 });
 
 describe('the shape of the feature', () => {
+  it('never promises a stranger a message it cannot send', () => {
+    const action = source('src/lib/actions/interest-actions.ts');
+    // The result has to carry this, or the tile cannot tell the difference.
+    expect(action).toMatch(/canBeTold/);
+    expect(action).toMatch(/Sign in and we can tell you/);
+  });
+
   it('records interest without requiring an account', async () => {
     // The tiles are the first thing a stranger sees. A waiting list that only
     // counts people who already signed up measures the wrong population.

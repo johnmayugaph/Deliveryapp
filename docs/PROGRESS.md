@@ -1021,3 +1021,36 @@ ASKED, the count returned, and still marked after a reload with localStorage
 cleared, because that state came from the database.
 
 513 tests pass; `npm run build` and `npm run lint` are clean.
+
+## Phase 15 — the front door opens
+
+The home screen is public, and so is the rest of the storefront: `/`,
+`/services/…`, `/stores/…`, `/search` and `/help`. A stranger can browse the
+tiles, a service's stores and a store's menu, tap a coming-soon tile, and fill
+a cart. Signing in is asked for where it is actually needed — `/checkout`, and
+anything about a person rather than a product. Sixteen private paths still
+bounce, carrying `?next=` so a deep link survives the detour, and the cart
+lives in the browser so it survives it too.
+
+**The subtle part was the matching, not the list.** `/` cannot be a prefix:
+`'/admin'.startsWith('/')` is true, so one entry in the wrong list serves the
+console to the internet with no error and nothing to notice. Prefixes now match
+on a path boundary as well, which closes the other half of the same trap — a
+future `/helpdesk` would otherwise be public on the strength of `/help` being
+in a list. Both are asserted, and the assertions were checked against the real
+mistake.
+
+**Opening the door made two bits of tile copy false**, which is the part worth
+recording. "You and 33 others" counted a stranger among 33 accounts they are
+not one of, and "we will tell you" promised a message to somebody the product
+cannot reach. The action now returns `canBeTold` and an anonymous visitor is
+told "Noted — sign in to be told" — true, and the one thing that would let us
+keep the promise. The tap is still counted.
+
+**Verified as an actual stranger**, with no cookie in the jar: the five public
+routes return 200 and the ten private ones 307 to `/login` with the
+destination attached; the home screen renders with a Sign in button where the
+notification bell would be; a coming-soon tap returns the honest line and holds
+it across a reload; and tile → service → store → menu → add to cart → cart bar
+→ `/checkout` → `/login?next=%2Fcheckout` works end to end with the cart
+intact afterwards. 528 tests pass; build and lint clean.

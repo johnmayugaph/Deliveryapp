@@ -54,11 +54,23 @@ export function serviceGlyph(icon: string): string {
  * browser bundle is a build error waiting to happen. It is presentation, and
  * this file is where presentation lives.
  *
- * Only ever the account count. A number a stranger can inflate by posting a
- * form does not belong on the home screen; the console shows the anonymous
- * tally separately, labelled, where somebody can weigh it.
+ * Two readers, and the difference matters twice over.
+ *
+ * A signed-in person is one of the accounts in the count, so "you and 33
+ * others" is true, and they can be told when it launches. Somebody with no
+ * account is in neither position: they are not one of those 33, and there is
+ * no way to reach them at all. Telling them otherwise would be a promise the
+ * product cannot keep, so they get the truth and the thing that would fix it.
+ *
+ * The number is only ever the account count. A tally a stranger can inflate by
+ * posting a form does not belong on the home screen; the console shows the
+ * anonymous one separately, labelled, where somebody can weigh it.
  */
-export function describeAskCount(accounts: number | undefined): string {
+export function describeAskCount(
+  accounts: number | undefined,
+  options: { canBeTold: boolean },
+): string {
+  if (!options.canBeTold) return 'Noted — sign in to be told';
   if (accounts === undefined || accounts <= 1) return 'Noted — you are the first';
   if (accounts === 2) return 'Noted — you and 1 other';
   return `Noted — you and ${accounts - 1} others`;
