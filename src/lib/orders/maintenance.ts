@@ -46,6 +46,10 @@ import {
   ticketsNeedingChase,
 } from '@/lib/support/queries';
 import { describeWait, waitingMinutes } from '@/lib/support/policy';
+import {
+  markRatingsNotified,
+  pendingRatingDigests,
+} from '@/lib/ratings/reviews';
 import { pruneExpiredInvites } from '@/lib/merchant/staff';
 import { reportError } from '@/lib/monitoring/report';
 import { ErrorSource } from '@prisma/client';
@@ -565,6 +569,89 @@ export async function chaseWaitingTickets(
   return { chased: waiting.length, admins };
 }
 
+export interface RatingDigestResult {
+  digests: number;
+  recipients: number;
+  ratings: number;
+  failed: number;
+}
+
+/**
+ * Tells shops and riders that customers have rated them.
+ *
+ * ONE MESSAGE PER SUBJECT covering everything since the last one, not one per
+ * rating — see `RATING_DIGEST_DELAY_MINUTES`. A shop with a good lunch would
+ * otherwise get thirty notifications, learn to swipe them away, and miss the
+ * one that mattered.
+ *
+ * The digest carries the count, the average and the LOWEST score, and never
+ * the customer's words. A comment is text somebody typed about a person and a
+ * notification lands on a lock screen, which is the wrong place to read it and
+ * the wrong place for somebody else to read it. The screens have the words.
+ *
+ * Marked told even when the enqueue collapsed onto an existing row: somebody
+ * has already been told, which is the same outcome. A batch that fails is left
+ * un-notified and picked up next pass — a rating nobody hears about is a
+ * missed message, and telling them twice about the same one is worse.
+ */
+export async function sendRatingDigests(
+  now: Date = new Date(),
+): Promise<RatingDigestResult> {
+  const pending = await pendingRatingDigests(now);
+  if (pending.length === 0) {
+    return { digests: 0, recipients: 0, ratings: 0, failed: 0 };
+  }
+
+  let digests = 0;
+  let recipients = 0;
+  let ratings = 0;
+  let failed = 0;
+
+  for (const batch of pending) {
+    try {
+      for (const userId of batch.recipientIds) {
+        await enqueueNotification({
+          userId,
+          kind: NotificationKind.RATINGS_RECEIVED,
+          context: {
+            ratingCount: batch.digest.count,
+            ratingAverage: batch.digest.average,
+            ratingLowest: batch.digest.lowest,
+            ratingSubject:
+              batch.subject === 'STORE' ? `the food at ${batch.label}` : batch.label,
+          },
+          href:
+            batch.subject === 'STORE'
+              ? `/merchant/${batch.subjectId}/history`
+              : '/fleet/profile',
+          // The newest review in the batch, so a digest is unique to the set
+          // it covered — a retried pass cannot send the same summary twice,
+          // and a later batch is a different key rather than a collision.
+          dedupeKey: `ratings:${batch.subject}:${batch.subjectId}:${
+            batch.reviewIds[batch.reviewIds.length - 1]
+          }:${userId}`,
+        });
+        recipients += 1;
+      }
+      await markRatingsNotified({
+        subject: batch.subject,
+        reviewIds: batch.reviewIds,
+        now,
+      });
+      digests += 1;
+      ratings += batch.digest.count;
+    } catch (error) {
+      await reportError(error, {
+        source: ErrorSource.CRON,
+        route: 'sendRatingDigests',
+      });
+      failed += 1;
+    }
+  }
+
+  return { digests, recipients, ratings, failed };
+}
+
 export async function runMaintenance(): Promise<{
   expiredOffers: number;
   dispatched: FanOutResult[];
@@ -573,6 +660,7 @@ export async function runMaintenance(): Promise<{
   launchAnnouncements: LaunchAnnouncementResult;
   errorAlerts: ErrorAlertResult;
   supportChases: SupportChaseResult;
+  ratingDigests: RatingDigestResult;
   notifications: DeliveryPassResult;
   recoveryAlerts: RecoveryAlertResult;
   liftedFreezes: number;
@@ -600,6 +688,9 @@ export async function runMaintenance(): Promise<{
   // Same reasoning: a customer who has been waiting two hours should not wait
   // for the next pass to have that noticed.
   const supportChases = await chaseWaitingTickets();
+  // Also before the delivery pass. Nothing is waiting on a ratings digest, but
+  // there is no reason to hold it back a whole interval either.
+  const ratingDigests = await sendRatingDigests();
   // Last, so that everything this pass enqueued goes out in the same run: a
   // store hearing about an order one cron interval later than it was placed is
   // the cost of having no worker, and there is no reason to make it two.
@@ -628,6 +719,7 @@ export async function runMaintenance(): Promise<{
     launchAnnouncements,
     errorAlerts,
     supportChases,
+    ratingDigests,
     notifications,
     recoveryAlerts,
     liftedFreezes,

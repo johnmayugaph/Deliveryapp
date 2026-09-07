@@ -60,6 +60,7 @@ brief's changes already folded in.
 | 22 | A map for the shop's pin, and three other ways to set it | ✅ Done |
 | 23 | Address search on that map, through the server | ✅ Done |
 | 24 | Ratings: written at last, derived, and private | ✅ Done |
+| 25 | A ratings digest for the shop and the rider | ✅ Done |
 
 Between phases 11 and 12: the interface was translated to English, the product
 was named TARA, and the typeface and brand blue were set from the brand artwork.
@@ -797,10 +798,15 @@ real file later is one line in `tailwind.config.ts`.
   Phase 24 — but it means the strongest opinions in the system never reach the
   average. What those customers get instead is an automatic refund and a
   support thread, which is the right answer and not the same answer.
-- **Nobody is told they were rated.** A merchant and a rider see their scores
-  on their own screens; neither gets a notification, because a one-star alert
-  is a bad way to learn something and an easy thing to abuse. It does mean a
-  complaint can sit unread.
+- **A ratings digest waits up to an hour, by design.** Batching is what stops
+  a busy shop getting thirty notifications, but it does mean a single rating on
+  a quiet day is not immediate. Nobody is waiting on it.
+- **A non-admin hitting an /admin URL records an error report.** Found while
+  drilling this: `requireAdmin()` throws, the layout's `notFound()` wins the
+  response, but the throw still reaches `onRequestError` and lands on
+  /admin/errors. The 404 is correct; the error report is noise, and anybody
+  could fill that page with it. The reporter needs to treat an expected
+  authorisation refusal as not-a-fault.
 - **Support has no public contact channel until somebody sets one.**
   `SUPPORT_PHONE`, `SUPPORT_EMAIL` and `SUPPORT_FACEBOOK` are all optional and
   nothing is invented, because a number nobody answers is worse than no number.
@@ -1679,3 +1685,57 @@ badge from "New" to ★ 4.7, editing one review to one star moves the average to
 3.33, and a from-scratch recompute agrees exactly.
 
 908 tests pass; build and lint clean.
+
+---
+
+## Phase 25 — the ratings digest ✅
+
+Phase 24 closed by naming this as a deliberate omission: a one-star alert is a
+bad way to learn something and an easy thing to abuse. Both still true — and
+neither is a reason to leave a complaint unread. The answer turned out to be
+the shape of the message rather than its absence.
+
+**One notification per subject, covering everything since the last one.** A
+shop with a good lunch would otherwise get thirty of them, learn to swipe them
+away, and miss the one that mattered. Batched, that becomes "3 new ratings for
+the food at Aling Nena Carinderia, averaging 3.3. The lowest was 1 — open it to
+read what they said."
+
+The batching is a delay rather than a schedule: a batch goes out once its
+oldest un-notified member is past an hour, so a rating that lands mid-rush
+waits for the rest of the rush and nothing needs to know the time of day.
+
+Three properties, each of which is the decision rather than the mechanism:
+
+- **The numbers, never the words.** A comment is text somebody typed about a
+  person, and a notification lands on a lock screen — the wrong place to read
+  it, and the wrong place for somebody else to read it.
+- **The worst score is named.** A digest that hid a one-star inside a good
+  afternoon is one people learn to ignore, and the bad one is why you look.
+- **INFORMATIONAL, so quiet hours hold it to 6am.** Nobody should learn they
+  got one star at eleven at night. Never SMS: the volume is bounded by
+  deliveries, which is the number that spikes on a good day.
+
+At a shop it reaches MANAGER and above — staff work the queue, and a review of
+the cooking is not theirs to answer. A shop with nobody at that level is
+skipped rather than marked told, so its ratings wait for whoever is next given
+the keys.
+
+Verified against the real database and the real cron: nothing is due in the
+first hour; backdating the batch produces exactly two digests (the shop, three
+ratings averaging 3.33 lowest 1, to the OWNER; the rider, three averaging 4.0
+lowest 2); the STAFF member at the same shop gets nothing; a second pass sends
+nothing; a freshly un-notified rating produces a new digest rather than
+colliding; both land in the right inbox with the right href, on IN_APP and PUSH
+only — and no comment text appears in either.
+
+### One thing found along the way, not fixed here
+
+A non-admin hitting an `/admin` URL **records an error report**. The layout's
+`notFound()` correctly wins the response, but the page's `requireAdmin()` throw
+still reaches `onRequestError` and lands on /admin/errors. The 404 is right;
+the error report is noise, and anybody could fill that page with it. It is
+listed under Known gaps rather than fixed in this commit, because it belongs to
+the monitoring layer and not to ratings.
+
+922 tests pass; build and lint clean.

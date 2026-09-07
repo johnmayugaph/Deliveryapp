@@ -50,6 +50,7 @@ const KIND_GLYPH: Readonly<Record<NotificationKind, string>> = {
   [NotificationKind.SUPPORT_TICKET_WAITING]: '📥',
   [NotificationKind.SUPPORT_REPLY]: '💬',
   [NotificationKind.STORE_ACCESS_CHANGED]: '🏪',
+  [NotificationKind.RATINGS_RECEIVED]: '⭐',
 };
 
 /**

@@ -30,6 +30,7 @@ async function main() {
     launchAnnouncements,
     errorAlerts,
     supportChases,
+    ratingDigests,
     notifications,
     recoveryAlerts,
     liftedFreezes,
@@ -68,6 +69,16 @@ async function main() {
     console.log(
       `Support: ${supportChases.chased} ticket(s) still unanswered past the ` +
         `target — told ${supportChases.admins} administrator(s). See /admin/support.`,
+    );
+  }
+
+  if (ratingDigests.digests > 0 || ratingDigests.failed > 0) {
+    console.log(
+      `Ratings: ${ratingDigests.ratings} rating(s) summarised into ` +
+        `${ratingDigests.digests} digest(s) for ${ratingDigests.recipients} ` +
+        'recipient(s)' +
+        (ratingDigests.failed > 0 ? `, ${ratingDigests.failed} to retry` : '') +
+        '.',
     );
   }
 

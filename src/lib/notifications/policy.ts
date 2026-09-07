@@ -219,6 +219,24 @@ export const KIND_POLICY: Readonly<Record<NotificationKind, KindPolicy>> = {
     urgency: NotificationUrgency.INFORMATIONAL,
     channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
   },
+
+  /**
+   * Customers rated you.
+   *
+   * INFORMATIONAL, and here that is the point rather than a shrug. Quiet hours
+   * DEFER an informational push to 6am, and this is the one kind where being
+   * held overnight is a feature: nobody should learn they got one star at
+   * eleven at night, and it will read no differently over breakfast.
+   *
+   * Never SMS. The volume is bounded by how many orders were delivered, which
+   * is the number that spikes on a good day — a shop's best afternoon should
+   * not be its biggest bill. And it is a digest, so it is already the cheapest
+   * possible version of itself.
+   */
+  [NotificationKind.RATINGS_RECEIVED]: {
+    urgency: NotificationUrgency.INFORMATIONAL,
+    channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
+  },
 };
 
 /**

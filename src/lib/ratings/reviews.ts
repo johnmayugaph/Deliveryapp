@@ -8,9 +8,14 @@ import { prisma, type PrismaTransactionClient } from '@/lib/prisma';
 import { getService } from '@/lib/services/registry';
 import { storeIdFromDetails } from '@/lib/merchant/access';
 import { displayNameFor } from '@/lib/auth/session';
+import { StoreRole } from '@prisma/client';
+import { roleSatisfies } from '@/lib/merchant/access';
 import {
   averageStars,
   canReviewOrder,
+  digestIsDue,
+  foldRatingDigest,
+  type RatingDigest,
   normaliseComment,
   parseStars,
   REVIEW_REFUSAL_MESSAGE,
@@ -493,4 +498,153 @@ export async function ratingSummary(now: Date = new Date()): Promise<{
         ? null
         : averageStars(partnerScores.map((row) => row.partnerStars!)),
   };
+}
+
+// --- Telling the shop and the rider ------------------------------------------
+
+export interface PendingDigest {
+  subject: 'STORE' | 'FLEET_PARTNER';
+  subjectId: string;
+  /** Who to actually notify. A shop is people; a partner is one person. */
+  recipientIds: string[];
+  /** What the digest is about, for the copy. */
+  label: string;
+  reviewIds: string[];
+  digest: RatingDigest;
+}
+
+/**
+ * Batches of ratings nobody has been told about yet.
+ *
+ * Grouped by SUBJECT rather than returned per review, because the notification
+ * is a digest — see `RATING_DIGEST_DELAY_MINUTES` for why a buzz per star is
+ * the wrong design. A batch is only returned once its oldest member is old
+ * enough, so a rating that arrives during a lunch rush waits for the rest of
+ * the rush rather than going out alone.
+ *
+ * A subject with nobody to notify is skipped rather than marked: a shop whose
+ * last manager left should still have its ratings waiting when somebody is
+ * given the keys, and marking them told would lose them silently.
+ */
+export async function pendingRatingDigests(
+  now: Date = new Date(),
+): Promise<PendingDigest[]> {
+  const [storeRows, partnerRows] = await Promise.all([
+    prisma.orderReview.findMany({
+      where: { storeNotifiedAt: null, storeStars: { not: null }, storeId: { not: null } },
+      select: {
+        id: true,
+        storeId: true,
+        storeStars: true,
+        createdAt: true,
+        store: { select: { id: true, name: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 500,
+    }),
+    prisma.orderReview.findMany({
+      where: {
+        partnerNotifiedAt: null,
+        partnerStars: { not: null },
+        fleetPartnerId: { not: null },
+      },
+      select: {
+        id: true,
+        fleetPartnerId: true,
+        partnerStars: true,
+        createdAt: true,
+        fleetPartner: { select: { id: true, userId: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 500,
+    }),
+  ]);
+
+  const pending: PendingDigest[] = [];
+
+  // --- shops ---
+  const byStore = new Map<string, typeof storeRows>();
+  for (const row of storeRows) {
+    const list = byStore.get(row.storeId!) ?? [];
+    list.push(row);
+    byStore.set(row.storeId!, list);
+  }
+
+  // Who at a shop hears about it: MANAGER and above. Staff work the order
+  // queue, and a review of the cooking is not theirs to answer — nor is it a
+  // thing to push at somebody mid-shift.
+  const storeIds = [...byStore.keys()];
+  const members =
+    storeIds.length === 0
+      ? []
+      : await prisma.storeMember.findMany({
+          where: { storeId: { in: storeIds } },
+          select: { storeId: true, userId: true, role: true },
+        });
+  const recipientsByStore = new Map<string, string[]>();
+  for (const member of members) {
+    if (!roleSatisfies(member.role, StoreRole.MANAGER)) continue;
+    const list = recipientsByStore.get(member.storeId) ?? [];
+    list.push(member.userId);
+    recipientsByStore.set(member.storeId, list);
+  }
+
+  for (const [storeId, rows] of byStore) {
+    if (!digestIsDue({ oldestAt: rows[0]!.createdAt, now })) continue;
+    const recipients = recipientsByStore.get(storeId) ?? [];
+    if (recipients.length === 0) continue;
+    const digest = foldRatingDigest(rows.map((row) => row.storeStars!));
+    if (digest === null) continue;
+    pending.push({
+      subject: 'STORE',
+      subjectId: storeId,
+      recipientIds: recipients,
+      label: rows[0]!.store?.name ?? 'your shop',
+      reviewIds: rows.map((row) => row.id),
+      digest,
+    });
+  }
+
+  // --- partners ---
+  const byPartner = new Map<string, typeof partnerRows>();
+  for (const row of partnerRows) {
+    const list = byPartner.get(row.fleetPartnerId!) ?? [];
+    list.push(row);
+    byPartner.set(row.fleetPartnerId!, list);
+  }
+
+  for (const [partnerId, rows] of byPartner) {
+    if (!digestIsDue({ oldestAt: rows[0]!.createdAt, now })) continue;
+    const userId = rows[0]!.fleetPartner?.userId;
+    if (userId === undefined) continue;
+    const digest = foldRatingDigest(rows.map((row) => row.partnerStars!));
+    if (digest === null) continue;
+    pending.push({
+      subject: 'FLEET_PARTNER',
+      subjectId: partnerId,
+      recipientIds: [userId],
+      label: 'your deliveries',
+      reviewIds: rows.map((row) => row.id),
+      digest,
+    });
+  }
+
+  return pending;
+}
+
+/** Marks a batch told. Only the half the digest was about. */
+export async function markRatingsNotified(input: {
+  subject: 'STORE' | 'FLEET_PARTNER';
+  reviewIds: readonly string[];
+  now?: Date;
+}): Promise<number> {
+  const at = input.now ?? new Date();
+  const { count } = await prisma.orderReview.updateMany({
+    where: { id: { in: [...input.reviewIds] } },
+    data:
+      input.subject === 'STORE'
+        ? { storeNotifiedAt: at }
+        : { partnerNotifiedAt: at },
+  });
+  return count;
 }

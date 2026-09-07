@@ -49,6 +49,12 @@ export interface NotificationContext {
   /** For store access: what they are at the shop (`storeName` is above). */
   storeRoleLabel?: string;
   storeAccessEvent?: 'GRANTED' | 'ROLE_CHANGED' | 'REMOVED';
+  /** For a ratings digest: how many, the average, and the worst of them. */
+  ratingCount?: number;
+  ratingAverage?: number;
+  ratingLowest?: number;
+  /** "your deliveries" or "the food" — what was being rated. */
+  ratingSubject?: string;
   /**
    * Which of the three things happened. Without it a customer's reply to a
    * thread reads as a brand-new ticket, and an administrator learns to stop
@@ -309,6 +315,41 @@ export const NOTIFICATION_TEMPLATES: Readonly<Record<NotificationKind, Template>
         `You have been added to ${store} as ${role}. Open it from your ` +
         'profile to take orders.',
       sms: `TARA: you have been added to ${store} as ${role}.`,
+    };
+  },
+
+  /**
+   * A ratings digest.
+   *
+   * Carries the numbers and NEVER the customer's words. A comment is text
+   * somebody typed about a person, and a notification is delivered to a lock
+   * screen — which is both the wrong place to read it and the wrong place for
+   * it to be read by somebody else.
+   *
+   * It does name the WORST score when one is poor. Saying "3 new ratings" and
+   * hiding that one of them was a two would be a digest people learn to
+   * ignore, and the bad one is the whole reason to look.
+   */
+  [NotificationKind.RATINGS_RECEIVED]: (context) => {
+    const count = context.ratingCount ?? 1;
+    const what = context.ratingSubject ?? 'your work';
+    const plural = count === 1 ? 'rating' : 'ratings';
+    const average =
+      context.ratingAverage === undefined ? null : context.ratingAverage.toFixed(1);
+    const poor = context.ratingLowest !== undefined && context.ratingLowest <= 3;
+
+    return {
+      title:
+        count === 1 && context.ratingLowest !== undefined
+          ? `A ${context.ratingLowest}-star rating`
+          : `${count} new ${plural}`,
+      body:
+        `${count} new ${plural} for ${what}` +
+        (average === null ? '' : `, averaging ${average}`) +
+        (poor
+          ? `. The lowest was ${context.ratingLowest} — open it to read what they said.`
+          : '. Open it to see the details.'),
+      sms: `TARA: you have ${count} new ${plural}.`,
     };
   },
 

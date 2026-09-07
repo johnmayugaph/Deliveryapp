@@ -2,6 +2,9 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { OrderStatus } from '@prisma/client';
+import { NotificationChannel, NotificationKind } from '@prisma/client';
+import { KIND_POLICY } from '@/lib/notifications/policy';
+import { renderNotification } from '@/lib/notifications/templates';
 import {
   MAX_COMMENT_LENGTH,
   MIN_REVIEWS_TO_SHOW,
@@ -14,6 +17,9 @@ import {
   describeRating,
   normaliseComment,
   parseStars,
+  RATING_DIGEST_DELAY_MINUTES,
+  digestIsDue,
+  foldRatingDigest,
   reviewWindowClosesAt,
   starsAsWords,
 } from '@/lib/ratings/policy';
@@ -427,6 +433,157 @@ describe('the rating control', () => {
     expect(form).toMatch(/partner \? \(/);
     expect(codeOnly(source('src/lib/ratings/reviews.ts'))).toMatch(
       /service\.requiresMerchant/,
+    );
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Telling the shop and the rider
+// -----------------------------------------------------------------------------
+
+describe('the ratings digest', () => {
+  it('folds a batch into a count, an average and the WORST of them', () => {
+    // The lowest is carried on purpose: a digest reporting only a count and an
+    // average lets a single one-star hide inside a good afternoon, and the bad
+    // one is the entire reason to open the screen.
+    expect(foldRatingDigest([5, 4, 2, 5])).toEqual({
+      count: 4,
+      average: 4,
+      lowest: 2,
+    });
+    expect(foldRatingDigest([3])).toEqual({ count: 1, average: 3, lowest: 3 });
+  });
+
+  it('is nothing for nothing', () => {
+    expect(foldRatingDigest([])).toBeNull();
+  });
+
+  it('waits, and the waiting is the feature', () => {
+    // A notification per rating is a buzz per star: a shop with a good lunch
+    // gets thirty, learns to swipe them away, and misses the one that
+    // mattered. Nothing is urgent about a rating.
+    expect(RATING_DIGEST_DELAY_MINUTES).toBeGreaterThanOrEqual(15);
+
+    const oldestAt = new Date('2026-09-07T12:00:00Z');
+    const tooSoon = new Date(oldestAt.getTime() + 5 * 60_000);
+    const due = new Date(
+      oldestAt.getTime() + RATING_DIGEST_DELAY_MINUTES * 60_000,
+    );
+    expect(digestIsDue({ oldestAt, now: tooSoon })).toBe(false);
+    expect(digestIsDue({ oldestAt, now: due })).toBe(true);
+  });
+
+  it('is deferred overnight rather than waking somebody with bad news', () => {
+    // INFORMATIONAL means quiet hours hold it to 6am. Here that is a feature:
+    // nobody should learn they got one star at eleven at night, and it reads
+    // no differently over breakfast.
+    const policy = KIND_POLICY[NotificationKind.RATINGS_RECEIVED];
+    expect(policy.urgency).toBe('INFORMATIONAL');
+    expect(policy.unmutable).toBeUndefined();
+  });
+
+  it('never costs a peso', () => {
+    // The volume is bounded by how many orders were delivered, which is the
+    // number that spikes on a good day. A shop's best afternoon should not be
+    // its biggest bill.
+    expect(KIND_POLICY[NotificationKind.RATINGS_RECEIVED].channels).not.toContain(
+      NotificationChannel.SMS,
+    );
+  });
+
+  it('carries the numbers and never the words', () => {
+    // A comment is text somebody typed about a person, and a notification
+    // lands on a lock screen — the wrong place to read it, and the wrong place
+    // for somebody else to read it.
+    const rendered = renderNotification(NotificationKind.RATINGS_RECEIVED, {
+      ratingCount: 3,
+      ratingAverage: 4.33,
+      ratingLowest: 2,
+      ratingSubject: 'the food at Aling Nena',
+    });
+    expect(rendered.title).toContain('3');
+    expect(rendered.body).toContain('4.3');
+    expect(rendered.body).toContain('2');
+    // Nothing in the context can hold a comment, so nothing downstream can
+    // leak one.
+    const context = source('src/lib/orders/maintenance.ts');
+    const sweep = context.slice(context.indexOf('export async function sendRatingDigests'));
+    const body = sweep.slice(0, sweep.indexOf('export async function runMaintenance'));
+    expect(body).not.toMatch(/comment/);
+  });
+
+  it('names the worst score when one is poor, and does not when none is', () => {
+    const bad = renderNotification(NotificationKind.RATINGS_RECEIVED, {
+      ratingCount: 4,
+      ratingAverage: 4,
+      ratingLowest: 2,
+    });
+    const good = renderNotification(NotificationKind.RATINGS_RECEIVED, {
+      ratingCount: 4,
+      ratingAverage: 4.75,
+      ratingLowest: 4,
+    });
+    expect(bad.body).toMatch(/lowest was 2/i);
+    expect(good.body).not.toMatch(/lowest/i);
+  });
+
+  it('reads properly for a single rating', () => {
+    const one = renderNotification(NotificationKind.RATINGS_RECEIVED, {
+      ratingCount: 1,
+      ratingAverage: 5,
+      ratingLowest: 5,
+    });
+    expect(one.title).toBe('A 5-star rating');
+    expect(one.body).toMatch(/1 new rating\b/);
+  });
+
+  it('tells a shop’s managers, not everybody working the queue', () => {
+    // A review of the cooking is not a thing to push at somebody mid-shift,
+    // and it is not theirs to answer.
+    const reviews = codeOnly(source('src/lib/ratings/reviews.ts'));
+    expect(reviews).toMatch(/roleSatisfies\(member\.role, StoreRole\.MANAGER\)/);
+  });
+
+  it('skips a shop with nobody to tell rather than marking it told', () => {
+    // A shop whose last manager left should still have its ratings waiting
+    // when somebody is given the keys. Marking them told loses them silently.
+    const reviews = codeOnly(source('src/lib/ratings/reviews.ts'));
+    expect(reviews).toMatch(/if \(recipients\.length === 0\) continue;/);
+  });
+
+  it('marks only the half the digest was about', () => {
+    // A review that rates the food and the rider is told to two different
+    // people at two different times.
+    const reviews = codeOnly(source('src/lib/ratings/reviews.ts'));
+    expect(reviews).toMatch(/\? \{ storeNotifiedAt: at \}/);
+    expect(reviews).toMatch(/: \{ partnerNotifiedAt: at \}/);
+  });
+
+  it('cannot send the same summary twice', () => {
+    // Keyed on the newest review in the batch, so a retried pass collapses and
+    // a later batch is a different key rather than a collision.
+    const maintenance = codeOnly(source('src/lib/orders/maintenance.ts'));
+    expect(maintenance).toMatch(/dedupeKey: `ratings:\$\{batch\.subject\}/);
+    expect(maintenance).toMatch(/reviewIds\[batch\.reviewIds\.length - 1\]/);
+  });
+
+  it('leaves a failed batch for the next pass', () => {
+    // A rating nobody hears about is a missed message; telling them twice
+    // about the same one is worse. So the mark happens after the enqueues.
+    const maintenance = source('src/lib/orders/maintenance.ts');
+    const sweep = maintenance.slice(maintenance.indexOf('export async function sendRatingDigests'));
+    const body = sweep.slice(0, sweep.indexOf('export async function runMaintenance'));
+    expect(body.indexOf('markRatingsNotified')).toBeGreaterThan(
+      body.indexOf('enqueueNotification'),
+    );
+    expect(body).toMatch(/reportError/);
+  });
+
+  it('is actually wired into the cron pass', () => {
+    const maintenance = codeOnly(source('src/lib/orders/maintenance.ts'));
+    expect(maintenance).toMatch(/const ratingDigests = await sendRatingDigests\(\)/);
+    expect(codeOnly(source('scripts/run-order-maintenance.ts'))).toMatch(
+      /ratingDigests\.digests/,
     );
   });
 });

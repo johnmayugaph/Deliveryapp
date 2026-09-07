@@ -777,6 +777,17 @@ model OrderReview {
   /// Not shown on the storefront. See the note above.
   comment String?
 
+  /// When the shop and the partner were told about this, SEPARATELY, because
+  /// the two are notified independently: a review that rates only the food has
+  /// no partner to tell.
+  ///
+  /// Two timestamps rather than one flag because the notification is a DIGEST
+  /// — one message per subject covering everything since the last one — so the
+  /// sweep needs to know which rows a given digest has already covered. Same
+  /// shape as `ServiceInterest.notifiedAt`.
+  storeNotifiedAt   DateTime?
+  partnerNotifiedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -785,6 +796,9 @@ model OrderReview {
   @@index([storeId, createdAt(sort: Desc)])
   @@index([fleetPartnerId, createdAt(sort: Desc)])
   @@index([authorId])
+  /// The digest sweep: un-notified rows, oldest first, per subject.
+  @@index([storeNotifiedAt, createdAt])
+  @@index([partnerNotifiedAt, createdAt])
 }
 
 /// An offer of store access to a PHONE NUMBER rather than to an account.
@@ -1537,6 +1551,10 @@ enum NotificationKind {
   /// Addressed to a person about a privilege they hold, so it goes out even
   /// though nothing is waiting on them.
   STORE_ACCESS_CHANGED
+  /// To a shop or a fleet partner: customers have rated you since we last
+  /// said so. A DIGEST, deliberately — one message covering several ratings
+  /// rather than a buzz per star. Carries the scores and never the words.
+  RATINGS_RECEIVED
 }
 
 /// How a message reaches someone.

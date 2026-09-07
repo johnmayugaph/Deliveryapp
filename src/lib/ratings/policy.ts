@@ -170,3 +170,51 @@ export function starsAsWords(stars: number): string {
     STAR_LABELS[stars] ? ` — ${STAR_LABELS[stars].toLowerCase()}` : ''
   }`;
 }
+
+// --- Telling the shop and the rider ------------------------------------------
+
+/**
+ * How long a rating waits before anybody is told about it.
+ *
+ * An hour, and the delay is the feature. A notification per rating is a buzz
+ * per star: a shop with a good lunch would get thirty of them, learn to swipe
+ * them away, and miss the one that mattered. Waiting an hour turns that into
+ * one message that says "eleven new ratings, averaging 4.6, lowest was a two"
+ * — which is both less annoying and more useful.
+ *
+ * Nothing is urgent about a rating. Nobody is waiting on the shop to read it.
+ */
+export const RATING_DIGEST_DELAY_MINUTES = 60;
+
+export interface RatingDigest {
+  count: number;
+  average: number;
+  lowest: number;
+}
+
+/**
+ * Folds a batch of scores into what a digest says.
+ *
+ * `lowest` is carried on purpose. A digest that reported only a count and an
+ * average would let a single one-star hide inside a good afternoon, and the
+ * bad one is the entire reason to open the screen.
+ */
+export function foldRatingDigest(scores: readonly number[]): RatingDigest | null {
+  if (scores.length === 0) return null;
+  return {
+    count: scores.length,
+    average: averageStars(scores),
+    lowest: Math.min(...scores),
+  };
+}
+
+/** Whether a batch is old enough to send. */
+export function digestIsDue(input: {
+  /** When the oldest un-notified rating in the batch arrived. */
+  oldestAt: Date;
+  now: Date;
+  delayMinutes?: number;
+}): boolean {
+  const delay = input.delayMinutes ?? RATING_DIGEST_DELAY_MINUTES;
+  return input.now.getTime() - input.oldestAt.getTime() >= delay * 60 * 1000;
+}

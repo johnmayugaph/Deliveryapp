@@ -1462,6 +1462,57 @@ review, with the count beside it and a note saying customers do not see a score
 yet; that threshold protects a stranger from a misleading verdict, not a
 merchant from their own data.
 
+### Telling the shop and the rider — a digest, not a buzz per star
+
+The first version of ratings notified nobody, on the grounds that a one-star
+alert is a bad way to learn something and an easy thing to abuse. Both are true
+and neither is a reason to leave a complaint unread, so the answer is the shape
+of the message rather than its absence.
+
+**One notification per subject, covering everything since the last one.** A
+shop with a good lunch would otherwise get thirty of them, learn to swipe them
+away, and miss the one that mattered. Batching turns that into "eleven new
+ratings, averaging 4.6, lowest was a two" — less annoying and more useful.
+
+The batching is a delay rather than a schedule: `sendRatingDigests()` runs in
+the order sweep, and a batch goes out once its **oldest** un-notified member is
+past `RATING_DIGEST_DELAY_MINUTES` (60). So a rating that lands mid-rush waits
+for the rest of the rush instead of going out alone, and nothing needs to know
+what time of day it is. Nobody is waiting on a shop to read a rating.
+
+`OrderReview` carries **two** notification timestamps, `storeNotifiedAt` and
+`partnerNotifiedAt`, because the two subjects are told independently — a review
+of only the food has no rider to tell, and the shop's digest and the rider's
+digest cover different sets of rows. Same shape as
+`ServiceInterest.notifiedAt`.
+
+Three properties are worth stating:
+
+- **It carries the numbers and never the words.** Count, average, and the
+  lowest score. A comment is text somebody typed about a person and a
+  notification lands on a lock screen, which is the wrong place to read it and
+  the wrong place for somebody else to read it. The screens have the words.
+- **It names the worst score when one is poor.** "3 new ratings" that hid a
+  one-star inside a good afternoon would be a digest people learn to ignore,
+  and the bad one is the entire reason to open the screen.
+- **It is INFORMATIONAL, and here the deferral is the feature.** Quiet hours
+  hold an informational push until 6am. Nobody should learn they got one star
+  at eleven at night, and it reads no differently over breakfast. Never SMS
+  either: the volume is bounded by how many orders were delivered, which is the
+  number that spikes on a good day, and a shop's best afternoon should not be
+  its biggest bill.
+
+At a shop it goes to **MANAGER and above**. Staff work the order queue; a
+review of the cooking is not theirs to answer and not a thing to push at
+somebody mid-shift. A shop with nobody at that level is **skipped rather than
+marked told** — its ratings wait for whoever is next given the keys, because
+marking them told would lose them silently.
+
+The mark happens after the enqueues, so a batch that fails is picked up next
+pass: a rating nobody hears about is a missed message, and hearing about the
+same one twice is worse. The dedupe key is the newest review in the batch,
+which makes a retried pass a collapse and a later batch a different key.
+
 ### The database guards, and the one that was removed
 
 `prisma/sql/order_reviews.sql` holds two checks: a star is 1–5, and a review
