@@ -29,6 +29,7 @@ async function main() {
     subscriptions,
     launchAnnouncements,
     errorAlerts,
+    supportChases,
     notifications,
     recoveryAlerts,
     liftedFreezes,
@@ -59,6 +60,13 @@ async function main() {
     console.log(
       `Errors: told ${errorAlerts.admins} administrator(s) about ` +
         `${errorAlerts.faults} newly seen fault(s). See /admin/errors.`,
+    );
+  }
+
+  if (supportChases.chased > 0) {
+    console.log(
+      `Support: ${supportChases.chased} ticket(s) still unanswered past the ` +
+        `target — told ${supportChases.admins} administrator(s). See /admin/support.`,
     );
   }
 

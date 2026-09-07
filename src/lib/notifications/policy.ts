@@ -168,6 +168,38 @@ export const KIND_POLICY: Readonly<Record<NotificationKind, KindPolicy>> = {
     urgency: NotificationUrgency.INFORMATIONAL,
     channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
   },
+
+  /**
+   * Somebody raised a ticket, or raised one two hours ago and is still waiting.
+   *
+   * OPERATIONAL for the same reason as an error alert: a person is waiting and
+   * does not know whether anybody has seen them. Not SMS — the volume of this
+   * kind is bounded by how many customers have a problem, which is exactly the
+   * number that spikes on the worst day, and a monitoring channel that can
+   * spend money on the worst day is one somebody switches off.
+   */
+  [NotificationKind.SUPPORT_TICKET_WAITING]: {
+    urgency: NotificationUrgency.OPERATIONAL,
+    channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
+  },
+
+  /**
+   * A human answered a ticket.
+   *
+   * The one INFORMATIONAL-looking message that gets an SMS, and the reason is
+   * the volume: a person typed it, so the rate is bounded by staff time rather
+   * than by anything the system does. It is OPERATIONAL because the customer
+   * asked a question and closed the tab — an answer nobody reads is a ticket
+   * raised a second time, which costs more than the peso.
+   */
+  [NotificationKind.SUPPORT_REPLY]: {
+    urgency: NotificationUrgency.OPERATIONAL,
+    channels: [
+      NotificationChannel.IN_APP,
+      NotificationChannel.PUSH,
+      NotificationChannel.SMS,
+    ],
+  },
 };
 
 /**

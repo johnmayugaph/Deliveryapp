@@ -52,7 +52,16 @@ async function main() {
         roles: true,
         wallet: { select: { balanceCentavos: true } },
         _count: {
-          select: { orders: true, sessions: true, adminActions: true, storeMemberships: true },
+          select: {
+            orders: true,
+            sessions: true,
+            adminActions: true,
+            storeMemberships: true,
+            // Cascades with the account. Reported because a purge report that
+            // does not mention data it is about to delete understates itself —
+            // and a support thread is a conversation somebody had.
+            supportTickets: true,
+          },
         },
       },
     }),
@@ -87,6 +96,9 @@ async function main() {
     ];
     if (user._count.storeMemberships > 0) {
       parts.push(`${user._count.storeMemberships} store membership(s)`);
+    }
+    if (user._count.supportTickets > 0) {
+      parts.push(`${user._count.supportTickets} support thread(s)`);
     }
     console.log(
       `    ${formatPhilippineMobile(user.phone)}  ${user.fullName ?? '(no name)'}` +

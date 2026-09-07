@@ -1252,6 +1252,21 @@ model SupportTicket {
   assignedAgentId String?
   assignedAgent   User?   @relation("SupportAgentTickets", fields: [assignedAgentId], references: [id])
 
+  /// When support first said something back. NULL means nobody has answered
+  /// yet, which is the only support number that matters — `updatedAt` moves
+  /// when anything at all changes, so it cannot answer "is somebody waiting".
+  /// Set once and never cleared: reopening a ticket does not un-answer it.
+  firstRespondedAt DateTime?
+
+  /// The last message on the thread, either direction. Orders the queue by
+  /// "who has been ignored longest" rather than by when a thread began.
+  lastMessageAt DateTime @default(now())
+
+  /// When an administrator was told this was waiting. Once, like an error
+  /// report — a ticket nobody has answered should nag on a schedule, not on
+  /// every cron tick.
+  alertedAt DateTime?
+
   resolvedAt DateTime?
   closedAt   DateTime?
 
@@ -1264,6 +1279,8 @@ model SupportTicket {
   @@index([status, priority, createdAt])
   @@index([serviceType, status])
   @@index([relatedOrderId])
+  /// The waiting sweep: unanswered tickets, oldest first.
+  @@index([status, firstRespondedAt])
 }
 
 model SupportTicketMessage {
@@ -1393,6 +1410,11 @@ enum NotificationKind {
   /// that exists to be unwelcome — if the person did not do this, they need to
   /// know within seconds, not at their convenience.
   SECURITY_ALERT
+  /// To an administrator: somebody raised a ticket and nobody has answered it.
+  /// The second kind addressed to the people running the business.
+  SUPPORT_TICKET_WAITING
+  /// To the customer: a person — not the system — replied to their ticket.
+  SUPPORT_REPLY
 }
 
 /// How a message reaches someone.

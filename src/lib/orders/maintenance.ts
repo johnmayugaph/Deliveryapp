@@ -40,6 +40,12 @@ import {
   markErrorAlerted,
   unalertedErrorReports,
 } from '@/lib/monitoring/queries';
+import { alertAdministratorsOfWait } from '@/lib/support/tickets';
+import {
+  markTicketChased,
+  ticketsNeedingChase,
+} from '@/lib/support/queries';
+import { describeWait, waitingMinutes } from '@/lib/support/policy';
 import { reportError } from '@/lib/monitoring/report';
 import { ErrorSource } from '@prisma/client';
 import { resolveSmsSender } from '@/lib/auth/sms';
@@ -512,6 +518,52 @@ export async function alertOnNewErrors(): Promise<ErrorAlertResult> {
   return { faults: faults.length, admins: admins.length };
 }
 
+export interface SupportChaseResult {
+  chased: number;
+  admins: number;
+}
+
+/**
+ * Chases the tickets nobody has answered.
+ *
+ * Every administrator was already told the moment each ticket was raised — see
+ * `createSupportTicket`. This is the second message, and the one that does the
+ * work: the first alert arrives while somebody is busy, and nothing in a
+ * notification inbox says "this is still true two hours later".
+ *
+ * Marked chased even when there is nobody to tell, for the same reason error
+ * alerts are: otherwise the first administrator ever created is greeted with
+ * every ticket since the deployment began.
+ */
+export async function chaseWaitingTickets(
+  now: Date = new Date(),
+): Promise<SupportChaseResult> {
+  const waiting = await ticketsNeedingChase(now);
+  if (waiting.length === 0) {
+    return { chased: 0, admins: 0 };
+  }
+
+  let admins = 0;
+  for (const ticket of waiting) {
+    try {
+      admins = await alertAdministratorsOfWait({
+        ticket,
+        waitLabel: describeWait(waitingMinutes({ since: ticket.createdAt, now })),
+      });
+      await markTicketChased(ticket.id);
+    } catch (error) {
+      // Never stops the rest of the sweep, and never vanishes. `reportError`
+      // swallows its own failures, so this cannot recurse.
+      await reportError(error, {
+        source: ErrorSource.CRON,
+        route: 'chaseWaitingTickets',
+      });
+    }
+  }
+
+  return { chased: waiting.length, admins };
+}
+
 export async function runMaintenance(): Promise<{
   expiredOffers: number;
   dispatched: FanOutResult[];
@@ -519,6 +571,7 @@ export async function runMaintenance(): Promise<{
   subscriptions: RenewalOutcome[];
   launchAnnouncements: LaunchAnnouncementResult;
   errorAlerts: ErrorAlertResult;
+  supportChases: SupportChaseResult;
   notifications: DeliveryPassResult;
   recoveryAlerts: RecoveryAlertResult;
   liftedFreezes: number;
@@ -542,6 +595,9 @@ export async function runMaintenance(): Promise<{
   // Also before the delivery pass, so a fault recorded a minute ago reaches
   // somebody on this run rather than the next one.
   const errorAlerts = await alertOnNewErrors();
+  // Same reasoning: a customer who has been waiting two hours should not wait
+  // for the next pass to have that noticed.
+  const supportChases = await chaseWaitingTickets();
   // Last, so that everything this pass enqueued goes out in the same run: a
   // store hearing about an order one cron interval later than it was placed is
   // the cost of having no worker, and there is no reason to make it two.
@@ -566,6 +622,7 @@ export async function runMaintenance(): Promise<{
     subscriptions,
     launchAnnouncements,
     errorAlerts,
+    supportChases,
     notifications,
     recoveryAlerts,
     liftedFreezes,

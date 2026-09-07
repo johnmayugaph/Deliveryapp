@@ -2,6 +2,8 @@ import Link from 'next/link';
 import { formatCentavos } from '@/lib/money';
 import { requireAdmin } from '@/lib/admin/access';
 import { deliveryHealth, platformSummary, serviceHealth } from '@/lib/admin/queries';
+import { supportSummary } from '@/lib/support/queries';
+import { describeWait } from '@/lib/support/policy';
 import { listOrders, attachStores } from '@/lib/admin/queries';
 import {
   Empty,
@@ -33,11 +35,12 @@ export const dynamic = 'force-dynamic';
 export default async function AdminOverviewPage() {
   await requireAdmin();
 
-  const [summary, services, health, liveOrders] = await Promise.all([
+  const [summary, services, health, liveOrders, support] = await Promise.all([
     platformSummary(),
     serviceHealth(),
     deliveryHealth(),
     listOrders({ liveOnly: true, limit: 12 }).then(attachStores),
+    supportSummary(),
   ]);
 
   const failedTotal = health.byChannel.reduce((sum, row) => sum + row.failed, 0);
@@ -52,7 +55,7 @@ export default async function AdminOverviewPage() {
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <Stat
           label="Orders in flight"
           value={String(services.reduce((sum, row) => sum + row.liveOrders, 0))}
@@ -77,6 +80,19 @@ export default async function AdminOverviewPage() {
           label="Deliveries failed"
           value={String(failedTotal)}
           note={pendingTotal > 0 ? `${pendingTotal} still queued` : 'nothing queued'}
+        />
+        {/* Always shown, including as a zero. A number that only appears when
+            it is bad is one nobody learns to read. */}
+        <Stat
+          label="Waiting on support"
+          value={String(support.waiting)}
+          note={
+            support.neverAnswered > 0
+              ? `${support.neverAnswered} never answered`
+              : support.waiting > 0
+                ? `longest ${describeWait(support.longestWaitMinutes)}`
+                : 'nobody is waiting'
+          }
         />
       </div>
 

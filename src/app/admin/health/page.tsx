@@ -6,6 +6,12 @@ import { resolveChannels } from '@/lib/notifications/channels';
 import { isPushConfigured } from '@/lib/notifications/push/vapid';
 import { captchaIsHalfConfigured, isCaptchaConfigured } from '@/lib/auth/captcha';
 import { backupState } from '@/lib/backup/queries';
+import { supportSummary } from '@/lib/support/queries';
+import { contactDetails, describeContactPosture } from '@/lib/support/contact';
+import {
+  SUPPORT_RESPONSE_TARGET_MINUTES,
+  describeWait,
+} from '@/lib/support/policy';
 import { requeueDeliveryAction } from '@/lib/actions/admin-actions';
 import { ReasonForm } from '@/components/admin/ReasonForm';
 import {
@@ -37,11 +43,14 @@ export const dynamic = 'force-dynamic';
 export default async function AdminHealthPage() {
   await requireAdmin();
 
-  const [health, demo, backups] = await Promise.all([
+  const [health, demo, backups, support] = await Promise.all([
     deliveryHealth(),
     demoDataPresence(),
     backupState(),
+    supportSummary(),
   ]);
+
+  const contact = contactDetails();
   // Asked of the same function the cron uses, so this reports what would
   // actually happen on the next pass rather than a separate guess at it.
   const configured = resolveChannels();
@@ -275,6 +284,63 @@ export default async function AdminHealthPage() {
             point-in-time recovery on the database host — it survives this
             machine, and this application cannot see whether it is switched on.
             The dump is the copy you can take somewhere else.
+          </p>
+        </div>
+      </Panel>
+
+      <Panel
+        title="Reaching a person"
+        description="Two paths, and they are not alternatives: a ticket for somebody signed in, and a phone number or email for somebody who cannot sign in at all."
+        action={
+          <Pill tone={contact.channels.length === 0 ? 'bad' : 'good'}>
+            {contact.channels.length === 0 ? 'No public channel' : 'Reachable'}
+          </Pill>
+        }
+      >
+        <div className="space-y-3 px-4 py-3">
+          <p
+            className={`text-xs leading-relaxed ${
+              contact.channels.length === 0
+                ? 'font-semibold text-red-800'
+                : 'text-ink-muted'
+            }`}
+          >
+            {describeContactPosture()}
+          </p>
+
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Stat label="Waiting on us" value={String(support.waiting)} />
+            <Stat
+              label="Never answered"
+              value={String(support.neverAnswered)}
+              note={support.neverAnswered > 0 ? 'nobody has replied at all' : undefined}
+            />
+            <Stat
+              label="Longest wait"
+              value={
+                support.waiting === 0 ? '—' : describeWait(support.longestWaitMinutes)
+              }
+              note={
+                support.longestWaitMinutes >= SUPPORT_RESPONSE_TARGET_MINUTES
+                  ? 'past the target'
+                  : undefined
+              }
+            />
+            <Stat
+              label="Typical first reply"
+              value={
+                support.medianFirstReplyMinutes === null
+                  ? '—'
+                  : describeWait(support.medianFirstReplyMinutes)
+              }
+              note={`median of ${support.answeredThisWeek} this week`}
+            />
+          </div>
+
+          <p className="text-[11px] leading-relaxed text-ink-faint">
+            The queue lives at /admin/support. An unanswered ticket alerts every
+            administrator when it is raised, and again once it has been waiting
+            past the target — which needs the order sweep to be running.
           </p>
         </div>
       </Panel>

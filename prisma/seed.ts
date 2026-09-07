@@ -5,6 +5,8 @@ import {
   PrismaClient,
   ServiceKey,
   StoreRole,
+  SupportTicketPriority,
+  SupportTicketStatus,
   UserRole,
   VehicleType,
   VerificationStatus,
@@ -618,7 +620,7 @@ async function seedUsers() {
   // cannot hold a session in production at all — and the real first
   // administrator is made with `npm run admin:grant`, on a number the operator
   // controls.
-  await prisma.user.upsert({
+  const ops = await prisma.user.upsert({
     where: { phone: '+639170009999' },
     create: {
       phone: '+639170009999',
@@ -631,6 +633,59 @@ async function seedUsers() {
       isDemo: true,
     },
     update: { roles: [UserRole.ADMIN, UserRole.SUPPORT_AGENT], isDemo: true },
+  });
+
+  // Two support threads, so both halves of the support screens have something
+  // real in them: one waiting in the queue for the operator to answer, and one
+  // already answered so the customer's side shows what a reply looks like.
+  //
+  // Written directly rather than through `createSupportTicket`, on purpose: a
+  // seed has no business enqueueing notifications to every administrator. Both
+  // hang off demo accounts, so `db:purge-demo` takes them with the accounts.
+  await prisma.supportTicket.upsert({
+    where: { id: 'tkt_demo_waiting' },
+    create: {
+      id: 'tkt_demo_waiting',
+      ticketNumber: 'HELP-DEMO-00001',
+      userId: juan.id,
+      subject: 'Rider marked my order delivered but nothing arrived',
+      body:
+        'The app says delivered at 7:42pm but nobody came to the gate. ' +
+        'I waited outside for twenty minutes. Can you check with the rider?',
+      status: SupportTicketStatus.OPEN,
+      priority: SupportTicketPriority.HIGH,
+    },
+    update: {},
+  });
+
+  const answered = await prisma.supportTicket.upsert({
+    where: { id: 'tkt_demo_answered' },
+    create: {
+      id: 'tkt_demo_answered',
+      ticketNumber: 'HELP-DEMO-00002',
+      userId: maria.id,
+      subject: 'Credits did not arrive after my order',
+      body: 'I finished an order yesterday and the credit-back never showed up.',
+      status: SupportTicketStatus.AWAITING_CUSTOMER,
+      priority: SupportTicketPriority.NORMAL,
+      firstRespondedAt: new Date(),
+      assignedAgentId: ops.id,
+    },
+    update: {},
+  });
+
+  await prisma.supportTicketMessage.upsert({
+    where: { id: 'tktmsg_demo_reply' },
+    create: {
+      id: 'tktmsg_demo_reply',
+      ticketId: answered.id,
+      authorUserId: ops.id,
+      isFromSupport: true,
+      body:
+        'Found it — the credit-back lands when the order completes, and yours ' +
+        'was still marked in transit. It is on your balance now. Anything else?',
+    },
+    update: {},
   });
 
   // Credits accounts. Balances stay at zero here: the ledger is the only way to
@@ -719,7 +774,7 @@ async function seedUsers() {
 
   console.log(
     `  users: 3 (maria holds ${maria.roles.length} roles, plus an ops admin), ` +
-      'fleet partners: 1',
+      'fleet partners: 1, support threads: 2 (one waiting, one answered)',
   );
 }
 

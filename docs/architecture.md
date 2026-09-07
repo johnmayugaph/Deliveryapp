@@ -937,6 +937,163 @@ registry: a category carrying a `serviceType` renders under that service's name
 and picks up its "Coming soon" marker, and a category for a service that does
 not exist is dropped rather than shown as an empty section.
 
+### Two paths to a person, and they are not alternatives
+
+For a long time the tables above existed and nothing read or wrote them: a
+customer could not raise a ticket, and an operator had nowhere to see one. The
+gap that mattered more, though, is the one a ticket system cannot close by
+itself.
+
+**A ticket needs an account. The person who most urgently needs support is the
+one who cannot get into theirs** — the SIM is gone, the code never arrives, the
+number now belongs to somebody else. For them an in-app form is a locked door
+with a note on it.
+
+So there are two paths:
+
+| Who | Path | Needs |
+| --- | --- | --- |
+| Signed in | A ticket: a thread with a record on both sides, and a notification when somebody replies | Nothing; it works out of the box |
+| Signed out | A phone number, an email address, a Facebook page | One of `SUPPORT_PHONE` / `SUPPORT_EMAIL` / `SUPPORT_FACEBOOK` |
+
+`lib/support/contact.ts` reads those variables and **invents nothing**. A
+hardcoded number nobody answers is worse than no number, because somebody will
+ring it during the one hour they needed help. The phone number is validated
+through the same normaliser the login uses — a mistyped one renders as a `tel:`
+link that silently dials nothing, and nobody testing the happy path would
+notice. Facebook is accepted over https only, and it is there on purpose: in
+the Philippines a Page inbox is how most people expect to reach a business, it
+costs nothing to run, and somebody with no load can still send a message.
+
+The panel is on `/help` and `/recover`, both of which are **public routes** —
+that is the whole point of them being public. `/admin/health` and
+`/admin/support` report `No public channel` in red until one variable is set.
+It is the only gap in this application that costs somebody their account rather
+than a feature.
+
+### The thread
+
+`createSupportTicket` derives what it can rather than asking:
+
+- **The subject** comes from the first line of the message when the field is
+  left blank. A required subject is a form people abandon; a ticket with no
+  subject is a queue row nobody can triage.
+- **The vertical** comes from the related order.
+- **The priority** comes from whether that order is still in flight —
+  `HIGH` if it is, `NORMAL` otherwise. The rule is about *time*, not about the
+  vertical: a question about the food on a motorbike right now is urgent, and
+  the same question about last Tuesday is not. `URGENT` is deliberately
+  unreachable from a form, because a priority a customer can select is a
+  priority every customer selects. Liveness comes from the registry's own
+  `terminalStatuses`, so nothing here knows which services exist.
+
+`TICKET_STATUS_POLICY` in `lib/support/policy.ts` is keyed by every
+`SupportTicketStatus`, so adding one is a compile error until somebody decides
+whether it means a person is waiting. Two rules in it are worth stating:
+
+- **`AWAITING_CUSTOMER` does not count as waiting on us.** Counting it would
+  make the queue permanently red and teach whoever reads it to ignore the
+  number.
+- **A `RESOLVED` ticket still accepts a reply, and that reply reopens it.**
+  "This did not actually fix it" is the most valuable message on any thread,
+  and making somebody open a second ticket to say it is how it gets lost. The
+  same rule takes a thread out of `AWAITING_CUSTOMER` the moment they answer —
+  precisely the state in which tickets are forgotten.
+
+A support reply moves `OPEN` to `AWAITING_CUSTOMER` and leaves every other
+state alone. Marking something resolved is a judgement somebody makes on
+purpose; an escalated ticket that de-escalated itself because an agent sent a
+holding message is how a hard problem gets dropped.
+
+`firstRespondedAt` is set once and never cleared. `updatedAt` moves whenever
+anything at all changes, so it cannot answer "has anybody replied to this" —
+which is the only support number that matters.
+
+### Nobody has to notice a ticket
+
+Two alerts, both to every administrator, both `SUPPORT_TICKET_WAITING`:
+
+1. **When it is raised**, enqueued *inside the same transaction as the ticket*.
+   There is no ordering in which somebody asks for help and nobody is told; a
+   failure to enqueue rolls the ticket back, which is the right way round.
+2. **When it has been waiting past `SUPPORT_RESPONSE_TARGET_MINUTES`** (two
+   hours) with no reply at all, from `chaseWaitingTickets()` in the order
+   sweep. `alertedAt` makes it once rather than every cron tick, exactly like a
+   new error report.
+
+Two hours, not fifteen minutes: this is one person answering tickets between
+other work, and an alert that fires before a human could plausibly have got to
+it is an alert that gets muted. Answered-then-quiet does not chase — it is the
+*first* silence, where the customer has no acknowledgement whatsoever, that
+this protects against.
+
+The three events (raised, customer replied, still waiting) share one
+notification kind and are told apart by `ticketEvent` in the context. A
+customer's reply announced as "New support ticket" is how an administrator
+learns to stop reading the title.
+
+`SUPPORT_TICKET_WAITING` is **not** on SMS: the volume of this kind is bounded
+by how many customers have a problem, which is exactly the number that spikes
+on the worst day, and a channel that can spend money on the worst day is one
+somebody switches off. `SUPPORT_REPLY` **is**, because a human typed it, so the
+rate is bounded by staff time — and an answer nobody reads is a ticket raised
+twice.
+
+**The reply text never leaves the app.** The notification carries the ticket
+number and nothing else; not truncated, not redacted — the body is simply never
+handed to the notification layer. The subject is not in the SMS either, because
+it is text the customer typed and a text message is delivered to whoever is
+holding the phone, which on an account-recovery ticket may not be them.
+
+### Who may read a thread
+
+Every customer-facing read puts `userId` in the `WHERE` rather than loading the
+row and checking afterwards — an ownership check that happens after the fetch is
+one somebody later moves. A thread that is not yours is a **404, not a 403**:
+there is nothing to learn from the difference, and one of the two answers
+confirms that a given id is real.
+
+### The console side
+
+`/admin/support` is the queue, worst first: priority, then length of silence.
+Ordered in TypeScript rather than SQL — Postgres sorts an enum by declaration
+order, so `orderBy: { priority: 'desc' }` happens to put `URGENT` first today
+and would silently reorder the whole queue the day somebody tidies the enum.
+`PRIORITY_RANK` says the order out loud instead.
+
+"Never answered" is counted separately from "waiting". Ten threads
+mid-conversation and ten nobody has ever replied to are the same waiting count
+and completely different situations: one set of people are having a
+conversation, the other are wondering whether this company exists.
+
+The three console actions live in `lib/actions/support-console-actions.ts`
+rather than `admin-actions.ts`, and the split is deliberate. Every action in
+that file demands a reason of at least eight characters and writes an audit
+row, and a test asserts it of each one, because everything in there moves
+money, roles, or somebody's ability to sign in. These three do none of those,
+and a better record already exists for them: a reply is stored verbatim with
+its author and its timestamp, which is more than an eight-character note would
+say. Demanding a reason as well would produce a column containing the word
+"replied", eight hundred times. Rather than weaken that invariant with an
+exemption list, these live next door. The line to hold: the moment a support
+control touches a balance, a role or a phone number, it moves back and takes
+the reason and the audit row with it. What does not change is `requireAdmin()`
+on every one of them — a server action is its own entry point.
+
+### These forms need JavaScript, and they say so
+
+Measured, not assumed. A form submitted before hydration arrives as a plain
+POST, which Next 15.1 runs **with no request scope**, so `cookies()` throws —
+and every action here needs the session cookie to know whose ticket it is.
+`LoginFlow` hit exactly this and made the same call for its code step.
+
+Verified in a real browser with JavaScript disabled: the plain POST returns
+500. So each submit waits for hydration rather than posting into an error
+nobody can act on, and a `<noscript>` note says why — and points at the phone
+number and email on the same screen. The fallback for "the bundle failed" is
+the same as the fallback for "I cannot sign in", which is the second reason the
+contact panel is there.
+
 ---
 
 ## Notifications — an outbox, not a fire-and-forget

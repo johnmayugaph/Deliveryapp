@@ -47,6 +47,8 @@ const KIND_GLYPH: Readonly<Record<NotificationKind, string>> = {
   [NotificationKind.SECURITY_ALERT]: '🔐',
   [NotificationKind.SERVICE_NOW_AVAILABLE]: '🎉',
   [NotificationKind.ERROR_DETECTED]: '🚨',
+  [NotificationKind.SUPPORT_TICKET_WAITING]: '📥',
+  [NotificationKind.SUPPORT_REPLY]: '💬',
 };
 
 /**

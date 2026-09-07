@@ -5,6 +5,8 @@ import { isEmailConfigured } from '@/lib/auth/email';
 import { RECOVERY_CREDIT_FREEZE_DAYS } from '@/lib/auth/recovery';
 import { Wordmark } from '@/components/brand/Wordmark';
 import { RecoveryFlow } from '@/components/auth/RecoveryFlow';
+import { contactDetails } from '@/lib/support/contact';
+import { ContactPanel } from '@/components/support/ContactPanel';
 
 export const dynamic = 'force-dynamic';
 
@@ -80,6 +82,13 @@ export default async function RecoverPage() {
           </p>
         </div>
       )}
+
+      {/* The whole premise of this screen is that the person cannot sign in, so
+          a ticket form would be a locked door. This is the path that works for
+          them, and it is the reason `lib/support/contact.ts` exists. */}
+      <div className="mt-6">
+        <ContactPanel contact={contactDetails()} tone="recovery" />
+      </div>
 
       <p className="mt-6 text-xs text-ink-muted">
         Still have your number?{' '}

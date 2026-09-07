@@ -49,6 +49,13 @@ brief's changes already folded in.
 | 11 | Notifications: outbox, inbox, SMS | ✅ Done |
 | 12 | SMS verified at the wire; web push; the admin console | ✅ Built, one gap |
 | 13 | Account recovery: a verified email, or support, with a credits freeze | ✅ Done |
+| 14 | Demo data made harmless; the coming-soon tiles say something back | ✅ Done |
+| 15 | The storefront made public — the front door opens | ✅ Done |
+| 16 | A CAPTCHA on the login screen | ✅ Done |
+| 17 | Error monitoring | ✅ Done |
+| 18 | Backups, and the drill that proves them | ✅ Done |
+| 19 | The Dockerfile, compose and CI | ✅ Built, never run |
+| 20 | Support that reaches a person: threads, a public channel, a queue, an alert | ✅ Done |
 
 Between phases 11 and 12: the interface was translated to English, the product
 was named TARA, and the typeface and brand blue were set from the brand artwork.
@@ -775,6 +782,20 @@ real file later is one line in `tailwind.config.ts`.
   moving pin, even though partner positions are stored.
 - **No ratings.** `ratingAvg` and `ratingCount` are read by dispatch ranking but
   nothing writes them.
+- **Support has no public contact channel until somebody sets one.**
+  `SUPPORT_PHONE`, `SUPPORT_EMAIL` and `SUPPORT_FACEBOOK` are all optional and
+  nothing is invented, because a number nobody answers is worse than no number.
+  Until one is set, somebody who cannot sign in has no way to reach anybody —
+  `/admin/health` and `/admin/support` say so in red. It is the only gap here
+  that costs somebody their account rather than a feature.
+- **The support forms need JavaScript.** Not a preference: a pre-hydration form
+  post runs with no request scope in Next 15.1, so `cookies()` throws and there
+  is no way to know whose ticket it is. Verified in a browser with JavaScript
+  off. The submit waits for hydration, a `<noscript>` note says why, and the
+  phone number on the same screen is the path that works either way.
+- **Nobody is assigned tickets automatically.** Whoever replies first owns it,
+  and anyone can hand one back. With one or two people answering that is
+  correct; with a rota it is not.
 - **No real SMS has ever been sent.** The adapter is now verified at the wire —
   `sms-wire.test.ts` asserts the exact bytes a gateway receives over a real
   socket, and `npm run sms:send-one` sends one real message and prints the full
@@ -1264,3 +1285,80 @@ them, and says blocking is the right ending — which is safe, because in
 production they cannot hold a session at all.
 
 677 tests pass; build and lint clean.
+
+---
+
+## Phase 20 — support that reaches a person ✅
+
+The `SupportTicket` and `SupportTicketMessage` tables had existed since the
+initial migration and **nothing read or wrote them**. `createSupportTicket` and
+`listUserTickets` were dead code, the Help screen was FAQ articles with a
+docstring describing a "Contact support" flow that did not exist, and the order
+tracking screen linked to `/help?orderId=…` — a query parameter the help page
+ignored. A customer with a problem had no way to tell anybody, and an operator
+had nowhere to see one if they had.
+
+**The gap that mattered more is the one a ticket system cannot close.** A
+thread needs an account, and the person who most urgently needs support is the
+one who cannot get into theirs: the SIM is gone, the code never arrives, the
+number now belongs to somebody else. For them a form behind the login wall is a
+locked door with a note on it. So this phase built two paths, not one:
+
+- **Signed in** — `/help/contact` opens a thread, `/help/tickets` lists them,
+  `/help/tickets/[id]` is the conversation. A reply notifies the customer.
+- **Signed out** — a phone number, an email address or a Facebook page, from
+  `SUPPORT_PHONE` / `SUPPORT_EMAIL` / `SUPPORT_FACEBOOK`, rendered on `/help`
+  and `/recover`, both public. Nothing is invented and nothing is hardcoded;
+  `/admin/health` reports `No public channel` in red until one is set.
+
+On the operator side, `/admin/support` is the queue — worst first, priority
+then length of silence — and `/admin/support/[id]` is the thread with the
+customer, the related order and the controls. Every administrator is alerted
+when a ticket is raised (in the same transaction as the ticket, so there is no
+ordering where somebody asks for help and nobody is told), and again by
+`chaseWaitingTickets()` in the order sweep once one has gone two hours with no
+reply at all.
+
+### What the work turned up
+
+**The console's own invariant caught the new actions.** `admin-access.test.ts`
+asserts that *every* exported action in `admin-actions.ts` calls
+`requireAdmin()`, demands an eight-character reason, and writes an audit row.
+Replying to a ticket does none of the last two, and it should not: the reply is
+stored verbatim with its author and timestamp, which is more than an audit note
+would say, and a mandatory reason would produce a column containing the word
+"replied" eight hundred times. Rather than weaken the invariant with an
+exemption list, the three support actions moved to their own module. The line
+to hold is written down there: the moment one of them touches a balance, a role
+or a phone number, it moves back and takes the reason with it.
+
+**A claim about progressive enhancement turned out to be false, and testing it
+is what showed that.** The forms were written on the assumption that
+`useActionState` plus a server-side redirect would make them work with no
+JavaScript. Driving them in a real browser with JavaScript disabled returned a
+500: a pre-hydration form post runs with no request scope in Next 15.1, so
+`cookies()` throws — and every action here needs the session cookie. The login
+screen had already found this and says so for its code step. The claim, the
+comments asserting it and the test asserting it were all wrong and were
+replaced: the submit now waits for hydration, a `<noscript>` note explains, and
+both point at the phone number, which is plain HTML and needs no session. The
+fallback for "the bundle failed" is the same as the fallback for "I cannot sign
+in".
+
+**Three smaller things the drills found.** A customer's reply to a thread was
+alerting administrators with the title "New support ticket", because all three
+events share one notification kind — now told apart by `ticketEvent`, since an
+administrator who learns the title is unreliable stops reading it. The queue was
+being ordered by `orderBy: { priority: 'desc' }`, which works only because
+Postgres sorts an enum by declaration order and would have silently reordered
+the whole queue the day somebody tidied the enum. And the demo purge report
+listed orders, sessions and store memberships but not the support threads it was
+about to cascade away — a report that understates what it deletes.
+
+Verified end to end in a real browser: a customer raises a ticket from `/help`,
+it appears in the operator's queue, the operator replies, the state moves to
+waiting on the customer, the customer sees the answer labelled as support and a
+notice in their inbox. Then with JavaScript off: the submit is disabled, the
+reason is on screen, and the phone number is reachable.
+
+735 tests pass; build and lint clean.

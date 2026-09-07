@@ -196,7 +196,7 @@ export default async function OrderDetailPage({
 
       <section className="mx-4 mt-4 mb-8">
         <Link
-          href={`/help?orderId=${order.id}`}
+          href={`/help/contact?order=${order.id}`}
           className="flex items-center justify-between rounded-xl bg-surface px-3 py-3 shadow-sm ring-1 ring-black/5"
         >
           <span className="text-sm font-semibold">Something wrong with this order?</span>

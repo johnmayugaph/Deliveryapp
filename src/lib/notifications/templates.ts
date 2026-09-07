@@ -41,6 +41,17 @@ export interface NotificationContext {
   /** For an error alert: the kind, and where it happened. */
   errorKind?: string;
   errorRoute?: string;
+  /** For support: the reference a person can quote, and what it is about. */
+  ticketNumber?: string;
+  ticketSubject?: string;
+  /** For a waiting ticket: "4 hours". Already rendered by `describeWait`. */
+  waitLabel?: string;
+  /**
+   * Which of the three things happened. Without it a customer's reply to a
+   * thread reads as a brand-new ticket, and an administrator learns to stop
+   * believing the title.
+   */
+  ticketEvent?: 'NEW' | 'CUSTOMER_REPLIED' | 'STILL_WAITING';
 }
 
 export interface RenderedNotification {
@@ -228,6 +239,52 @@ export const NOTIFICATION_TEMPLATES: Readonly<Record<NotificationKind, Template>
     sms: `TARA: ${serviceName(context)} is now available${
       context.cityName ? ` in ${context.cityName}` : ''
     } — you asked us to tell you.`,
+  }),
+
+  /**
+   * To an administrator. Says the wait out loud, because "a ticket came in" and
+   * "a ticket has been sitting for four hours" are the same sentence otherwise
+   * and only one of them is an emergency.
+   */
+  [NotificationKind.SUPPORT_TICKET_WAITING]: (context) => {
+    const reference = context.ticketNumber ?? 'a ticket';
+    const event = context.ticketEvent ?? 'NEW';
+    const title =
+      event === 'STILL_WAITING'
+        ? `Waiting ${context.waitLabel ?? 'a while'}: ${reference}`
+        : event === 'CUSTOMER_REPLIED'
+          ? `Customer replied: ${reference}`
+          : `New support ticket ${reference}`;
+    return {
+      title,
+      body:
+        `${context.ticketSubject ?? 'Somebody needs help'}${
+          event === 'STILL_WAITING'
+            ? ` — no answer for ${context.waitLabel ?? 'a while'}.`
+            : event === 'CUSTOMER_REPLIED'
+              ? ' — they have added something and it is back in the queue.'
+              : '.'
+        } Open the queue to read it and reply.`,
+      sms: context.ticketNumber
+        ? `TARA: support ticket ${context.ticketNumber} needs an answer.`
+        : 'TARA: a support ticket needs an answer.',
+    };
+  },
+
+  /**
+   * To the customer. Carries no part of the reply itself: the body of a support
+   * message can contain anything a person typed, including details about the
+   * account, and an SMS is delivered to whoever is holding the phone.
+   */
+  [NotificationKind.SUPPORT_REPLY]: (context) => ({
+    title: 'Support replied',
+    body:
+      `Somebody has answered your message${
+        context.ticketSubject ? ` about "${context.ticketSubject}"` : ''
+      }. Tap to read it and reply.`,
+    sms: `TARA: support has replied to ${
+      context.ticketNumber ?? 'your message'
+    }. Open the app to read it.`,
   }),
 };
 

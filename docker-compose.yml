@@ -74,6 +74,12 @@ services:
       VAPID_SUBJECT: ${VAPID_SUBJECT:-}
       TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
       NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
+      # How somebody who CANNOT sign in reaches a person. Set at least one, or
+      # /admin/health reports it in red — see .env.example.
+      SUPPORT_PHONE: ${SUPPORT_PHONE:-}
+      SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
+      SUPPORT_FACEBOOK: ${SUPPORT_FACEBOOK:-}
+      SUPPORT_HOURS: ${SUPPORT_HOURS:-}
       BACKUP_STRATEGY: ${BACKUP_STRATEGY:-script}
     ports:
       # Bound to localhost, because the thing facing the internet should be a
