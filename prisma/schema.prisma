@@ -393,6 +393,9 @@ model User {
   recordedAdjustments     WalletTransaction[]               @relation("WalletAdjustmentActor")
   sessions                Session[]
   storeMemberships        StoreMember[]
+  grantedStoreAccess      StoreMember[]                     @relation("StoreAccessGranted")
+  storeInvitesSent        StoreInvite[]                     @relation("StoreInvitesSent")
+  storeInvitesAccepted    StoreInvite[]                     @relation("StoreInvitesAccepted")
   fleetDecisions          FleetPartnerServiceVerification[] @relation("FleetVerificationDecider")
   grantedSubscriptions    UserSubscription[]                @relation("SubscriptionGrants")
   notifications           Notification[]
@@ -611,6 +614,7 @@ model Store {
 
   menuItems MenuItem[]
   members   StoreMember[]
+  invites   StoreInvite[]
 
   @@index([cityId, isVisible, isOpen])
   @@index([serviceKeys], type: Gin)
@@ -709,11 +713,59 @@ model StoreMember {
 
   role StoreRole @default(STAFF)
 
+  /// Who granted this access. NULL for the seed and for the rows that predate
+  /// the invite screen. SetNull rather than Cascade: deleting the person who
+  /// did the inviting must not delete the access they granted, or removing one
+  /// account would quietly lock a store's whole staff out.
+  invitedById String?
+  invitedBy   User?   @relation("StoreAccessGranted", fields: [invitedById], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([storeId, userId])
   @@index([userId])
+}
+
+/// An offer of store access to a PHONE NUMBER rather than to an account.
+///
+/// This model exists because of one fact: the person a store owner wants to
+/// add usually has not signed up yet. The alternatives were both worse —
+/// fabricating an account for a number nobody has verified, or telling the
+/// owner to come back after their staff have registered.
+///
+/// Redeemed on sign-in, in `checkLoginCode`, because that is the moment the
+/// OTP has proved control of the number. An invite is therefore a grant to
+/// whoever holds the SIM, which is why it EXPIRES: Philippine numbers get
+/// recycled, and a two-year-old invite to a reassigned number would hand a
+/// stranger the order queue.
+model StoreInvite {
+  id      String @id @default(cuid())
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  /// E.164, normalised on the way in. Deliberately NOT a user id.
+  phone String
+  role  StoreRole @default(STAFF)
+
+  invitedById String
+  invitedBy   User   @relation("StoreInvitesSent", fields: [invitedById], references: [id], onDelete: Cascade)
+
+  expiresAt    DateTime
+  acceptedAt   DateTime?
+  acceptedById String?
+  acceptedBy   User?     @relation("StoreInvitesAccepted", fields: [acceptedById], references: [id], onDelete: SetNull)
+  revokedAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// One invite per number per store. Re-inviting UPDATES the existing row —
+  /// a new expiry, a new role, revocation cleared — rather than leaving a
+  /// pile of dead rows nobody can read.
+  @@unique([storeId, phone])
+  /// The redemption lookup on every sign-in: by number, unaccepted only.
+  @@index([phone, acceptedAt])
 }
 
 // -----------------------------------------------------------------------------
@@ -1415,6 +1467,10 @@ enum NotificationKind {
   SUPPORT_TICKET_WAITING
   /// To the customer: a person — not the system — replied to their ticket.
   SUPPORT_REPLY
+  /// To somebody whose access to a store was granted, changed or taken away.
+  /// Addressed to a person about a privilege they hold, so it goes out even
+  /// though nothing is waiting on them.
+  STORE_ACCESS_CHANGED
 }
 
 /// How a message reaches someone.
@@ -1623,6 +1679,10 @@ enum AdminAction {
   ADMIN_ROLE_CHANGED
   /// An error report was marked fixed, or reopened.
   ERROR_REPORT_RESOLVED
+  /// Somebody was given, moved between, or removed from a store's staff by an
+  /// administrator. The console does this to bootstrap a NEW partner store,
+  /// which has nobody at it who could invite the first owner.
+  STORE_MEMBERSHIP_CHANGED
 }
 
 /// One privileged action, and why.

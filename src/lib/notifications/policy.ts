@@ -200,6 +200,25 @@ export const KIND_POLICY: Readonly<Record<NotificationKind, KindPolicy>> = {
       NotificationChannel.SMS,
     ],
   },
+
+  /**
+   * Access to a store was granted, changed or taken away.
+   *
+   * INFORMATIONAL, which means quiet hours DEFER it rather than drop it. The
+   * case for making it operational is the removal: somebody who turns up for a
+   * shift and finds no order queue should have been told. But a deferral lands
+   * at 6am, which is before any shift starts, and the alternative is waking a
+   * person at 2am to tell them they have been made staff — which is how a
+   * channel earns being muted.
+   *
+   * Not SMS. It is a privilege the person now HOLDS, not a threat to their
+   * account, and the volume is bounded by staff churn at every store on the
+   * platform.
+   */
+  [NotificationKind.STORE_ACCESS_CHANGED]: {
+    urgency: NotificationUrgency.INFORMATIONAL,
+    channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
+  },
 };
 
 /**

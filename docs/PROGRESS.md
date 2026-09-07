@@ -56,6 +56,7 @@ brief's changes already folded in.
 | 18 | Backups, and the drill that proves them | ✅ Done |
 | 19 | The Dockerfile, compose and CI | ✅ Built, never run |
 | 20 | Support that reaches a person: threads, a public channel, a queue, an alert | ✅ Done |
+| 21 | Store staff: invite by number, a first owner from the console, an owner who cannot vanish | ✅ Done |
 
 Between phases 11 and 12: the interface was translated to English, the product
 was named TARA, and the typeface and brand blue were set from the brand artwork.
@@ -771,11 +772,15 @@ real file later is one line in `tailwind.config.ts`.
 - **Dispatch has no worker.** Offers are created by cron, so how fast a partner
   sees a job depends on how often it runs.
 - **The console does not cover everything the CLI does.** `/admin` handles
-  services, people, credits, delivery health and the audit log. Fleet approval
-  (`npm run fleet:approve`), plan activation (`npm run plan:activate`) and
-  subscription grants (`npm run plan:comp`) are still CLI scripts, and store
-  membership is seeded or edited by hand — there is no UI to invite staff or
-  change a role.
+  services, people, stores, support, credits, delivery health and the audit
+  log. Fleet approval (`npm run fleet:approve`), plan activation
+  (`npm run plan:activate`) and subscription grants (`npm run plan:comp`) are
+  still CLI scripts.
+- **A store's own details cannot be edited after it is created.** The console
+  can create one and set whether customers see it; the shop can set its prep
+  time and open/closed. Changing a name, an address or which services a shop is
+  for still needs a database edit. Rare enough to have been left, common enough
+  to be worth naming.
 - **No subscription payment rail.** A tier exists and can be granted, but not
   sold. See Phase 9.
 - **No live location on the tracking screen.** The customer sees statuses, not a
@@ -796,6 +801,11 @@ real file later is one line in `tailwind.config.ts`.
 - **Nobody is assigned tickets automatically.** Whoever replies first owns it,
   and anyone can hand one back. With one or two people answering that is
   correct; with a rota it is not.
+- **A store invitation reaches nobody by itself.** Nothing is texted to the
+  invited number, on purpose — an invite form that could message any number
+  would be a way to spend SMS credit on strangers, from our sender name. So
+  whoever is hiring has to tell the person to install the app and sign in. Once
+  they have an account the notification is automatic.
 - **No real SMS has ever been sent.** The adapter is now verified at the wire —
   `sms-wire.test.ts` asserts the exact bytes a gateway receives over a real
   socket, and `npm run sms:send-one` sends one real message and prints the full
@@ -1362,3 +1372,82 @@ notice in their inbox. Then with JavaScript off: the submit is disabled, the
 reason is on screen, and the phone number is reachable.
 
 735 tests pass; build and lint clean.
+
+---
+
+## Phase 21 — store staff, and the store itself ✅
+
+Phase 20's closing note said store staff still had to be added by hand. Looking
+at it properly turned up something worse: **there was no way to create a store
+at all** outside the seed. So onboarding a partner meant a person writing SQL
+for the store row, its menu and its membership — and once you are in the
+database writing a `Store`, adding its owner is one more INSERT, which is
+exactly the workflow a staff screen was supposed to end. Building only the
+invite screen would have left it unusable for the one case it was for: a new
+partner.
+
+Two screens, therefore, with a clear division:
+
+- **`/merchant/<store>/staff`** — the shop's own. Add somebody by mobile
+  number, change a role, remove them, withdraw an invitation nobody took up.
+- **`/admin/stores`** — the console's. Create the shop, name its first owner,
+  decide whether customers can see it. Nothing else: the menu, the prep time
+  and the rest of the staff belong to the people who work there.
+
+The hard part was never the form. It is that **the person a shop wants to add
+has no account yet.** Fabricating one for an unverified number is what the
+demo-data work exists to prevent, and telling the owner to come back later
+means they never do. So access is offered to a phone number, held as a
+`StoreInvite`, and redeemed on the first sign-in from that number — the moment
+the OTP has proved who holds the SIM. Invitations expire after a fortnight,
+because Philippine prepaid numbers get recycled and a forgotten invite to a
+reassigned number would hand a stranger the order queue.
+
+**Nothing is texted to the invited number**, and that is a decision. An invite
+form that sent an SMS would let any shop owner message strangers at our
+expense, from our sender name.
+
+### The rules, and the one that is enforced twice
+
+An owner may appoint anybody including another owner — ownership has to be
+transferable by the person holding it, or a handover needs a support ticket and
+people share the login instead. A manager may add staff and nothing more: only
+an owner decides who else can change prices. Anybody may remove themselves.
+
+And **a store always keeps at least one owner**, enforced in TypeScript for the
+sentence and in `prisma/sql/store_members.sql` for the guarantee. That trigger
+is `DEFERRABLE INITIALLY DEFERRED`, which is what makes a handover possible at
+all: promoting the new owner and demoting the old one are two statements, and a
+non-deferred check would reject whichever order they were written in.
+
+### What the work turned up
+
+**A hydration mismatch on two console pages, including one shipped in Phase
+20.** `TableScroll` renders the `<table>` itself, and both new pages wrapped
+another `<table>` inside it. Invalid nesting: the browser relocates the inner
+table, React reports a mismatch, and the table quietly ignores the console's
+own sizing. Nothing but a real browser found it — not tsc, not ESLint, not the
+build, not any test. There is now a test that scans every console page for it.
+
+**A refusal that named the wrong permission.** A manager trying to demote the
+owner was told "only a manager or the owner can add staff" — true, and not the
+problem, because the role they *requested* was staff. A misleading refusal
+sends somebody to ask for the wrong permission, so the change-role check now
+reports which half failed.
+
+**A client component pulling `next/headers` into the browser bundle.**
+`STORE_ROLE_LABELS` lived in `merchant/access.ts`, which reaches for the
+session; the staff component imported one label and the production build
+failed. The labels moved to the pure policy module, and a test now asserts that
+module imports nothing server-only — the second time this class of bug has
+appeared, after `describeAskCount` in Phase 14.
+
+Verified end to end in a real browser: the console creates a shop and names an
+owner who has no account; that number signs in with a real OTP read from the
+development sender; the invitation becomes access; their inbox says so; they
+open the shop, invite a staff member, promote them to manager; and the manager
+is then given no control over the owner. Then directly against the database:
+every escalation refused with an accurate sentence, and a legitimate handover
+completed. The demo purge still runs clean against the new guard.
+
+797 tests pass; build and lint clean.

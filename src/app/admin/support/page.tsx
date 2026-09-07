@@ -112,75 +112,73 @@ export default async function AdminSupportPage({
           </Empty>
         ) : (
           <TableScroll>
-            <table className="w-full text-left text-[13px]">
-              <thead>
-                <tr>
-                  <Th>Ticket</Th>
-                  <Th>Customer</Th>
-                  <Th>State</Th>
-                  <Th>Priority</Th>
-                  <Th>Silent for</Th>
-                  <Th>With</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {queue.map((ticket) => {
-                  const policy = TICKET_STATUS_POLICY[ticket.status];
-                  const overdue =
-                    policy.waitingOnUs &&
-                    ticket.firstRespondedAt === null &&
-                    ticket.waitedMinutes >= SUPPORT_RESPONSE_TARGET_MINUTES;
+            <thead>
+              <tr>
+                <Th>Ticket</Th>
+                <Th>Customer</Th>
+                <Th>State</Th>
+                <Th>Priority</Th>
+                <Th>Silent for</Th>
+                <Th>With</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {queue.map((ticket) => {
+                const policy = TICKET_STATUS_POLICY[ticket.status];
+                const overdue =
+                  policy.waitingOnUs &&
+                  ticket.firstRespondedAt === null &&
+                  ticket.waitedMinutes >= SUPPORT_RESPONSE_TARGET_MINUTES;
 
-                  return (
-                    <tr key={ticket.id} className="border-t border-black/5">
-                      <Td>
-                        <Link
-                          href={`/admin/support/${ticket.id}`}
-                          className="font-semibold text-brand-700"
-                        >
-                          {ticket.subject}
-                        </Link>
+                return (
+                  <tr key={ticket.id} className="border-t border-black/5">
+                    <Td>
+                      <Link
+                        href={`/admin/support/${ticket.id}`}
+                        className="font-semibold text-brand-700"
+                      >
+                        {ticket.subject}
+                      </Link>
+                      <span className="block text-[11px] text-ink-faint">
+                        {ticket.ticketNumber}
+                        {ticket.serviceType ? ` · ${ticket.serviceType}` : ''}
+                        {ticket._count.messages > 0
+                          ? ` · ${ticket._count.messages} repl${
+                              ticket._count.messages === 1 ? 'y' : 'ies'
+                            }`
+                          : ''}
+                      </span>
+                    </Td>
+                    <Td>
+                      <PersonLink user={ticket.user} />
+                    </Td>
+                    <Td>
+                      <Pill tone={policy.waitingOnUs ? 'warn' : 'neutral'}>
+                        {policy.queueLabel}
+                      </Pill>
+                    </Td>
+                    <Td>{ticket.priority.toLowerCase()}</Td>
+                    <Td>
+                      <span className={overdue ? 'font-semibold text-rose-700' : ''}>
+                        {describeWait(ticket.waitedMinutes)}
+                      </span>
+                      {ticket.firstRespondedAt === null ? (
                         <span className="block text-[11px] text-ink-faint">
-                          {ticket.ticketNumber}
-                          {ticket.serviceType ? ` · ${ticket.serviceType}` : ''}
-                          {ticket._count.messages > 0
-                            ? ` · ${ticket._count.messages} repl${
-                                ticket._count.messages === 1 ? 'y' : 'ies'
-                              }`
-                            : ''}
+                          never answered
                         </span>
-                      </Td>
-                      <Td>
-                        <PersonLink user={ticket.user} />
-                      </Td>
-                      <Td>
-                        <Pill tone={policy.waitingOnUs ? 'warn' : 'neutral'}>
-                          {policy.queueLabel}
-                        </Pill>
-                      </Td>
-                      <Td>{ticket.priority.toLowerCase()}</Td>
-                      <Td>
-                        <span className={overdue ? 'font-semibold text-rose-700' : ''}>
-                          {describeWait(ticket.waitedMinutes)}
-                        </span>
-                        {ticket.firstRespondedAt === null ? (
-                          <span className="block text-[11px] text-ink-faint">
-                            never answered
-                          </span>
-                        ) : null}
-                      </Td>
-                      <Td>
-                        {ticket.assignedAgent
-                          ? ticket.assignedAgent.id === admin.id
-                            ? 'You'
-                            : displayNameFor(ticket.assignedAgent)
-                          : '—'}
-                      </Td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                      ) : null}
+                    </Td>
+                    <Td>
+                      {ticket.assignedAgent
+                        ? ticket.assignedAgent.id === admin.id
+                          ? 'You'
+                          : displayNameFor(ticket.assignedAgent)
+                        : '—'}
+                    </Td>
+                  </tr>
+                );
+              })}
+            </tbody>
           </TableScroll>
         )}
       </Panel>

@@ -12,6 +12,7 @@ import {
   VerificationStatus,
 } from '@prisma/client';
 import { describeDatabaseHost, seedRefusalReason } from '../src/lib/demo/policy';
+import { inviteExpiry } from '../src/lib/merchant/staff-policy';
 
 const prisma = new PrismaClient();
 
@@ -688,6 +689,29 @@ async function seedUsers() {
     update: {},
   });
 
+  // One invitation nobody has taken up, so the "waiting to sign in" half of the
+  // staff screen has something in it. The number is deliberately one that no
+  // seeded account uses: the whole point of an invite is that there is no
+  // account yet, and it becomes real access the first time that number signs
+  // in. Nothing was texted to it — see `lib/merchant/staff.ts`.
+  const carinderia = await prisma.store.findUnique({
+    where: { slug: 'aling-nena-carinderia' },
+    select: { id: true },
+  });
+  if (carinderia) {
+    await prisma.storeInvite.upsert({
+      where: { storeId_phone: { storeId: carinderia.id, phone: '+639175550123' } },
+      create: {
+        storeId: carinderia.id,
+        phone: '+639175550123',
+        role: StoreRole.STAFF,
+        invitedById: ops.id,
+        expiresAt: inviteExpiry(),
+      },
+      update: {},
+    });
+  }
+
   // Credits accounts. Balances stay at zero here: the ledger is the only way to
   // move a balance, and a seed has no business writing that column directly.
   for (const user of [juan, maria]) {
@@ -774,7 +798,7 @@ async function seedUsers() {
 
   console.log(
     `  users: 3 (maria holds ${maria.roles.length} roles, plus an ops admin), ` +
-      'fleet partners: 1, support threads: 2 (one waiting, one answered)',
+      'fleet partners: 1, support threads: 2, one staff invitation waiting',
   );
 }
 

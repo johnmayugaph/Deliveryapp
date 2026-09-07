@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { OrderActor, OrderStatus, ServiceKey, StoreRole } from '@prisma/client';
 import { MERCHANT_STAGES, QUEUE_STATUSES } from '@/lib/merchant/queue';
-import { roleSatisfies, storeIdFromDetails, STORE_ROLE_LABELS } from '@/lib/merchant/access';
+import { roleSatisfies, storeIdFromDetails } from '@/lib/merchant/access';
 import { allowedTransitions, isActorPermitted } from '@/lib/orders/state-machine';
 import { ORDER_LIFECYCLES } from '@/lib/orders/transitions';
+import { STORE_ROLE_LABELS } from '@/lib/merchant/staff-policy';
 
 describe('store roles', () => {
   it('ranks owner above manager above staff', () => {

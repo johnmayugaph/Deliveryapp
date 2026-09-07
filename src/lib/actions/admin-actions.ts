@@ -7,6 +7,7 @@ import {
   RecoveryMethod,
   ServiceKey,
   SubscriptionStatus,
+  StoreRole,
 } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import {
@@ -32,6 +33,16 @@ import {
   maskPhilippineMobile,
   normalisePhilippineMobile,
 } from '@/lib/auth/phone';
+import {
+  grantStoreAccessAsAdmin,
+  revokeStoreAccessAsAdmin,
+} from '@/lib/merchant/staff';
+import {
+  AlreadyAMemberError,
+  InviteNotFoundError,
+  LastOwnerError,
+} from '@/lib/merchant/staff-policy';
+import { uniqueStoreSlug } from '@/lib/admin/stores';
 
 /**
  * Everything the console can change.
@@ -638,4 +649,334 @@ export async function moveAccountPhoneAction(
         'previous number is texted on the next maintenance run.',
     };
   });
+}
+
+// --- Partner stores ----------------------------------------------------------
+
+/**
+ * Creating a store, and naming who runs it.
+ *
+ * These DO carry a reason and an audit row, unlike the support controls,
+ * because they move access: `grantStoreAccess` hands somebody the power to
+ * change prices and accept orders in a real business, and `createStore` hands
+ * out the first one. That is squarely the kind of thing the audit log exists
+ * for.
+ *
+ * Why the console can do this at all: a brand-new partner shop has nobody at
+ * it who could invite the first owner. Everything after that first owner —
+ * the rest of the staff, the menu, the prep time — belongs to the shop itself.
+ */
+export async function createStoreAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  let admin;
+  try {
+    admin = await requireAdmin();
+  } catch (error) {
+    if (error instanceof AdminAccessRequiredError) return DENIED;
+    throw error;
+  }
+
+  const name = String(formData.get('name') ?? '').trim();
+  const cityId = String(formData.get('cityId') ?? '').trim();
+  const addressLine = String(formData.get('addressLine') ?? '').trim();
+  const ownerPhone = String(formData.get('ownerPhone') ?? '').trim();
+  const latitude = Number(formData.get('latitude'));
+  const longitude = Number(formData.get('longitude'));
+  const serviceKeys = formData
+    .getAll('serviceKeys')
+    .map((value) => String(value))
+    .filter((value): value is ServiceKey => value in ServiceKey);
+
+  if (name.length < 2) return { ok: false, message: 'The shop needs a name.' };
+  if (addressLine.length < 4) return { ok: false, message: 'The shop needs an address.' };
+  if (serviceKeys.length === 0) {
+    return { ok: false, message: 'Pick at least one service this shop is for.' };
+  }
+  // Checked rather than trusted: an empty number field arrives as NaN, and a
+  // store at 0,0 is in the Atlantic — every delivery fee from it would be
+  // computed from the Gulf of Guinea.
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return { ok: false, message: 'The shop needs coordinates.' };
+  }
+  if (latitude < 4 || latitude > 21 || longitude < 116 || longitude > 127) {
+    return {
+      ok: false,
+      message:
+        'Those coordinates are not in the Philippines. Check they are not ' +
+        'swapped — latitude first, then longitude.',
+    };
+  }
+
+  let reason: string;
+  try {
+    reason = normaliseReason(formData.get('reason'));
+  } catch (error) {
+    if (error instanceof AuditReasonRequiredError) {
+      return { ok: false, message: error.message };
+    }
+    throw error;
+  }
+
+  const city = await prisma.city.findUnique({ where: { id: cityId } });
+  if (!city) return { ok: false, message: 'Pick a city.' };
+
+  const slug = await uniqueStoreSlug(name);
+
+  try {
+    const store = await prisma.$transaction(async (tx) => {
+      const created = await tx.store.create({
+        data: {
+          name,
+          slug,
+          cityId,
+          addressLine,
+          latitude,
+          longitude,
+          serviceKeys,
+          // NOT visible. A shop with no menu is worse than a shop that is not
+          // there: a customer finds it, opens it, and sees nothing. The console
+          // makes it visible once the owner has entered a menu.
+          isVisible: false,
+        },
+      });
+
+      const outcome = await grantStoreAccessAsAdmin(
+        {
+          storeId: created.id,
+          adminId: admin.id,
+          rawPhone: ownerPhone,
+          role: StoreRole.OWNER,
+        },
+        tx,
+      );
+
+      await recordAdminAction(
+        {
+          actorId: admin.id,
+          action: AdminAction.STORE_MEMBERSHIP_CHANGED,
+          subjectType: 'Store',
+          subjectId: created.id,
+          subjectLabel: created.name,
+          reason,
+          detail: {
+            created: true,
+            slug: created.slug,
+            cityId,
+            serviceKeys,
+            ownerPhone: maskPhilippineMobile(outcome.phone),
+            ownerHadAccount: outcome.kind === 'ADDED',
+          },
+        },
+        tx,
+      );
+
+      return { created, outcome };
+    });
+
+    revalidatePath('/admin/stores');
+    return {
+      ok: true,
+      message:
+        store.outcome.kind === 'ADDED'
+          ? `${store.created.name} created. The owner can open it now. It is hidden from customers until it has a menu.`
+          : `${store.created.name} created. The owner has no TARA account yet — they get access the first time they sign in with that number.`,
+    };
+  } catch (error) {
+    if (error instanceof InvalidPhoneNumberError) {
+      return { ok: false, message: "Check the owner's mobile number." };
+    }
+    throw error;
+  }
+}
+
+export async function setStoreVisibilityAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  let admin;
+  try {
+    admin = await requireAdmin();
+  } catch (error) {
+    if (error instanceof AdminAccessRequiredError) return DENIED;
+    throw error;
+  }
+
+  const storeId = String(formData.get('storeId') ?? '').trim();
+  const visible = String(formData.get('visible') ?? '') === '1';
+
+  let reason: string;
+  try {
+    reason = normaliseReason(formData.get('reason'));
+  } catch (error) {
+    if (error instanceof AuditReasonRequiredError) {
+      return { ok: false, message: error.message };
+    }
+    throw error;
+  }
+
+  const store = await prisma.store.findUnique({
+    where: { id: storeId },
+    select: { id: true, name: true, _count: { select: { menuItems: true } } },
+  });
+  if (!store) return { ok: false, message: 'No such store.' };
+
+  if (visible && store._count.menuItems === 0) {
+    return {
+      ok: false,
+      message:
+        'That shop has no menu yet. A customer would find it, open it and see ' +
+        'nothing — have the owner add items first.',
+    };
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.store.update({ where: { id: store.id }, data: { isVisible: visible } });
+    await recordAdminAction(
+      {
+        actorId: admin.id,
+        action: AdminAction.STORE_MEMBERSHIP_CHANGED,
+        subjectType: 'Store',
+        subjectId: store.id,
+        subjectLabel: store.name,
+        reason,
+        detail: { isVisible: visible },
+      },
+      tx,
+    );
+  });
+
+  revalidatePath('/admin/stores');
+  revalidatePath(`/admin/stores/${store.id}`);
+  return {
+    ok: true,
+    message: visible
+      ? `${store.name} is now visible to customers.`
+      : `${store.name} is hidden from customers.`,
+  };
+}
+
+export async function grantStoreAccessAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  let admin;
+  try {
+    admin = await requireAdmin();
+  } catch (error) {
+    if (error instanceof AdminAccessRequiredError) return DENIED;
+    throw error;
+  }
+
+  const storeId = String(formData.get('storeId') ?? '').trim();
+  const rawPhone = String(formData.get('phone') ?? '').trim();
+  const role = String(formData.get('role') ?? '') as StoreRole;
+  if (!(role in StoreRole)) return { ok: false, message: 'Pick a role.' };
+
+  let reason: string;
+  try {
+    reason = normaliseReason(formData.get('reason'));
+  } catch (error) {
+    if (error instanceof AuditReasonRequiredError) {
+      return { ok: false, message: error.message };
+    }
+    throw error;
+  }
+
+  const store = await prisma.store.findUnique({
+    where: { id: storeId },
+    select: { id: true, name: true },
+  });
+  if (!store) return { ok: false, message: 'No such store.' };
+
+  try {
+    const outcome = await grantStoreAccessAsAdmin({
+      storeId: store.id,
+      adminId: admin.id,
+      rawPhone,
+      role,
+    });
+
+    await recordAdminAction({
+      actorId: admin.id,
+      action: AdminAction.STORE_MEMBERSHIP_CHANGED,
+      subjectType: 'Store',
+      subjectId: store.id,
+      subjectLabel: store.name,
+      reason,
+      detail: {
+        granted: role,
+        phone: maskPhilippineMobile(outcome.phone),
+        hadAccount: outcome.kind === 'ADDED',
+      },
+    });
+
+    revalidatePath(`/admin/stores/${store.id}`);
+    return {
+      ok: true,
+      message:
+        outcome.kind === 'ADDED'
+          ? `Added to ${store.name}.`
+          : `No TARA account on that number yet — the invitation waits for their first sign-in.`,
+    };
+  } catch (error) {
+    if (error instanceof InvalidPhoneNumberError) {
+      return { ok: false, message: 'Check that mobile number.' };
+    }
+    if (error instanceof AlreadyAMemberError || error instanceof LastOwnerError) {
+      return { ok: false, message: error.message };
+    }
+    throw error;
+  }
+}
+
+export async function revokeStoreAccessAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  let admin;
+  try {
+    admin = await requireAdmin();
+  } catch (error) {
+    if (error instanceof AdminAccessRequiredError) return DENIED;
+    throw error;
+  }
+
+  const storeId = String(formData.get('storeId') ?? '').trim();
+  const memberId = String(formData.get('memberId') ?? '').trim();
+
+  let reason: string;
+  try {
+    reason = normaliseReason(formData.get('reason'));
+  } catch (error) {
+    if (error instanceof AuditReasonRequiredError) {
+      return { ok: false, message: error.message };
+    }
+    throw error;
+  }
+
+  const store = await prisma.store.findUnique({
+    where: { id: storeId },
+    select: { id: true, name: true },
+  });
+  if (!store) return { ok: false, message: 'No such store.' };
+
+  try {
+    const outcome = await revokeStoreAccessAsAdmin({ storeId: store.id, memberId });
+
+    await recordAdminAction({
+      actorId: admin.id,
+      action: AdminAction.STORE_MEMBERSHIP_CHANGED,
+      subjectType: 'Store',
+      subjectId: store.id,
+      subjectLabel: store.name,
+      reason,
+      detail: { revoked: outcome.role, userId: outcome.userId },
+    });
+
+    revalidatePath(`/admin/stores/${store.id}`);
+    return { ok: true, message: `Removed from ${store.name}. They have been told.` };
+  } catch (error) {
+    if (error instanceof LastOwnerError || error instanceof InviteNotFoundError) {
+      return { ok: false, message: error.message };
+    }
+    throw error;
+  }
 }

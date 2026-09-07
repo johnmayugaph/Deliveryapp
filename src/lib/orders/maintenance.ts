@@ -46,6 +46,7 @@ import {
   ticketsNeedingChase,
 } from '@/lib/support/queries';
 import { describeWait, waitingMinutes } from '@/lib/support/policy';
+import { pruneExpiredInvites } from '@/lib/merchant/staff';
 import { reportError } from '@/lib/monitoring/report';
 import { ErrorSource } from '@prisma/client';
 import { resolveSmsSender } from '@/lib/auth/sms';
@@ -578,6 +579,7 @@ export async function runMaintenance(): Promise<{
   prunedVerifications: number;
   prunedSessions: number;
   prunedEmailCodes: number;
+  prunedStoreInvites: number;
 }> {
   // Order matters. Lapsed offers are closed first so the fan-out sees accurate
   // live counts; dispatch runs before the timeout sweep so an order that just
@@ -614,6 +616,9 @@ export async function runMaintenance(): Promise<{
   const prunedVerifications = await pruneVerifications();
   const prunedSessions = await pruneSessions();
   const prunedEmailCodes = await pruneEmailCodes();
+  // An expired invite already redeems nothing — `redeemStoreInvites` filters
+  // on the expiry — so this is tidying, not enforcement.
+  const prunedStoreInvites = await pruneExpiredInvites();
 
   return {
     expiredOffers,
@@ -629,5 +634,6 @@ export async function runMaintenance(): Promise<{
     prunedVerifications,
     prunedSessions,
     prunedEmailCodes,
+    prunedStoreInvites,
   };
 }

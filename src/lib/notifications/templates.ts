@@ -46,6 +46,9 @@ export interface NotificationContext {
   ticketSubject?: string;
   /** For a waiting ticket: "4 hours". Already rendered by `describeWait`. */
   waitLabel?: string;
+  /** For store access: what they are at the shop (`storeName` is above). */
+  storeRoleLabel?: string;
+  storeAccessEvent?: 'GRANTED' | 'ROLE_CHANGED' | 'REMOVED';
   /**
    * Which of the three things happened. Without it a customer's reply to a
    * thread reads as a brand-new ticket, and an administrator learns to stop
@@ -276,6 +279,39 @@ export const NOTIFICATION_TEMPLATES: Readonly<Record<NotificationKind, Template>
    * message can contain anything a person typed, including details about the
    * account, and an SMS is delivered to whoever is holding the phone.
    */
+  /**
+   * Store access. One kind for three events, told apart by
+   * `storeAccessEvent` — a removal announced as "You have been added" would be
+   * worse than saying nothing.
+   */
+  [NotificationKind.STORE_ACCESS_CHANGED]: (context) => {
+    const store = context.storeName ?? 'a store';
+    const role = context.storeRoleLabel ?? 'staff';
+    if (context.storeAccessEvent === 'REMOVED') {
+      return {
+        title: `You no longer work ${store}`,
+        body:
+          `Your access to ${store} has been removed. Your own orders and ` +
+          'credits are untouched — this is only about the store.',
+        sms: `TARA: your access to ${store} has been removed.`,
+      };
+    }
+    if (context.storeAccessEvent === 'ROLE_CHANGED') {
+      return {
+        title: `You are now ${role} at ${store}`,
+        body: `Your role at ${store} changed to ${role}. Open the store to see what that covers.`,
+        sms: `TARA: you are now ${role} at ${store}.`,
+      };
+    }
+    return {
+      title: `You can now work ${store}`,
+      body:
+        `You have been added to ${store} as ${role}. Open it from your ` +
+        'profile to take orders.',
+      sms: `TARA: you have been added to ${store} as ${role}.`,
+    };
+  },
+
   [NotificationKind.SUPPORT_REPLY]: (context) => ({
     title: 'Support replied',
     body:

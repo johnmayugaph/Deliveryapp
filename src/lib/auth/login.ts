@@ -5,6 +5,7 @@ import { THROTTLE_MESSAGES, VERIFY_FAILURE_MESSAGES } from '@/lib/auth/otp-polic
 import { ensureWallet } from '@/lib/wallet/ledger';
 import { SIGN_IN_REFUSED_MESSAGE, signInIsPermitted } from '@/lib/demo/policy';
 import { verifyLoginChallenge, type CaptchaVerifier } from '@/lib/auth/captcha';
+import { redeemStoreInvites } from '@/lib/merchant/staff';
 
 /**
  * The login flow's orchestration, as plain functions.
@@ -132,6 +133,13 @@ export async function checkLoginCode(input: {
   // Every account has a credits ledger from the start, so nothing later has to
   // check whether one exists before granting a promo.
   await ensureWallet(user.id);
+
+  // Any store access offered to this NUMBER becomes real here, and here is the
+  // only honest place for it: the OTP has just proved who holds the SIM, which
+  // is exactly what a `StoreInvite` is a grant to. It never throws — a login
+  // that failed because of a shop invitation would be baffling to the person it
+  // happened to, and the invite simply stays live for their next attempt.
+  await redeemStoreInvites({ userId: user.id, phone });
 
   return { ok: true, userId: user.id, needsOnboarding: user.onboardedAt === null };
 }

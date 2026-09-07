@@ -142,9 +142,6 @@ export async function hasAnyStoreAccess(userId: string): Promise<boolean> {
   return count > 0;
 }
 
-/** Human label for a role, for the merchant header. */
-export const STORE_ROLE_LABELS: Readonly<Record<StoreRole, string>> = {
-  [StoreRole.OWNER]: 'May-ari',
-  [StoreRole.MANAGER]: 'Manager',
-  [StoreRole.STAFF]: 'Staff',
-};
+/** Role labels used to live here; they moved to `staff-policy.ts`, which is
+ *  pure. This module reaches for the session, and a client component importing
+ *  a label from here would pull `next/headers` into the browser bundle. */

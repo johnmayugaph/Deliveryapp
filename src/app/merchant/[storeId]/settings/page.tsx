@@ -1,10 +1,9 @@
 import { StoreRole } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
-import { requireStoreAccess, roleSatisfies, STORE_ROLE_LABELS } from '@/lib/merchant/access';
+import Link from 'next/link';
+import { requireStoreAccess, roleSatisfies } from '@/lib/merchant/access';
 import { getAllServices } from '@/lib/services/registry';
 import { PrepTimeForm } from '@/components/merchant/PrepTimeForm';
-import { formatPhilippineMobile } from '@/lib/auth/phone';
-import { displayNameFor } from '@/lib/auth/session';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,12 +16,8 @@ export default async function MerchantSettingsPage({
   const { storeId } = await params;
   const access = await requireStoreAccess(storeId);
 
-  const [members, services] = await Promise.all([
-    prisma.storeMember.findMany({
-      where: { storeId: access.store.id },
-      include: { user: true },
-      orderBy: { role: 'asc' },
-    }),
+  const [memberCount, services] = await Promise.all([
+    prisma.storeMember.count({ where: { storeId: access.store.id } }),
     getAllServices(),
   ]);
 
@@ -82,6 +77,9 @@ export default async function MerchantSettingsPage({
         </p>
       </section>
 
+      {/* The list itself moved to its own tab once it became editable: adding
+          somebody, changing a role and withdrawing an invitation are a
+          screenful, and they do not belong beside a prep-time field. */}
       <section
         aria-labelledby="members-heading"
         className="rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5"
@@ -89,29 +87,18 @@ export default async function MerchantSettingsPage({
         <h2 id="members-heading" className="text-[13px] font-semibold">
           Who has access
         </h2>
-        <ul className="mt-2 space-y-1.5">
-          {members.map((member) => (
-            <li key={member.id} className="flex items-center justify-between gap-3 text-xs">
-              <span className="min-w-0">
-                <span className="block font-medium">
-                  {displayNameFor(member.user)}
-                  {member.userId === access.user.id ? (
-                    <span className="ml-1.5 text-[10px] font-semibold text-brand-700">ikaw</span>
-                  ) : null}
-                </span>
-                <span className="block text-[11px] text-ink-faint tabular-nums">
-                  {formatPhilippineMobile(member.user.phone)}
-                </span>
-              </span>
-              <span className="shrink-0 text-[11px] font-semibold text-ink-muted">
-                {STORE_ROLE_LABELS[member.role]}
-              </span>
-            </li>
-          ))}
-        </ul>
-        <p className="mt-2 text-[11px] text-ink-faint">
+        <p className="mt-1 text-[11px] leading-relaxed text-ink-muted">
+          {memberCount === 1
+            ? 'Just you, for now.'
+            : `${memberCount} people can work this store.`}{' '}
           Staff: queue lang. Manager: menu at settings din. May-ari: lahat.
         </p>
+        <Link
+          href={`/merchant/${access.store.id}/staff`}
+          className="mt-3 inline-block rounded-lg bg-surface-sunken px-3 py-2 text-[13px] font-semibold text-brand-700"
+        >
+          Manage staff
+        </Link>
       </section>
     </main>
   );

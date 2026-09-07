@@ -1,10 +1,11 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { requireStoreAccess, STORE_ROLE_LABELS } from '@/lib/merchant/access';
+import { requireStoreAccess } from '@/lib/merchant/access';
 import { getAccessibleStores } from '@/lib/merchant/access';
 import { MerchantTabs } from '@/components/merchant/MerchantTabs';
 import { StoreOpenToggle } from '@/components/merchant/StoreOpenToggle';
 import { NotificationBell } from '@/components/notifications/NotificationBell';
+import { STORE_ROLE_LABELS } from '@/lib/merchant/staff-policy';
 
 export const dynamic = 'force-dynamic';
 

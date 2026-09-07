@@ -36,6 +36,7 @@ async function main() {
     prunedVerifications,
     prunedSessions,
     prunedEmailCodes,
+    prunedStoreInvites,
   } = await runMaintenance();
 
   if (expiredOffers > 0) {
@@ -117,10 +118,16 @@ async function main() {
     console.log(`Lifted ${liftedFreezes} expired credits freeze(s).`);
   }
 
-  if (prunedVerifications > 0 || prunedSessions > 0 || prunedEmailCodes > 0) {
+  if (
+    prunedVerifications > 0 ||
+    prunedSessions > 0 ||
+    prunedEmailCodes > 0 ||
+    prunedStoreInvites > 0
+  ) {
     console.log(
-      `Pruned ${prunedVerifications} login code(s), ${prunedEmailCodes} email code(s) ` +
-        `and ${prunedSessions} dead session(s).`,
+      `Pruned ${prunedVerifications} login code(s), ${prunedEmailCodes} email code(s), ` +
+        `${prunedSessions} dead session(s) and ${prunedStoreInvites} lapsed store ` +
+        'invitation(s).',
     );
   }
 

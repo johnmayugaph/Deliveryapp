@@ -1,7 +1,8 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { getAccessibleStores, STORE_ROLE_LABELS } from '@/lib/merchant/access';
+import { getAccessibleStores } from '@/lib/merchant/access';
 import { loadMerchantQueue } from '@/lib/merchant/queue';
+import { STORE_ROLE_LABELS } from '@/lib/merchant/staff-policy';
 
 export const dynamic = 'force-dynamic';
 

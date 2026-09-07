@@ -1096,6 +1096,146 @@ contact panel is there.
 
 ---
 
+## Store staff — inviting a phone number, not an account
+
+For a long time `StoreMember` rows were written by the seed or by hand. That
+meant onboarding a partner shop needed somebody with database access for every
+waiter they hired — and worse, there was **no way to create a store at all**
+outside the seed, so a new partner needed a person writing SQL for the store
+row, its menu, and its membership. The predictable end state of that friction
+is one shared login for the whole shop, which is worse than any failure mode
+the rules below guard against.
+
+### The hard part is that the person has no account yet
+
+A shop owner wants to add the waiter who started on Monday. That waiter has
+probably never opened the app. The two obvious answers are both bad:
+
+- **Fabricate an account** for a number nobody has verified. The demo-data work
+  exists precisely because phantom accounts are dangerous.
+- **Tell the owner to come back** once their staff have registered. Nobody
+  comes back.
+
+So access is offered to a **phone number**, held as a `StoreInvite`, and
+redeemed on the first sign-in from that number — inside `checkLoginCode`,
+right after the OTP has been verified. That is the only honest moment for it:
+before then nobody has proved they hold the SIM, and an invite is a grant to
+whoever does.
+
+Which means an invite **expires**, after `INVITE_VALID_DAYS` (14). Philippine
+prepaid numbers are recycled after a period of inactivity, and a forgotten
+invitation to a reassigned number would hand a stranger the order queue two
+years later.
+
+Redemption never throws. A sign-in that failed because of a shop invitation
+would be baffling to the person it happened to and unfixable by them; the
+invite simply stays live for their next attempt.
+
+### Nothing is ever texted to the invited number
+
+A decision, not an omission. An invite form that sent an SMS would be a way for
+any shop owner to message strangers at our expense, from our sender name. The
+invited person hears about it from whoever is hiring them — who knows them,
+which is why they are being hired — and gets an in-app notification the moment
+their account exists. A test asserts that no SMS sender is reachable from the
+invite path.
+
+### Who may hand out what
+
+`staff-policy.ts` is pure and keyed by every `StoreRole`, so adding a role is a
+compile error until somebody decides what it may do.
+
+| Actor | May grant | May remove |
+| --- | --- | --- |
+| **OWNER** | owner, manager, staff | anybody |
+| **MANAGER** | staff | only themselves |
+| **STAFF** | nothing | only themselves |
+
+The asymmetry is deliberate on both ends.
+
+**A manager may add staff but not another manager.** Only an owner decides who
+else can change prices and settings, and a manager who could appoint peers
+could build a majority that outvotes the person whose business it is.
+
+**An owner may appoint another owner.** Ownership is the one role that has to be
+transferable by the person holding it — otherwise handing a shop to a new
+proprietor, or adding the spouse who actually runs it, needs a support ticket,
+and what people do when a screen will not let them is share the login.
+
+**Anybody may remove themselves.** Somebody who has stopped working at a shop
+should not need the owner's cooperation to stop appearing in its staff list.
+
+Changing an existing role is judged against **both** roles, and that is the
+escalation it stops: a manager cannot grant OWNER, but without the second check
+they could still "change the role" of the owner to staff and take the shop
+over. The refusal names the half that failed, too — a manager told "only a
+manager or the owner can add staff" would go and ask for the wrong permission.
+
+### A store always keeps at least one owner
+
+The one invariant that would otherwise need a database edit to repair. Lose the
+last owner and the store is stranded: nobody can invite staff, change the menu,
+or hand ownership on.
+
+Enforced **twice**. `wouldStrandStore()` gives the person a sentence explaining
+what to do instead; `prisma/sql/store_members.sql` is the enforcement that
+counts, because it holds for code paths that do not exist yet — a future
+script, a console action, a hand-written `UPDATE` at 2am.
+
+Three details in that trigger are load-bearing:
+
+- **`DEFERRABLE INITIALLY DEFERRED`**, which is what makes a handover possible
+  at all. Promoting the new owner and demoting the old one are two statements,
+  and a non-deferred check would reject whichever order they were written in.
+  Deferred, the pair is judged once, at `COMMIT`, on the end state.
+- **It checks the store still exists.** Deleting a `Store` cascades to its
+  members, and complaining that a store being deleted has no owner would make
+  stores undeletable.
+- **It does not guard `INSERT`.** A store's first member is created before it
+  can possibly have an owner, and a store with no members at all is one nobody
+  has been given yet rather than a stranded one.
+
+It honours the same transaction-scoped `tara.allow_purge` hatch as the credits
+ledger and the audit log, so `db:purge-demo` still works.
+
+### Two screens, and what each is for
+
+**`/merchant/<store>/staff`** is the shop's own. Add by number, change a role,
+remove somebody, withdraw an invitation nobody took up. Every "can I" question
+is answered on the server from the viewer's real membership and passed down as
+a boolean; the client component renders controls and never decides who may use
+them. The same policy functions run again inside the actions, because **a
+hidden button is not an authorisation check**.
+
+**`/admin/stores`** is the console's, and it does exactly the two things the
+shop cannot do for itself: create the store, and name its first owner. A new
+partner shop has nobody at it who could invite anybody. After that first owner
+the console gets out of the way — the menu, the prep time and the rest of the
+staff belong to the people who work there, and duplicating those controls would
+mean two screens that disagree.
+
+A new store is created **hidden**. A shop with no menu that customers can find
+is worse than one they cannot: they open it, see nothing, and conclude the app
+is broken. The console refuses to make a menuless store visible, and the store
+list puts the not-yet-ready shops first, because those are the ones waiting on
+somebody.
+
+Coordinates are range-checked against the Philippines. A store at 0,0 is in the
+Atlantic and every delivery fee from it would be computed from the Gulf of
+Guinea; swapped latitude and longitude is the mistake this actually catches.
+
+### Where the audit line falls
+
+The console's four store actions **do** carry a reason and an audit row, unlike
+the three support controls. The distinction is what the action moves: a support
+reply is already recorded verbatim with its author, while granting store access
+hands somebody the power to change prices and accept orders in a real business.
+That is squarely what the audit log is for. The phone number written into the
+audit detail is masked — the log is read by more people than the account record
+is.
+
+---
+
 ## Notifications — an outbox, not a fire-and-forget
 
 The gap this closes: every screen polled while it was open, so a store or a
