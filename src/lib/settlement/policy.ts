@@ -429,3 +429,55 @@ export const ENTRY_LABEL: Readonly<Record<SettlementEntryType, string>> = {
   [SettlementEntryType.REFERRAL_BONUS]: 'Invite bonus',
   [SettlementEntryType.ADJUSTMENT]: 'Adjustment',
 };
+
+/**
+ * Labels that read wrong for one party, overridden for that party.
+ *
+ * There is exactly one so far, and it is worth the machinery. A rider was
+ * invited: they typed a code into an application. A shop was not — its
+ * introduction was a conversation somebody at TARA recorded, and its own
+ * referral panel says *"There is no code to share"* in as many words. A line
+ * reading "Invite bonus" directly above that names a thing the same screen
+ * has just said does not exist.
+ *
+ * Same money, same entry type, one different word. Found in a browser, on the
+ * shop's own statement.
+ */
+const ENTRY_LABEL_BY_PARTY: Readonly<
+  Partial<Record<SettlementParty, Partial<Record<SettlementEntryType, string>>>>
+> = {
+  [SettlementParty.STORE]: {
+    [SettlementEntryType.REFERRAL_BONUS]: 'Referral bonus',
+  },
+};
+
+/**
+ * The label to show one party for one kind of line.
+ *
+ * Falls back to `ENTRY_LABEL` for every pair with no override, so a new entry
+ * type needs no entry here and a new party inherits the general wording.
+ */
+export function entryLabel(
+  type: SettlementEntryType,
+  party?: SettlementParty,
+): string {
+  return (
+    (party ? ENTRY_LABEL_BY_PARTY[party]?.[type] : undefined) ??
+    ENTRY_LABEL[type]
+  );
+}
+
+/**
+ * The heading over a party's total bonuses, for the tile on their own screen.
+ *
+ * The plural of `entryLabel(REFERRAL_BONUS, party)` in every case so far, but
+ * kept as its own function rather than a naive `+ 'es'`: the two words differ
+ * in their plural ("Invite bonuses", "Referral bonuses") only by accident,
+ * and a third party's wording should not be produced by string surgery on a
+ * label written for somebody else.
+ */
+export function bonusTotalLabel(party: SettlementParty): string {
+  return party === SettlementParty.STORE
+    ? 'Referral bonuses'
+    : 'Invite bonuses';
+}

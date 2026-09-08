@@ -1,7 +1,9 @@
 import { SettlementParty, StoreRole } from '@prisma/client';
 import { requireStoreAccess } from '@/lib/merchant/access';
 import { positionOf, statementFor } from '@/lib/settlement/ledger';
+import { storeReferralSummary } from '@/lib/referrals/store-summary';
 import { PositionPanel } from '@/components/settlement/PositionPanel';
+import { StoreReferralPanel } from '@/components/settlement/StoreReferralPanel';
 import { formatCentavos } from '@/lib/money';
 
 export const dynamic = 'force-dynamic';
@@ -23,9 +25,10 @@ export default async function MerchantPayoutsPage({
   const access = await requireStoreAccess(storeId, StoreRole.MANAGER);
 
   const ref = { party: 'STORE' as const, storeId: access.store.id };
-  const [position, entries] = await Promise.all([
+  const [position, entries, referrals] = await Promise.all([
     positionOf(ref),
     statementFor(ref, 60),
+    storeReferralSummary(access.store.id),
   ]);
 
   return (
@@ -56,6 +59,11 @@ export default async function MerchantPayoutsPage({
           joined.
         </p>
       ) : null}
+
+      {/* Below the balance, deliberately: a referral bonus is a line IN that
+          balance, and the total above is also the number a shop this one
+          introduced is measured against. */}
+      <StoreReferralPanel summary={referrals} />
     </main>
   );
 }

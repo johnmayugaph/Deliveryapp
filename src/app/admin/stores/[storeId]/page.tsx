@@ -3,16 +3,20 @@ import { notFound } from 'next/navigation';
 import { StoreRole } from '@prisma/client';
 import { requireAdmin } from '@/lib/admin/access';
 import { consoleStoreDetail } from '@/lib/admin/stores';
+import { storeAttributionFor } from '@/lib/admin/store-referrals';
 import {
   describeInviteWindow,
   inviteIsLive,
   STORE_ROLE_LABELS,
 } from '@/lib/merchant/staff-policy';
 import {
+  attributeStoreReferralAction,
   grantStoreAccessAction,
   revokeStoreAccessAction,
   setStoreVisibilityAction,
 } from '@/lib/actions/admin-actions';
+import { ReferralStatus } from '@prisma/client';
+import { formatCentavos } from '@/lib/money';
 import { ReasonForm } from '@/components/admin/ReasonForm';
 import { Empty, Panel, PersonLink, Pill, Stat, manilaTime } from '@/components/admin/primitives';
 import { displayNameFor } from '@/lib/auth/session';
@@ -38,6 +42,8 @@ export default async function AdminStoreDetailPage({
 
   const store = await consoleStoreDetail(storeId);
   if (!store) notFound();
+
+  const referral = await storeAttributionFor(store.id);
 
   const now = new Date();
   const liveInvites = store.invites.filter((invite) => inviteIsLive(invite, now));
@@ -182,6 +188,154 @@ export default async function AdminStoreDetailPage({
             </ReasonForm>
           </div>
         </div>
+      </Panel>
+
+
+      <Panel
+        title="Who introduced this shop"
+        description="The one referral attribution in TARA that a person makes. A shop does not sign itself up, so there is no code — this is the form instead, and your name goes on it."
+      >
+        {referral.existing ? (
+          <div className="space-y-2 px-4 py-3">
+            <p className="text-[13px]">
+              <Link
+                href={`/admin/stores/${referral.existing.referrerStoreId}`}
+                className="font-semibold text-brand-700"
+              >
+                {referral.existing.referrerName}
+              </Link>{' '}
+              introduced this shop.{' '}
+              <Pill
+                tone={
+                  referral.existing.status === ReferralStatus.REWARDED
+                    ? 'good'
+                    : referral.existing.status === ReferralStatus.NOT_REWARDED
+                      ? 'bad'
+                      : 'neutral'
+                }
+              >
+                {referral.existing.status === ReferralStatus.REWARDED
+                  ? 'Bonus owed'
+                  : referral.existing.status === ReferralStatus.NOT_REWARDED
+                    ? 'No bonus'
+                    : 'Trading towards it'}
+              </Pill>
+            </p>
+            <p className="text-xs leading-relaxed text-ink-muted">
+              Recorded by {referral.existing.attributedByName} on{' '}
+              {manilaTime(referral.existing.createdAt)} —{' '}
+              <span className="italic">
+                &ldquo;{referral.existing.attributionNote}&rdquo;
+              </span>
+            </p>
+            {referral.existing.status === ReferralStatus.ATTRIBUTED ? (
+              <p className="text-xs leading-relaxed text-ink-muted">
+                This shop has earned{' '}
+                <strong className="text-ink">
+                  {formatCentavos(referral.earnedCentavos)}
+                </strong>{' '}
+                through TARA
+                {referral.isLive ? (
+                  <>
+                    {' '}
+                    of the{' '}
+                    {formatCentavos(
+                      referral.programme.qualifyingEarningsCentavos,
+                    )}{' '}
+                    the bonus needs. It is paid on the order that crosses that
+                    line, into both shops&rsquo; settlement balances.
+                  </>
+                ) : (
+                  <>
+                    . Shop referrals are switched off, so nothing is owed on
+                    this until they are switched back on.
+                  </>
+                )}
+              </p>
+            ) : (
+              <p className="text-xs leading-relaxed text-ink-muted">
+                {formatCentavos(referral.existing.referrerRewardCentavos)} to{' '}
+                {referral.existing.referrerName},{' '}
+                {formatCentavos(referral.existing.refereeRewardCentavos)} to
+                this shop, against{' '}
+                {formatCentavos(
+                  referral.existing.qualifyingEarningsCentavos ?? 0,
+                )}{' '}
+                earned.
+                {referral.existing.blockedReason
+                  ? ` ${referral.existing.blockedReason}`
+                  : ''}
+              </p>
+            )}
+            <p className="text-[11px] leading-relaxed text-ink-faint">
+              An attribution cannot be edited or moved to another shop. It is a
+              claim somebody made about the world, and a bonus may already have
+              been paid against it — if it is wrong, adjust the settlement
+              balance instead, where the correction is recorded as one.
+            </p>
+          </div>
+        ) : !referral.isLive ? (
+          <Empty>
+            Shop referrals are switched off, so there is nothing to record.
+            Turn the programme on under Referrals first — attributing a shop
+            while it is off would promise a bonus no rule would pay.
+          </Empty>
+        ) : referral.earnedCentavos > 0 ? (
+          <Empty>
+            This shop has already earned{' '}
+            {formatCentavos(referral.earnedCentavos)} through TARA, so it was
+            trading before anybody introduced it. Referrals are for shops that
+            are new, and the rule refuses this one.
+          </Empty>
+        ) : referral.candidates.length === 0 ? (
+          <Empty>
+            No other visible shop in {store.city.name} to attribute this one
+            to. A shop introduced by one in another city is possible — record
+            it by hand.
+          </Empty>
+        ) : (
+          <div className="border-t border-black/5 px-4 py-3">
+            <div className="max-w-md">
+              <ReasonForm
+                action={attributeStoreReferralAction}
+                hidden={{ storeId: store.id }}
+                submitLabel="Record the introduction"
+                placeholder="Owner named them on the onboarding call, 7 Sep"
+                extraFields={
+                  <label className="block">
+                    <span className="block text-[11px] font-semibold text-ink-muted">
+                      Introduced by
+                    </span>
+                    <select
+                      name="referrerStoreId"
+                      required
+                      defaultValue=""
+                      className="mt-1 w-full rounded-lg border border-black/10 bg-surface px-2 py-1.5 text-[13px] font-semibold"
+                    >
+                      <option value="" disabled>
+                        Pick a shop in {store.city.name}
+                      </option>
+                      {referral.candidates.map((candidate) => (
+                        <option key={candidate.id} value={candidate.id}>
+                          {candidate.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                }
+              >
+                Nothing is paid now. Once this shop has earned{' '}
+                {formatCentavos(referral.programme.qualifyingEarningsCentavos)}{' '}
+                through TARA,{' '}
+                {formatCentavos(referral.programme.referrerCentavos)} is added
+                to the introducing shop&rsquo;s settlement balance and{' '}
+                {formatCentavos(referral.programme.refereeCentavos)} to this
+                one, and both go out with their next payouts. Say who told you
+                — the note is the only evidence this introduction happened.
+              </ReasonForm>
+            </div>
+          </div>
+        )}
       </Panel>
 
       {liveInvites.length > 0 ? (

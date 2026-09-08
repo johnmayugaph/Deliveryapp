@@ -182,6 +182,8 @@ export const ADMIN_ACTION_LABEL: Readonly<Record<AdminAction, string>> = {
   [AdminAction.LOYALTY_POINTS_ADJUSTED]: "Somebody's points corrected",
   [AdminAction.REFERRAL_PROGRAMME_CHANGED]: 'Referral programme changed',
   [AdminAction.PARTNER_REFERRAL_PROGRAMME_CHANGED]: 'Rider-invite programme changed',
+  [AdminAction.STORE_REFERRAL_PROGRAMME_CHANGED]: 'Shop-referral programme changed',
+  [AdminAction.STORE_REFERRAL_ATTRIBUTED]: 'Recorded which shop brought another',
   [AdminAction.SURGE_BAND_CREATED]: 'Surge step added',
   [AdminAction.SURGE_BAND_CHANGED]: 'Surge step edited',
   [AdminAction.SURGE_BAND_ACTIVATION_CHANGED]: 'Surge step switched on or off',

@@ -1,0 +1,3 @@
+-- AlterEnum
+ALTER TYPE "NotificationKind" ADD VALUE 'STORE_REFERRAL_SETTLED';
+

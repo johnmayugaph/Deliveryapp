@@ -495,6 +495,12 @@ model User {
   promoRedemptions        PromoRedemption[]
   promoCodesCreated       PromoCode[]                       @relation("PromoCodeCreator")
   giftCardsIssued         GiftCard[]                        @relation("GiftCardIssuer")
+
+  /// Shop referrals this person attributed. Written by hand rather than left
+  /// to `prisma format`, which would have named it `StoreReferral` — the same
+  /// auto-generated shape that put two dead `fleetPartnerId` columns in this
+  /// schema before anybody noticed.
+  storeReferralsAttributed StoreReferral[]                  @relation("StoreReferralAttributor")
   giftCardsRedeemed       GiftCard[]                        @relation("GiftCardRedeemer")
   giftCardsVoided         GiftCard[]                        @relation("GiftCardVoider")
   invoicesSettled         SubscriptionInvoice[]             @relation("InvoiceSettler")
@@ -728,6 +734,11 @@ model Store {
   settlementEntries SettlementEntry[]
 
   promoCodes PromoCode[]
+
+  /// Shop-to-shop referrals, both directions. Like a rider's, a shop's
+  /// referral pays MONEY through the settlement ledger — see `StoreReferral`.
+  referralsMade    StoreReferral[] @relation("StoreReferrer")
+  referralReceived StoreReferral?  @relation("StoreReferee")
 
   @@index([cityId, isVisible, isOpen])
   @@index([serviceKeys], type: Gin)
@@ -2261,6 +2272,12 @@ enum NotificationKind {
   /// that said "credits" to somebody who never orders would be worse than no
   /// message.
   PARTNER_REFERRAL_SETTLED
+  /// To a shop whose introduction has been settled: the one it made, or the
+  /// one it arrived through. Third of the three referral messages, and its own
+  /// kind rather than a shared one because the sentence is different again:
+  /// what qualified it is the OTHER shop's sales, and a shop reading "twenty
+  /// deliveries" would be reading a rider's message.
+  STORE_REFERRAL_SETTLED
   /// To an administrator: a market has sat at its top surge step long enough
   /// that it is not a spike. The fourth kind addressed to the people running
   /// the business, and the one that is not asking them to fix an incident —
@@ -2547,6 +2564,15 @@ enum AdminAction {
   /// adds to what TARA owes somebody, and the amounts decide what a rider
   /// costs to hire.
   PARTNER_REFERRAL_PROGRAMME_CHANGED
+  /// The SHOP-referral programme's amounts, caps, earnings threshold or on/off
+  /// state were changed. Third of three, and audited for the same reason as
+  /// the second: it commits real money against every shop acquired through it.
+  STORE_REFERRAL_PROGRAMME_CHANGED
+  /// Somebody recorded which shop introduced another shop. The only referral
+  /// attribution in the app that a PERSON makes rather than a code — a store
+  /// does not sign itself up, so nothing in the system can know this fact.
+  /// The audit row is what makes the claim checkable: who said it, and why.
+  STORE_REFERRAL_ATTRIBUTED
   /// A surge step was switched off or back on. Kept distinct from a change
   /// because "surge was on at 6pm" is the fact a dispute turns on, and it
   /// should be answerable without reading a diff of amounts.
@@ -3069,9 +3095,98 @@ model Referral {
   @@index([status, createdAt])
 }
 
-/// Shared by both referral programmes — the customer one, which pays credits,
-/// and the partner one, which pays money through the settlement ledger. The
-/// three states mean the same thing in both; what differs is what qualifies and
+/// What a shop gets for bringing a shop.
+///
+/// The third referral programme, and the one whose shape is least like the
+/// other two — because a shop does not sign itself up. A rider fills in an
+/// application and can type a code into it; a store is CREATED IN THE CONSOLE
+/// by somebody who is already talking to both shops. So there is no code here
+/// at all: the attribution is a person naming a shop from a list, with their
+/// own name and a reason against it.
+///
+/// Off, with every amount at zero, until somebody sets it.
+model StoreReferralProgramme {
+  /// Always "default". See `ReferralProgramme.id`.
+  id String @id @default("default")
+
+  isActive Boolean @default(false)
+
+  /// To the shop that did the introducing.
+  referrerCentavos Int @default(0)
+
+  /// To the new shop, on the same event.
+  refereeCentavos Int @default(0)
+
+  /// How much the new shop must have EARNED through TARA before either side is
+  /// paid — its own share of the food it has sold, summed from the settlement
+  /// ledger.
+  ///
+  /// Earnings rather than an order count, unlike the rider programme's
+  /// deliveries. A rider's deliveries are interchangeable units of work; a
+  /// shop's orders are not, and twenty ₱120 orders is not a trading shop. It
+  /// is also the number the shop already reads on its own payouts screen, so
+  /// the threshold is something they can check rather than take on trust.
+  qualifyingEarningsCentavos Int @default(0)
+
+  /// How many introductions one shop may be paid for, per calendar month and
+  /// ever.
+  monthlyRewardCap  Int @default(0)
+  lifetimeRewardCap Int @default(0)
+
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+}
+
+/// One shop having introduced another.
+///
+/// The row records a DECISION rather than an event a customer caused: an
+/// administrator, talking to both shops, says who brought whom. That is why
+/// `attributedById` and `attributionNote` are both required and why the write
+/// is audited — the same posture as a comped subscription or a recorded
+/// payout, and for the same reason. Nothing in the app can know this fact; a
+/// person asserts it, and the row keeps their name.
+model StoreReferral {
+  id String @id @default(cuid())
+
+  /// The shop that introduced the other one.
+  referrerStoreId String
+  referrerStore   Store  @relation("StoreReferrer", fields: [referrerStoreId], references: [id], onDelete: Cascade)
+
+  /// The new shop. Unique, so nobody is attributed twice.
+  refereeStoreId String @unique
+  refereeStore   Store  @relation("StoreReferee", fields: [refereeStoreId], references: [id], onDelete: Cascade)
+
+  /// Who said so, and why. Required, both of them: an unattributable claim
+  /// about money owed is how a referral list stops being checkable.
+  attributedById  String
+  attributedBy    User   @relation("StoreReferralAttributor", fields: [attributedById], references: [id])
+  attributionNote String
+
+  status ReferralStatus @default(ATTRIBUTED)
+
+  referrerRewardCentavos Int       @default(0)
+  refereeRewardCentavos  Int       @default(0)
+  rewardedAt             DateTime?
+
+  /// What the new shop had earned when it qualified. The settlement entries
+  /// carry no order — a bonus arises from the OTHER shop's trading — so this
+  /// is the only place a payment can be traced to what earned it.
+  qualifyingEarningsCentavos Int?
+
+  /// Why nothing was paid, when nothing was paid. Shown to the shop.
+  blockedReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([referrerStoreId, status])
+  @@index([status, createdAt])
+}
+
+/// Shared by all three referral programmes — the customer one, which pays
+/// credits, and the rider and shop ones, which pay money through the
+/// settlement ledger. The
+/// three states mean the same thing in all of them; what differs is what qualifies and
 /// what gets paid, and that lives in each programme's own policy module rather
 /// than in a second copy of this enum.
 enum ReferralStatus {

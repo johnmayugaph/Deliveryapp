@@ -675,6 +675,45 @@ export const NOTIFICATION_TEMPLATES: Readonly<Record<NotificationKind, Template>
   },
 
   /**
+   * To a shop: an introduction has been settled.
+   *
+   * Says owed rather than paid, like the rider version. What it does NOT say
+   * is anything about a code or a delivery count: a shop's referral is
+   * recorded by a person and qualified by the other shop's SALES, so the
+   * sentence names sales.
+   *
+   * No SMS. A shop owner is at a counter with the app open, or has a manager
+   * who is; the rider version earns its text because a rider is out on a
+   * motorbike with the screen off.
+   */
+  [NotificationKind.STORE_REFERRAL_SETTLED]: (context) => {
+    const amount = context.amountCentavos ?? 0;
+    const introduced = context.inviteRole !== 'REFEREE';
+
+    if (amount > 0) {
+      const earned = formatCentavos(amount);
+      return {
+        title: `${earned} for a shop you introduced`,
+        body: introduced
+          ? `A shop you introduced has sold enough through TARA, so ${earned} ` +
+            'has been added to what TARA owes you. It goes out with your next payout.'
+          : `Your shop has sold enough through TARA, so your ${earned} welcome ` +
+            'bonus has been added to what TARA owes you. It goes out with your ' +
+            'next payout.',
+        sms: `TARA: ${earned} referral bonus added to what your shop is owed.`,
+      };
+    }
+
+    return {
+      title: 'A shop referral did not earn a bonus',
+      body:
+        (context.reason ?? 'That introduction could not be paid this time.') +
+        ' Nothing was taken from you.',
+      sms: 'TARA: a shop referral did not earn a bonus. Open the app for details.',
+    };
+  },
+
+  /**
    * To an offline rider: your city is short of riders and there is more money
    * on every job right now.
    *

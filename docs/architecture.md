@@ -1889,6 +1889,82 @@ trigger correctly refused the second write — which failed the whole ORDER
 COMPLETION. A race about a bonus must never cost a rider their delivery. The
 loser now matches no row and returns quietly.
 
+### Shop referrals — money again, but nobody typed a code
+
+`StoreReferral` and `StoreReferralProgramme`, with the rules in
+`lib/referrals/store-policy.ts`. A shop brings a shop, and like a rider's the
+bonus is **money** on the settlement ledger — one more `REFERRAL_BONUS` line in
+what TARA owes that shop, leaving in the payout somebody records. Third
+programme, third currency decision, and the same conclusion as the rider one
+for the same reason: a shop does not order lunch from us either.
+
+**The attribution is a person's claim, and there is no code.** This is the part
+that is genuinely different. A customer follows a link. A rider fills in an
+application and can type six characters into it. A shop does neither: a shop is
+created in `/admin/stores` by one of us, and its owner is invited by phone
+number afterwards. There is no form a shop's owner completes at the moment the
+shop comes into existence, and asking them for a code weeks later — on a screen
+they only reach because somebody already created the shop — would attribute a
+minority of real introductions and none of the ones that were a conversation
+between two owners and an ops person.
+
+So the console records it: on the shop's own page, somebody picks the referring
+shop from a list of visible shops in the same city, with their name and a
+reason against it. That is the posture of a comped subscription, a recorded
+payout or a settlement adjustment — a claim about the world rather than a state
+change the system observed — and it carries the same obligations: an actor, a
+note, an audit row, and a database that refuses the row without them
+(`store_referral_attribution_is_justified`). What can go wrong here is not
+farming but a claim nobody checked, which is why every console row carries who
+said it and what they said, and why the refusal that matters most is
+`ALREADY_TRADING`: a shop that has earned anything through TARA was trading
+before anybody introduced it.
+
+Which also means the refusal is **shown to the person who made the claim**,
+unlike the rider version, which deliberately swallows a bad code so a mistyped
+invite never costs somebody their application. Here the operator is asserting
+something and can be wrong about it.
+
+**The threshold is EARNINGS, not an order count.** A rider's deliveries are
+interchangeable units of work, so counting them is fair. A shop's orders are
+not: twenty ₱120 orders is not a trading shop, and a count-based threshold
+invites exactly that — a friend's shop taking twenty tiny orders to unlock a
+bonus. Earnings are the honest measure, they come from the settlement ledger
+(indexed by store, and what actually moved), and they are the number the shop
+already reads on its own payouts screen, so a shop owner can check the
+threshold rather than take it on trust.
+
+Two consequences follow. `payStoreReferralForOrder` runs **strictly after**
+`accrueOrderSettlement` inside the completion transaction, because the line
+that order just wrote has to be in the ledger or a shop would qualify one order
+late, every time, invisibly. And qualification reads `earnedCentavos`, which
+sums `ORDER_EARNINGS` only — a bonus a shop was itself paid does not help it
+qualify, or a chain of introductions could bootstrap itself.
+
+**The cost is expressed in basis points of the threshold**, because that is the
+unit commission is in. A ₱750 bonus against a ₱20,000 earnings threshold is 375
+basis points; if that is above what the shop is charged, the programme spends
+more acquiring the shop than the threshold earns back and the shop must keep
+trading before it is worth anything. The console puts it next to the median
+commission across visible shops and says which way it falls, and how much the
+shop has to earn to break even. Buying growth forward is a normal thing to
+choose; it should be chosen rather than discovered.
+
+The caps refuse the introducing shop only, the settle is the same
+compare-and-set on `status = ATTRIBUTED` the rider programme needed, and
+`REFERRER_WITHDRAWN` is the one refusal with no rider equivalent: a shop can
+leave the platform between the introduction and the qualification, and paying
+one that has stopped trading is a decision for a person rather than a cron.
+
+**One label per party.** A shop's statement says *Referral bonus* where a
+rider's says *Invite bonus*, through `entryLabel(type, party)` and
+`bonusTotalLabel(party)` in `settlement/policy.ts`. Same money, same entry
+type, one different word: the shop's own panel says *"There is no code to
+share"* in as many words, and a line reading "Invite bonus" directly above it
+named a thing the same screen had just denied existed. Both were found in a
+browser, and they were two separate strings — fixing one left the tile above
+the list contradicting the list.
+
 ## Gift cards — a bearer instrument, not a top-up
 
 `GiftCard`, with the rules in `lib/gift-cards/policy.ts` (no database, no

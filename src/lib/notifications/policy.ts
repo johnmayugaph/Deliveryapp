@@ -367,6 +367,20 @@ export const KIND_POLICY: Readonly<Record<NotificationKind, KindPolicy>> = {
   },
 
   /**
+   * A SHOP referral was settled.
+   *
+   * Push and inbox, no SMS — and the difference from the rider version above
+   * is the recipient's situation rather than the volume. A shop owner is at a
+   * counter with the app open, or has a manager who is; a rider is on a
+   * motorbike with the screen off. The text the rider version buys would be
+   * paying for a message somebody is about to read anyway.
+   */
+  [NotificationKind.STORE_REFERRAL_SETTLED]: {
+    urgency: NotificationUrgency.INFORMATIONAL,
+    channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
+  },
+
+  /**
    * It is busy, come out.
    *
    * The only PERISHABLE kind, and the flag exists for it. Deferring this to

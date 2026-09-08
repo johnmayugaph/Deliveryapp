@@ -24,6 +24,14 @@ export interface AccrualResult {
   storeEntryWritten: boolean;
   riderEntryWritten: boolean;
   cashDebitWritten: boolean;
+  /**
+   * The shop this order was for, already resolved.
+   *
+   * Returned so a caller does not have to reach into `details` and repeat
+   * `storeIdOf` — which the store-referral hook would otherwise do, giving two
+   * places an opinion about where a vertical keeps its shop id.
+   */
+  storeId: string | null;
 }
 
 /** The store this order was for, read without assuming a vertical's shape. */
@@ -157,5 +165,11 @@ export async function accrueOrderSettlement(
     }
   }
 
-  return { split, storeEntryWritten, riderEntryWritten, cashDebitWritten };
+  return {
+    split,
+    storeEntryWritten,
+    riderEntryWritten,
+    cashDebitWritten,
+    storeId,
+  };
 }

@@ -1,8 +1,9 @@
 import { SettlementParty, type SettlementEntry } from '@prisma/client';
 import { formatCentavos } from '@/lib/money';
 import {
-  ENTRY_LABEL,
+  bonusTotalLabel,
   describePosition,
+  entryLabel,
   settlementSideFor,
   type Position,
 } from '@/lib/settlement/policy';
@@ -100,11 +101,15 @@ export function PositionPanel({
         ) : null}
         {/* Only when there is one. A permanent "Invite bonuses ₱0.00" tile
             advertises a programme that may not even be running, and a rider
-            who has earned none does not need to be told so on every visit. */}
+            who has earned none does not need to be told so on every visit.
+
+            The heading is per party: a shop was not invited by anybody, and
+            this tile sat two inches above a panel saying "There is no code to
+            share". Found in a browser, on the same page as the line label. */}
         {position.bonusCentavos > 0 ? (
           <div className="rounded-lg bg-surface px-3 py-2 ring-1 ring-black/5">
             <dt className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
-              Invite bonuses
+              {bonusTotalLabel(party)}
             </dt>
             <dd className="text-sm font-bold tabular-nums">
               {formatCentavos(position.bonusCentavos)}
@@ -123,7 +128,7 @@ export function PositionPanel({
             <li key={entry.id} className="flex items-baseline gap-3 px-3.5 py-2.5">
               <span className="min-w-0 flex-1">
                 <span className="block text-[12px] font-medium">
-                  {ENTRY_LABEL[entry.type]}
+                  {entryLabel(entry.type, party)}
                 </span>
                 <span className="block text-[11px] text-ink-faint">
                   {entry.description} ·{' '}

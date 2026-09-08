@@ -13,6 +13,7 @@ import { recordCashCollected } from '@/lib/payments/manual';
 import { accrueOrderSettlement } from '@/lib/settlement/accrual';
 import { payReferrerForOrder } from '@/lib/referrals/rewards';
 import { payPartnerReferralForDelivery } from '@/lib/referrals/partner-rewards';
+import { payStoreReferralForOrder } from '@/lib/referrals/store-rewards';
 import { earnPointsForOrder } from '@/lib/loyalty/earning';
 import { expireLoyaltyPoints, type ExpiryPassResult } from '@/lib/loyalty/expiry';
 import {
@@ -419,7 +420,14 @@ export async function completeOrder(input: {
     // with no accrual is a shop that cooked food nobody recorded owing it for,
     // and the only way to find those afterwards is to trawl every order
     // against the ledger.
-    await accrueOrderSettlement(order, tx);
+    const accrual = await accrueOrderSettlement(order, tx);
+
+    // If this SHOP was introduced by another shop, this order's earnings may
+    // be what tips it past the threshold. Strictly after the accrual above,
+    // and not for tidiness: the threshold is read from the ledger, so the line
+    // that accrual just wrote has to be in it or every shop would qualify one
+    // order late.
+    await payStoreReferralForOrder({ storeId: accrual.storeId }, tx);
 
     // If this customer was invited by somebody, this is the moment that
     // somebody gets paid — a COMPLETED order, not a placed one, which is what

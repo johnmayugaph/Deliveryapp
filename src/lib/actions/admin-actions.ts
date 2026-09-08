@@ -48,6 +48,12 @@ import {
   MAX_PARTNER_REWARD_CENTAVOS,
   acquisitionCost,
 } from '@/lib/referrals/partner-policy';
+import { STORE_PROGRAMME_ID } from '@/lib/referrals/store-programme';
+import { attributeStoreReferral } from '@/lib/referrals/store-attribution';
+import {
+  MAX_STORE_REWARD_CENTAVOS,
+  storeAcquisitionCost,
+} from '@/lib/referrals/store-policy';
 import {
   MAX_POINTS_PER_PESO_BASIS_POINTS,
   effectiveGivebackBasisPoints,
@@ -3228,6 +3234,227 @@ export async function setPartnerReferralProgrammeAction(
           'Bonuses already earned keep the amounts they were paid at.'
         : 'Rider invites are off. Codes already shared will stop paying, and ' +
           'bonuses already earned are still owed.',
+    };
+  });
+}
+
+// -----------------------------------------------------------------------------
+// Store referrals
+// -----------------------------------------------------------------------------
+
+/**
+ * Records which shop introduced another shop.
+ *
+ * The only referral attribution in this app that a person makes rather than a
+ * code — a shop does not sign itself up — which is why it lives here in the
+ * console actions alongside the comped subscription and the recorded payout,
+ * and why it is audited the same way. Nothing in the system can know this
+ * fact; somebody asserts it, and the audit row is the only evidence that
+ * assertion ever leaves.
+ *
+ * The refusal reaches the person who typed it, unlike the rider version's,
+ * which the application form ignores so a bad code cannot cost somebody their
+ * application. Here being wrong is the likely case worth handling: the shop
+ * has already been attributed, or was trading long before anybody introduced
+ * it.
+ */
+export async function attributeStoreReferralAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const refereeStoreId = String(formData.get('storeId') ?? '');
+    const referrerStoreId = String(formData.get('referrerStoreId') ?? '');
+    const reason = normaliseReason(formData.get('reason'));
+
+    if (!referrerStoreId) {
+      return { ok: false, message: 'Pick the shop that made the introduction.' };
+    }
+
+    const referee = await prisma.store.findUnique({
+      where: { id: refereeStoreId },
+      select: { id: true, name: true },
+    });
+    if (!referee) return { ok: false, message: 'No such shop.' };
+
+    const outcome = await attributeStoreReferral({
+      refereeStoreId,
+      referrerStoreId,
+      attributedById: admin.id,
+      note: reason,
+    });
+
+    if (!outcome.ok) {
+      return { ok: false, message: outcome.message };
+    }
+
+    await recordAdminAction({
+      actorId: admin.id,
+      action: AdminAction.STORE_REFERRAL_ATTRIBUTED,
+      subjectType: 'Store',
+      subjectId: referee.id,
+      subjectLabel: referee.name,
+      reason,
+      detail: { referrerStoreId, referrerName: outcome.referrerName },
+    });
+
+    revalidatePath(`/admin/stores/${refereeStoreId}`);
+    revalidatePath('/admin/referrals');
+
+    return {
+      ok: true,
+      message:
+        `Recorded: ${outcome.referrerName} brought ${outcome.refereeName}. ` +
+        'Nothing is owed yet — the bonus is earned once this shop has traded ' +
+        'past the threshold, and it goes out with their next payout.',
+    };
+  });
+}
+
+/**
+ * Sets the shop-referral programme.
+ *
+ * Third of three, and the same shape as the other two. What differs is the
+ * threshold — what the introduced shop must have EARNED rather than how many
+ * jobs it has done — and the number in the confirmation, which is the bonus
+ * expressed in basis points of those earnings so it can be read straight
+ * against a shop's commission rate.
+ */
+export async function setStoreReferralProgrammeAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const reason = normaliseReason(formData.get('reason'));
+
+    const pesos = (field: string): number | null =>
+      centavosFromPesoInput(String(formData.get(field) ?? ''));
+    const whole = (field: string): number | null => {
+      const raw = String(formData.get(field) ?? '').trim();
+      const value = Number(raw);
+      return Number.isInteger(value) && value >= 0 ? value : null;
+    };
+
+    const referrerCentavos = pesos('referrerPesos');
+    const refereeCentavos = pesos('refereePesos');
+    const qualifyingEarningsCentavos = pesos('qualifyingEarningsPesos');
+    const monthlyRewardCap = whole('monthlyCap');
+    const lifetimeRewardCap = whole('lifetimeCap');
+    const isActive = String(formData.get('isActive') ?? '') === 'true';
+
+    if (
+      referrerCentavos === null ||
+      refereeCentavos === null ||
+      qualifyingEarningsCentavos === null
+    ) {
+      return {
+        ok: false,
+        message: 'Write the amounts in pesos, like 500 or 20000.',
+      };
+    }
+    if (monthlyRewardCap === null || lifetimeRewardCap === null) {
+      return { ok: false, message: 'The caps are whole numbers of referrals.' };
+    }
+    if (
+      referrerCentavos > MAX_STORE_REWARD_CENTAVOS ||
+      refereeCentavos > MAX_STORE_REWARD_CENTAVOS
+    ) {
+      return {
+        ok: false,
+        message:
+          `The most one side may be worth is ${formatCentavos(
+            MAX_STORE_REWARD_CENTAVOS,
+          )}. More than that is usually a decimal point in the wrong place — ` +
+          'and here that is a decimal point in a real payout.',
+      };
+    }
+    if (isActive && qualifyingEarningsCentavos <= 0) {
+      return {
+        ok: false,
+        message:
+          'A live programme needs an earnings threshold above zero. Zero would ' +
+          'pay for a shop being added to the console, which is something you ' +
+          'do by hand for a shop that may never sell anything.',
+      };
+    }
+    if (isActive && (monthlyRewardCap === 0 || lifetimeRewardCap === 0)) {
+      return {
+        ok: false,
+        message: 'A live programme needs both caps above zero.',
+      };
+    }
+    if (lifetimeRewardCap > 0 && lifetimeRewardCap < monthlyRewardCap) {
+      return {
+        ok: false,
+        message: 'The lifetime cap cannot be lower than the monthly one.',
+      };
+    }
+    if (isActive && referrerCentavos === 0 && refereeCentavos === 0) {
+      return {
+        ok: false,
+        message: 'A live programme has to pay somebody something.',
+      };
+    }
+
+    const before = await prisma.storeReferralProgramme.findUnique({
+      where: { id: STORE_PROGRAMME_ID },
+    });
+
+    const data = {
+      isActive,
+      referrerCentavos,
+      refereeCentavos,
+      qualifyingEarningsCentavos,
+      monthlyRewardCap,
+      lifetimeRewardCap,
+    };
+
+    await prisma.$transaction(async (tx) => {
+      await tx.storeReferralProgramme.upsert({
+        where: { id: STORE_PROGRAMME_ID },
+        create: { id: STORE_PROGRAMME_ID, ...data },
+        update: data,
+      });
+      await recordAdminAction(
+        {
+          actorId: admin.id,
+          action: AdminAction.STORE_REFERRAL_PROGRAMME_CHANGED,
+          subjectType: 'StoreReferralProgramme',
+          subjectId: STORE_PROGRAMME_ID,
+          subjectLabel: isActive ? 'Shop referrals on' : 'Shop referrals off',
+          reason,
+          detail: {
+            before: before
+              ? {
+                  isActive: before.isActive,
+                  referrerCentavos: before.referrerCentavos,
+                  refereeCentavos: before.refereeCentavos,
+                  qualifyingEarningsCentavos: before.qualifyingEarningsCentavos,
+                  monthlyRewardCap: before.monthlyRewardCap,
+                  lifetimeRewardCap: before.lifetimeRewardCap,
+                }
+              : null,
+            after: data,
+          },
+        },
+        tx,
+      );
+    });
+
+    revalidatePath('/admin/referrals');
+
+    const cost = storeAcquisitionCost(data);
+    return {
+      ok: true,
+      message: isActive
+        ? `Shop referrals are on. A shop acquired this way costs ` +
+          `${formatCentavos(cost.bothSidesCentavos)} against a ` +
+          `${formatCentavos(cost.qualifyingEarningsCentavos)} earnings ` +
+          `threshold — ${(cost.costBasisPointsOfEarnings / 100).toFixed(2)}% of ` +
+          'it. Read that against what you charge those shops in commission. ' +
+          'Bonuses already earned keep the amounts they were paid at.'
+        : 'Shop referrals are off. Attributions already recorded will stop ' +
+          'paying, and bonuses already earned are still owed.',
     };
   });
 }

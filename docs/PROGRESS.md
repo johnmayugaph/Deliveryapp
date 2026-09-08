@@ -3810,3 +3810,138 @@ invite bonuses from what was earned riding, the new rider told about her own
 welcome bonus, and the console listing who brought whom for what.
 
 1778 tests pass; typecheck, lint and build clean.
+
+## Phase 43 — Shop referrals: a claim, not a code
+
+The third referral programme, and the one that could not be built the way the
+other two were. A shop brings a shop; the bonus is money on the settlement
+ledger, same rail and same wording as a rider's. What is different is where the
+attribution comes from.
+
+### A shop does not sign itself up
+
+A customer follows a link. A rider fills in an application and can type six
+characters into it. A shop does neither — `/admin/stores` creates it and its
+owner is invited by phone number afterwards, so there is no moment at which
+the owner is filling in a form. Asking them for a code weeks later, on a screen
+they reach only because somebody already made the shop, would attribute a
+minority of real introductions and none of the ones that were a conversation
+between two owners and an ops person.
+
+So the console records it, on the new shop's own page: pick the referring shop
+from the visible shops in the same city, with your name and a reason against
+it. That is the posture of a comped subscription or a recorded payout — a claim
+about the world rather than a state change the system observed — and it carries
+the same obligations. `attributedById` and `attributionNote` are both NOT NULL,
+the database refuses a note under eight non-blank characters, and the four
+attribution columns are immutable after the fact because the audit row is the
+only evidence this programme has.
+
+Which flips one thing round from the rider version. There, a bad code is
+swallowed: a mistyped invite must never cost somebody their application. Here
+the refusal is the whole point and is shown to the person who typed it, because
+they are asserting something and can be wrong. The refusal that matters most is
+`ALREADY_TRADING` — a shop that has earned anything through TARA was trading
+before anybody introduced it — and without it an administrator could attribute
+a shop that has been on the platform a year and pay for an introduction that
+never happened.
+
+### The threshold is earnings, and that changed the wiring
+
+Twenty ₱120 orders is not a trading shop, so a count-based threshold invites
+exactly the thing it should refuse: a friend's shop taking twenty tiny orders
+to unlock a bonus. Earnings are the honest measure, they come from the
+settlement ledger, and they are the number the shop already reads on its own
+payouts screen — so the threshold is checkable rather than a promise about a
+figure nobody can see.
+
+Two consequences. `payStoreReferralForOrder` runs **strictly after**
+`accrueOrderSettlement` in the completion transaction, because the line that
+order just wrote has to be in the ledger or every shop would qualify one order
+late, invisibly. And qualification sums `ORDER_EARNINGS` only, so a bonus a
+shop was itself paid does not help it qualify — otherwise a chain of
+introductions bootstraps itself. The layer script sets the threshold to exactly
+two orders' earnings so that a hook reading the ledger a moment too early fails
+rather than passes.
+
+### The number the console owes an operator
+
+The customer programme's headline is what a farmer nets. The rider programme's
+is cost per delivery. Neither fits here, so this one is the bonus in **basis
+points of the earnings threshold** — the unit commission is in. ₱400 against a
+₱1,000 threshold is 4,000 basis points; the console puts that beside the median
+commission across visible shops, says which way it falls, and works out how
+much the shop has to earn before the commission on it has covered the bonus.
+Buying growth forward is a normal thing to choose. It should be chosen rather
+than discovered.
+
+### Two words found in a browser
+
+The shop's statement said **Invite bonus**, and the tile above it said **Invite
+bonuses** — both inherited from the rider programme, both sitting an inch above
+a panel that says *"There is no code to share"* in as many words. A screen
+denying a code exists while labelling the money after one. They were two
+separate strings, so fixing the line label alone left the tile contradicting
+the list beneath it. Now `entryLabel(type, party)` and `bonusTotalLabel(party)`
+in `settlement/policy.ts` give a shop *Referral bonus* and leave the rider's
+wording alone: same money, same entry type, one different word.
+
+### Verified in four places
+
+**Forty-four new unit tests** (1828 total): every attribution refusal including
+the order they are checked in, the earnings threshold at its boundary in both
+directions, both caps refusing the introducer while the new shop is still paid,
+a withdrawn introducer doing the same, the basis-points arithmetic rounding up
+and not dividing by zero, the ceiling agreeing with the SQL guard, the
+per-party labels with every other pair falling through to the general one, and
+the notification saying "owed" and never "credits". **Nine seams were mutated
+to confirm the checks fail** — and one of them was worth the exercise on its
+own: the ordering test had anchored on the identifier `accrueOrderSettlement`,
+found it in the import line at the top of the file, and stayed green when the
+call itself was deleted. It anchors on the call site now.
+
+**Twenty-two SQL-guard checks** against the live database, each naming its own
+constraint through `GET STACKED DIAGNOSTICS`, every bad row paired with a
+control that differs in exactly one field — including the control the
+immutability trigger must ALLOW, since a referral that cannot be paid is worse
+than one that can be rewritten. One check was fixed rather than believed: the
+"whose claim was it" case wrote the same actor id back, which the trigger
+correctly allows as a no-op, so it could not have failed.
+
+**Forty-eight against the live database**: attribution refusing a self-pick, a
+shop already trading, a second attribution and a withdrawn introducer against
+real rows; the bonus paid by the order that crosses the line and not the one
+before; the ledger lines positive, order-less and keyed per side; a ₱1,200
+bonus doing nothing to help a shop qualify; two orders crossing the threshold
+simultaneously paying once with neither order failing; the monthly cap refusing
+the introducer while the new shop is paid; a programme switched off mid-flight
+closing the row with its reason; and the merchant panel, the console overview
+and the ledger agreeing on every figure.
+
+That concurrency check earned its keep by mutation too. Dropping the
+`status = ATTRIBUTED` clause from the compare-and-set — leaving an ordinary
+update — made one of the two customers' orders **fail outright**: the loser
+rewrote a REWARDED row, the immutability trigger refused it, and the exception
+escaped `completeOrder`. A race about a bonus must never cost anybody their
+order.
+
+**Twenty-eight in a real browser**: a shop's payouts screen with no panel at
+all while the programme is off and it has no history; the console refusing a
+live programme with no earnings threshold and saying what zero would be paying
+for; switching it on and reporting the cost as a percentage of the threshold;
+the console refusing to attribute a shop that has already earned, before the
+form is even offered; a reason too short being refused by the form itself;
+recording a real introduction and then showing the claim, the person who made
+it, their note and how far the shop has to trade; both shops' screens counting
+the earnings down; the bonus arriving on both as money owed with a line naming
+the other shop; and the console listing which shop brought which, for what,
+against the earnings it was paid at.
+
+One check was dropped rather than made to pass: the action's "nothing is owed
+yet" confirmation is unreadable in a browser on this panel, because
+`ReasonForm` refreshes on success and the panel swaps the form for the recorded
+claim in the same commit. That is the right behaviour — the recorded state
+carries the same information — so the sentence is asserted in the unit test
+instead, and the script says why.
+
+1828 tests pass; typecheck, lint and build clean.
