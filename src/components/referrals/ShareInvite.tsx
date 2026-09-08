@@ -14,7 +14,20 @@ import { useState } from 'react';
  * desktop and in some in-app browsers, so copy-to-clipboard is the fallback and
  * the code itself is the fallback to that: three layers, each usable alone.
  */
-export function ShareInvite({ code }: { code: string }) {
+export function ShareInvite({
+  code,
+  variant = 'CUSTOMER',
+}: {
+  code: string;
+  /**
+   * Which invitation this is. The same code serves both — a person has one
+   * code and what it earns depends on what the invitee does — but the message
+   * that goes into a chat cannot serve both: "you get credits on your first
+   * order" is nonsense to somebody being asked to become a rider, and it is
+   * the sentence the recipient reads first.
+   */
+  variant?: 'CUSTOMER' | 'RIDER';
+}) {
   const [copied, setCopied] = useState(false);
   const [failed, setFailed] = useState(false);
 
@@ -25,7 +38,10 @@ export function ShareInvite({ code }: { code: string }) {
       ? ''
       : `${window.location.origin}/?ref=${encodeURIComponent(code)}`;
 
-  const message = `Try TARA — use my code ${code} and you get credits on your first order. ${link}`;
+  const message =
+    variant === 'RIDER'
+      ? `Sumali sa TARA as a rider — use my code ${code} when you apply. ${link}`
+      : `Try TARA — use my code ${code} and you get credits on your first order. ${link}`;
 
   async function share(): Promise<void> {
     setFailed(false);
@@ -78,7 +94,9 @@ export function ShareInvite({ code }: { code: string }) {
       ) : null}
 
       <p className="mt-2 text-[11px] leading-relaxed text-ink-faint">
-        They can type the code when they sign up, or open your link.
+        {variant === 'RIDER'
+          ? 'They type the code on the fleet application form.'
+          : 'They can type the code when they sign up, or open your link.'}
       </p>
     </div>
   );

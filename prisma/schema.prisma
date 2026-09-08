@@ -1247,9 +1247,15 @@ model Order {
   supportTickets     SupportTicket[]
   appliedBenefits    OrderAppliedBenefit[]
   notifications      Notification[]
-  Referral           Referral[]
-  LoyaltyEntry       LoyaltyEntry[]
+  loyaltyEntries     LoyaltyEntry[]
   promoRedemption    PromoRedemption?
+
+  /// The referrals this order qualified — a customer's first order paying
+  /// their referrer's credits, and a rider's Nth delivery paying a partner
+  /// bonus. Named rather than left as Prisma's auto-generated `Referral` /
+  /// `LoyaltyEntry`, which read as models rather than as what an order has.
+  referralsQualified        Referral[]
+  partnerReferralsQualified PartnerReferral[]
 
   /// Powers the unified cross-service order history: one chronological list,
   /// every vertical, no per-service queries.
@@ -1384,8 +1390,11 @@ model FleetPartner {
   orders               Order[]
   dispatchOffers       DispatchOffer[]
   settlementEntries    SettlementEntry[]
-  referralsQualified   Referral[]
-  loyaltyEntries       LoyaltyEntry[]
+
+  /// Rider referrals, both directions. A partner referral pays MONEY through
+  /// the settlement ledger rather than credits — see `PartnerReferral`.
+  referralsMade     PartnerReferral[] @relation("PartnerReferrer")
+  referralReceived  PartnerReferral?  @relation("PartnerReferee")
 
   @@index([isOnline, isSuspended, homeCityId])
   @@index([enabledServices], type: Gin)
@@ -1637,6 +1646,16 @@ enum SettlementEntryType {
   PAYOUT_SENT
   /// They handed our cash back. Positive — it discharges what they owed.
   CASH_REMITTED
+  /// A referral bonus a partner earned by bringing another partner. Positive,
+  /// written by the system, and deliberately NOT tied to an order: it arises
+  /// from somebody else's delivery, and a line on this rider's statement
+  /// naming an order they did not deliver would be a lie on the one screen
+  /// they read. The qualifying delivery is on the `PartnerReferral` row.
+  ///
+  /// It is an accrual, not a payment. The money joins what TARA owes them and
+  /// leaves in the payout somebody records — which is the whole reason this is
+  /// a settlement entry rather than a new rail.
+  REFERRAL_BONUS
   /// A signed correction. Requires an admin and a reason, and exists because
   /// the real world produces cases no rule anticipated — a rider who paid a
   /// store directly, a damaged order somebody absorbed.
@@ -2235,6 +2254,13 @@ enum NotificationKind {
   /// an unexplained absence is how a referral programme becomes a support
   /// queue.
   REFERRAL_SETTLED
+  /// To a rider whose invite has been settled: theirs, or the one they were
+  /// invited by. Separate from REFERRAL_SETTLED because the money is
+  /// different — a partner bonus is MONEY added to what TARA owes them and
+  /// paid in their next payout, not credits to spend on food — and a message
+  /// that said "credits" to somebody who never orders would be worse than no
+  /// message.
+  PARTNER_REFERRAL_SETTLED
   /// To an administrator: a market has sat at its top surge step long enough
   /// that it is not a spike. The fourth kind addressed to the people running
   /// the business, and the one that is not asking them to fix an incident —
@@ -2515,6 +2541,12 @@ enum AdminAction {
   /// standing liability against every account at once — and because the
   /// amounts decide whether the feature can be farmed.
   REFERRAL_PROGRAMME_CHANGED
+  /// The RIDER-invite programme's amounts, caps, delivery threshold or on/off
+  /// state were changed. Kept separate from the customer one because it
+  /// commits REAL MONEY rather than credits: every rider acquired through it
+  /// adds to what TARA owes somebody, and the amounts decide what a rider
+  /// costs to hire.
+  PARTNER_REFERRAL_PROGRAMME_CHANGED
   /// A surge step was switched off or back on. Kept distinct from a change
   /// because "surge was on at 6pm" is the fact a dispute turns on, and it
   /// should be answerable without reading a diff of amounts.
@@ -2899,6 +2931,97 @@ model ReferralProgramme {
   createdAt DateTime @default(now())
 }
 
+/// What a rider gets for bringing a rider.
+///
+/// A SECOND programme rather than more columns on the first one, because the
+/// two differ in every axis that matters: what qualifies (a delivery, not an
+/// order), who is paid (a partner, not a customer), and what they are paid in
+/// (money through the settlement ledger, not credits). Sharing a row would mean
+/// one screen's amount deciding the other's.
+///
+/// Off, with every amount at zero, until somebody sets it — the same posture as
+/// commission, surge and the customer programme. The amounts decide whether the
+/// thing is worth farming, and that is not a decision code should make.
+model PartnerReferralProgramme {
+  /// Always "default". See `ReferralProgramme.id`.
+  id String @id @default("default")
+
+  isActive Boolean @default(false)
+
+  /// To the rider who did the inviting.
+  referrerCentavos Int @default(0)
+
+  /// To the rider who was invited, on the same event. Deliberately not paid at
+  /// signup: a bonus for creating an account is a bonus for owning a SIM card,
+  /// and this one has to be earned by deliveries somebody actually made.
+  refereeCentavos Int @default(0)
+
+  /// How many completed deliveries the invited rider must have before either
+  /// side is paid. This is the whole defence: a fake rider earns nobody
+  /// anything, and a real one has already done the work the bonus is for.
+  qualifyingDeliveries Int @default(0)
+
+  /// How many invites one rider may be paid for, per calendar month and ever.
+  /// The caps are what turn an unbounded liability into a budget.
+  monthlyRewardCap  Int @default(0)
+  lifetimeRewardCap Int @default(0)
+
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+}
+
+/// One rider having invited another.
+///
+/// Separate from `Referral` rather than a flag on it, for a reason worth
+/// stating: `Referral.refereeId` is unique per USER, so one table could not
+/// hold both a person's customer referral and their rider referral — and a
+/// rider who was first invited to order by a friend, then invited to ride by
+/// another rider, is the ordinary case rather than an edge one.
+///
+/// The CODE is not separate: both programmes resolve `User.referralCode`, so a
+/// person has one code and what it earns depends on what the invitee does.
+model PartnerReferral {
+  id String @id @default(cuid())
+
+  /// The rider who shared their code. Must already be a fleet partner — a
+  /// customer who brings a rider has no settlement account to be paid into,
+  /// and inventing one would be paying supply referrals in credits.
+  referrerId String
+  referrer   FleetPartner @relation("PartnerReferrer", fields: [referrerId], references: [id], onDelete: Cascade)
+
+  /// The invited rider. Unique, so nobody is attributed twice.
+  refereeId String       @unique
+  referee   FleetPartner @relation("PartnerReferee", fields: [refereeId], references: [id], onDelete: Cascade)
+
+  /// The code as typed, kept verbatim for support — the same reason
+  /// `Referral.codeUsed` keeps it.
+  codeUsed String
+
+  status ReferralStatus @default(ATTRIBUTED)
+
+  /// What each side was accrued, and when. Null until the invited rider
+  /// reaches the qualifying delivery count, and null forever if they never do.
+  referrerRewardCentavos Int       @default(0)
+  refereeRewardCentavos  Int       @default(0)
+  rewardedAt             DateTime?
+
+  /// The delivery that tipped them over, and how many they had at the time.
+  /// The order is NOT on the settlement entry — see `REFERRAL_BONUS` — so this
+  /// is the only place the two can be tied together afterwards.
+  qualifyingOrderId String?
+  qualifyingOrder   Order?  @relation(fields: [qualifyingOrderId], references: [id], onDelete: SetNull)
+  qualifyingDeliveryCount Int?
+
+  /// Why nothing was paid, when nothing was paid. Shown to the referrer.
+  blockedReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([referrerId, status])
+  @@index([status, createdAt])
+}
+
 /// Who invited whom, and what came of it.
 ///
 /// One row per REFEREE, ever — `@@unique([refereeId])` plus an append-only-ish
@@ -2939,25 +3062,30 @@ model Referral {
   /// answer, and silence is not.
   blockedReason String?
 
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-  FleetPartner   FleetPartner? @relation(fields: [fleetPartnerId], references: [id])
-  fleetPartnerId String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([referrerId, status])
   @@index([status, createdAt])
 }
 
+/// Shared by both referral programmes — the customer one, which pays credits,
+/// and the partner one, which pays money through the settlement ledger. The
+/// three states mean the same thing in both; what differs is what qualifies and
+/// what gets paid, and that lives in each programme's own policy module rather
+/// than in a second copy of this enum.
 enum ReferralStatus {
-  /// The referee's account is attributed and their own credits are granted.
-  /// Waiting on their first completed order.
+  /// Attributed, and waiting on the thing that qualifies it: a customer
+  /// referee's first completed ORDER, or a partner referee's Nth completed
+  /// DELIVERY.
   ATTRIBUTED
-  /// The referrer has been paid.
+  /// Paid. On a customer referral that is credits to the referrer; on a
+  /// partner referral it is money accrued to both sides.
   REWARDED
-  /// Attributed, but the referrer will not be paid, and `blockedReason` says
-  /// why: a cap was reached, the programme was off, the qualifying order was
-  /// too small. A terminal state rather than a silent nothing, so the referrer
-  /// can be told and an operator can count how often it happens.
+  /// Attributed, but nothing will be paid, and `blockedReason` says why: a cap
+  /// was reached, the programme was off, the qualifying order was too small. A
+  /// terminal state rather than a silent nothing, so the referrer can be told
+  /// and an operator can count how often it happens.
   NOT_REWARDED
 }
 
@@ -3032,8 +3160,7 @@ model LoyaltyEntry {
   expiresAt DateTime?
 
   createdAt      DateTime      @default(now())
-  FleetPartner   FleetPartner? @relation(fields: [fleetPartnerId], references: [id])
-  fleetPartnerId String?
+
 
   @@index([accountId, createdAt])
   @@index([type, expiresAt])

@@ -72,7 +72,7 @@ ALTER TABLE "SettlementEntry"
 
 ALTER TABLE "SettlementEntry"
   ADD CONSTRAINT settlement_entry_sign_matches_type CHECK (
-    ("type" IN ('ORDER_EARNINGS', 'CASH_REMITTED') AND "amountCentavos" > 0)
+    ("type" IN ('ORDER_EARNINGS', 'CASH_REMITTED', 'REFERRAL_BONUS') AND "amountCentavos" > 0)
     OR ("type" IN ('CASH_COLLECTED', 'PAYOUT_SENT') AND "amountCentavos" < 0)
     OR ("type" = 'ADJUSTMENT' AND "amountCentavos" <> 0)
   );
@@ -84,6 +84,10 @@ ALTER TABLE "SettlementEntry"
 --    something happened outside this system. Nothing here can send money, so
 --    the reference is the only thing that makes the claim checkable against a
 --    bank statement later. Accruals need none: the order is the reference.
+--
+--    A REFERRAL_BONUS needs none either, and it is the one accrual with no
+--    order behind it — what makes it checkable is the `PartnerReferral` row it
+--    names in its metadata, and the delivery count recorded there.
 -- -----------------------------------------------------------------------------
 ALTER TABLE "SettlementEntry"
   DROP CONSTRAINT IF EXISTS settlement_entry_reference_required;
@@ -104,14 +108,20 @@ ALTER TABLE "SettlementEntry"
 
 ALTER TABLE "SettlementEntry"
   ADD CONSTRAINT settlement_entry_actor_required CHECK (
-    "type" IN ('ORDER_EARNINGS', 'CASH_COLLECTED')
+    "type" IN ('ORDER_EARNINGS', 'CASH_COLLECTED', 'REFERRAL_BONUS')
     OR "actorUserId" IS NOT NULL
   );
 
 -- -----------------------------------------------------------------------------
--- 6. An accrual names the order it came from.
+-- 6. An order-derived entry names its order.
 --    Earnings and collected cash arise FROM an order; a payout settles many at
 --    once and names none.
+--
+--    This used to be called "an accrual names its order", and the rename is
+--    the point: REFERRAL_BONUS is an accrual — the system writes it, no human
+--    asserts it — and it has NO order, because it arises from a delivery made
+--    by somebody else. A row on this rider's statement naming an order they
+--    never delivered would be a lie on the one screen they read.
 -- -----------------------------------------------------------------------------
 ALTER TABLE "SettlementEntry"
   DROP CONSTRAINT IF EXISTS settlement_entry_accrual_needs_order;
@@ -119,6 +129,26 @@ ALTER TABLE "SettlementEntry"
 ALTER TABLE "SettlementEntry"
   ADD CONSTRAINT settlement_entry_accrual_needs_order CHECK (
     "type" NOT IN ('ORDER_EARNINGS', 'CASH_COLLECTED') OR "orderId" IS NOT NULL
+  );
+
+-- -----------------------------------------------------------------------------
+-- 6b. And a referral bonus names NO order.
+--
+--     The other half of the same rule, enforced rather than described. A bonus
+--     arises from a delivery somebody ELSE made, so an order on this row would
+--     put "you earned this on order DA-…" on a statement belonging to a rider
+--     who never rode it. The write path passes no `orderId`; this is what stops
+--     the next one from helpfully adding it.
+--
+--     The delivery that qualified it lives on the `PartnerReferral` row, and
+--     the entry's metadata carries the id as a breadcrumb.
+-- -----------------------------------------------------------------------------
+ALTER TABLE "SettlementEntry"
+  DROP CONSTRAINT IF EXISTS settlement_entry_bonus_names_no_order;
+
+ALTER TABLE "SettlementEntry"
+  ADD CONSTRAINT settlement_entry_bonus_names_no_order CHECK (
+    "type" <> 'REFERRAL_BONUS' OR "orderId" IS NULL
   );
 
 -- -----------------------------------------------------------------------------

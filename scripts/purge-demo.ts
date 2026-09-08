@@ -257,6 +257,22 @@ async function main() {
   // to override that intent. Deleting an order cascades to its addresses,
   // status events, applied benefits and dispatch offers, and nulls the
   // references from wallet transactions and support tickets.
+      // And the referral rows that name those orders, before the orders. Both
+      // referral tables point at the order that paid them with SetNull, and
+      // both have a CHECK requiring a REWARDED row to name it — so nulling
+      // the column is exactly what the FK does and exactly what the CHECK
+      // forbids. See the longer note in `purge-user.ts`.
+      const demoOrders = await tx.order.findMany({
+        where: { customerId: { in: userIds } },
+        select: { id: true },
+      });
+      const demoOrderIds = demoOrders.map((order) => order.id);
+      await tx.partnerReferral.deleteMany({
+        where: { qualifyingOrderId: { in: demoOrderIds } },
+      });
+      await tx.referral.deleteMany({
+        where: { qualifyingOrderId: { in: demoOrderIds } },
+      });
       await tx.order.deleteMany({ where: { customerId: { in: userIds } } });
       await tx.user.deleteMany({ where: { id: { in: userIds } } });
     }

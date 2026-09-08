@@ -344,6 +344,29 @@ export const KIND_POLICY: Readonly<Record<NotificationKind, KindPolicy>> = {
   },
 
   /**
+   * A RIDER invite was settled, paid or refused.
+   *
+   * The one referral message that gets an SMS, and the customer version's own
+   * reasoning is why. That one refuses SMS because it is bounded by how many
+   * referrals settle, "which on a good campaign is the number that spikes" —
+   * a viral customer campaign is thousands of messages. Rider invites are
+   * bounded by the size of the fleet: hundreds of people, each settling once,
+   * capped per referrer on top. The volume argument simply does not apply.
+   *
+   * And the content is different in kind: this is money owed to somebody who
+   * works, delivered to a phone they are holding while they work with the app
+   * closed.
+   */
+  [NotificationKind.PARTNER_REFERRAL_SETTLED]: {
+    urgency: NotificationUrgency.INFORMATIONAL,
+    channels: [
+      NotificationChannel.IN_APP,
+      NotificationChannel.PUSH,
+      NotificationChannel.SMS,
+    ],
+  },
+
+  /**
    * It is busy, come out.
    *
    * The only PERISHABLE kind, and the flag exists for it. Deferring this to

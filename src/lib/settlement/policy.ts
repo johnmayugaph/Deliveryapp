@@ -225,6 +225,7 @@ export function collectorFor(method: PaymentMethod): Collector {
 export const ENTRY_DIRECTION: Readonly<Record<SettlementEntryType, -1 | 1>> = {
   [SettlementEntryType.ORDER_EARNINGS]: 1,
   [SettlementEntryType.CASH_REMITTED]: 1,
+  [SettlementEntryType.REFERRAL_BONUS]: 1,
   [SettlementEntryType.CASH_COLLECTED]: -1,
   [SettlementEntryType.PAYOUT_SENT]: -1,
   // Signed by the caller, and the only type that is. An admin correction
@@ -278,14 +279,41 @@ export function referenceIsRequired(type: SettlementEntryType): boolean {
   return REFERENCE_REQUIRED_TYPES.includes(type);
 }
 
-/** Types the system writes itself, on completion. */
+/**
+ * Types the system writes itself, with no human asserting anything.
+ *
+ * These are the ones that need no actor and no reference: nobody claimed
+ * anything happened in the real world, so there is nothing to make checkable.
+ */
 export const ACCRUAL_TYPES: readonly SettlementEntryType[] = [
   SettlementEntryType.ORDER_EARNINGS,
   SettlementEntryType.CASH_COLLECTED,
+  SettlementEntryType.REFERRAL_BONUS,
 ];
 
 export function isAccrual(type: SettlementEntryType): boolean {
   return ACCRUAL_TYPES.includes(type);
+}
+
+/**
+ * Types that arise from ONE order and must name it.
+ *
+ * This used to be the same list as `ACCRUAL_TYPES`, and splitting them is what
+ * `REFERRAL_BONUS` forced. A bonus is an accrual — the system writes it, no
+ * person claims it — and it has no order, because it arises from a delivery
+ * made by somebody ELSE. Putting that order on the referrer's statement line
+ * would tell them they earned it on a job they never rode.
+ *
+ * The delivery that qualified it is on the `PartnerReferral` row, which is
+ * where the two can be tied together.
+ */
+export const ORDER_DERIVED_TYPES: readonly SettlementEntryType[] = [
+  SettlementEntryType.ORDER_EARNINGS,
+  SettlementEntryType.CASH_COLLECTED,
+];
+
+export function arisesFromOneOrder(type: SettlementEntryType): boolean {
+  return ORDER_DERIVED_TYPES.includes(type);
 }
 
 /** A partner's position, summed from their entries. */
@@ -296,6 +324,13 @@ export interface Position {
   collectedCentavos: number;
   paidOutCentavos: number;
   remittedCentavos: number;
+  /**
+   * Invite bonuses. Kept OUT of `earnedCentavos` deliberately: a rider
+   * comparing what they earned against the jobs they rode should not find a
+   * bonus mixed into the total, and an operator looking at what riding costs
+   * should not find recruitment in it either.
+   */
+  bonusCentavos: number;
 }
 
 export function positionFrom(
@@ -306,6 +341,7 @@ export function positionFrom(
   let collectedCentavos = 0;
   let paidOutCentavos = 0;
   let remittedCentavos = 0;
+  let bonusCentavos = 0;
 
   for (const entry of entries) {
     balanceCentavos += entry.amountCentavos;
@@ -322,6 +358,9 @@ export function positionFrom(
       case SettlementEntryType.CASH_REMITTED:
         remittedCentavos += entry.amountCentavos;
         break;
+      case SettlementEntryType.REFERRAL_BONUS:
+        bonusCentavos += entry.amountCentavos;
+        break;
       case SettlementEntryType.ADJUSTMENT:
         // Counted in the balance and in no category. An adjustment is by
         // definition the case the categories did not anticipate, and filing it
@@ -336,6 +375,7 @@ export function positionFrom(
     collectedCentavos,
     paidOutCentavos,
     remittedCentavos,
+    bonusCentavos,
   };
 }
 
@@ -384,5 +424,8 @@ export const ENTRY_LABEL: Readonly<Record<SettlementEntryType, string>> = {
   [SettlementEntryType.CASH_COLLECTED]: 'Cash you collected',
   [SettlementEntryType.PAYOUT_SENT]: 'Paid to you',
   [SettlementEntryType.CASH_REMITTED]: 'Cash handed in',
+  // Not "Earned": a rider reading their statement should be able to tell the
+  // ₱500 they got for bringing a friend from the ₱500 they got for riding.
+  [SettlementEntryType.REFERRAL_BONUS]: 'Invite bonus',
   [SettlementEntryType.ADJUSTMENT]: 'Adjustment',
 };

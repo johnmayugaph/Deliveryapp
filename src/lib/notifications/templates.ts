@@ -32,6 +32,12 @@ export interface NotificationContext {
   creditsReason?: string;
   planName?: string;
   reason?: string;
+  /**
+   * Which side of a rider invite this message is for. The two sides get
+   * genuinely different news — one earned a bonus for recruiting, the other
+   * for working — and a single sentence covering both would be about neither.
+   */
+  inviteRole?: 'REFERRER' | 'REFEREE';
   /** For a subscription bill: what to send, where to quote it, and by when. */
   invoiceReference?: string;
   dueLabel?: string;
@@ -625,6 +631,46 @@ export const NOTIFICATION_TEMPLATES: Readonly<Record<NotificationKind, Template>
         (context.reason ?? 'Your invite could not be paid this time.') +
         ' Nothing was taken from you, and your code still works.',
       sms: 'TARA: your invite did not earn credits. Open the app for details.',
+    };
+  },
+
+  /**
+   * To a rider: a rider invite has been settled.
+   *
+   * Says **owed**, not paid, and that is the whole reason this kind exists
+   * separately from `REFERRAL_SETTLED`. A partner bonus is money on the
+   * settlement ledger; it reaches a bank account when somebody records the
+   * next payout. Saying "paid" would be a lie with a number on it, and saying
+   * "credits" — which the customer version says — would be a lie about the
+   * currency to somebody who never orders food.
+   *
+   * SMS on both branches, unlike the customer version, because a rider is
+   * often working with the app closed and this is money.
+   */
+  [NotificationKind.PARTNER_REFERRAL_SETTLED]: (context) => {
+    const amount = context.amountCentavos ?? 0;
+    const invited = context.inviteRole !== 'REFEREE';
+
+    if (amount > 0) {
+      const earned = formatCentavos(amount);
+      return {
+        title: `${earned} for a rider invite`,
+        body: invited
+          ? `A rider you invited has completed enough deliveries, so ${earned} ` +
+            'has been added to what TARA owes you. It goes out with your next payout.'
+          : `You have completed enough deliveries, so your ${earned} welcome ` +
+            'bonus has been added to what TARA owes you. It goes out with your ' +
+            'next payout.',
+        sms: `TARA: ${earned} invite bonus added to what you are owed.`,
+      };
+    }
+
+    return {
+      title: 'Your rider invite did not earn a bonus',
+      body:
+        (context.reason ?? 'That invite could not be paid this time.') +
+        ' Nothing was taken from you, and your code still works.',
+      sms: 'TARA: your rider invite did not earn a bonus. Open the app for details.',
     };
   },
 

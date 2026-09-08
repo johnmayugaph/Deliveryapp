@@ -62,6 +62,7 @@ const KIND_GLYPH: Readonly<Record<NotificationKind, string>> = {
   [NotificationKind.RATINGS_RECEIVED]: '⭐',
   [NotificationKind.FLEET_VERIFICATION_DECIDED]: '🪪',
   [NotificationKind.REFERRAL_SETTLED]: '🤝',
+  [NotificationKind.PARTNER_REFERRAL_SETTLED]: '🛵',
   [NotificationKind.SURGE_ACTIVE]: '⚡',
   [NotificationKind.SURGE_SUSTAINED]: '📉',
 };

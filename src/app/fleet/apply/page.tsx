@@ -2,6 +2,8 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getFleetPartner } from '@/lib/fleet/partner';
 import { getAllServices } from '@/lib/services/registry';
+import { getPartnerProgramme } from '@/lib/referrals/partner-programme';
+import { partnerProgrammeIsLive } from '@/lib/referrals/partner-policy';
 import { ApplyForm } from '@/components/fleet/ApplyForm';
 
 export const dynamic = 'force-dynamic';
@@ -19,7 +21,10 @@ export default async function FleetApplyPage() {
     redirect('/fleet');
   }
 
-  const services = await getAllServices();
+  const [services, programme] = await Promise.all([
+    getAllServices(),
+    getPartnerProgramme(),
+  ]);
   const applicable = services.filter((service) => service.requiresRider);
 
   return (
@@ -41,6 +46,14 @@ export default async function FleetApplyPage() {
             tagline: service.tagline,
             isActive: service.isActive,
           }))}
+          invite={
+            partnerProgrammeIsLive(programme)
+              ? {
+                  refereeCentavos: programme.refereeCentavos,
+                  qualifyingDeliveries: programme.qualifyingDeliveries,
+                }
+              : null
+          }
         />
       </div>
     </main>

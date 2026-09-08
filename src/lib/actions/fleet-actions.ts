@@ -14,6 +14,7 @@ import { prisma } from '@/lib/prisma';
 import { requireOnboardedUser } from '@/lib/auth/session';
 import { requireFleetPartner } from '@/lib/fleet/partner';
 import { recomputeAcceptanceRate } from '@/lib/fleet/dispatch-offers';
+import { attributePartnerReferral } from '@/lib/referrals/partner-attribution';
 import { syncEnabledServices } from '@/lib/fleet/dispatch';
 import { transitionOrder } from '@/lib/orders/state-machine';
 import { completeOrder } from '@/lib/orders/maintenance';
@@ -332,14 +333,14 @@ export async function advanceJobAction(
       to === OrderStatus.DELIVERED || to === OrderStatus.DROPPED_OFF;
 
     if (terminalDelivery) {
+      // `completeOrder` counts the delivery itself, inside its own
+      // transaction, along with the settlement accrual and any invite bonus
+      // this delivery earned. It used to be incremented here, one line later
+      // and one transaction too late.
       const completion = await completeOrder({
         orderId,
         actor: OrderActor.SYSTEM,
         actorUserId: partner.userId,
-      });
-      await prisma.fleetPartner.update({
-        where: { id: partner.id },
-        data: { completedOrderCount: { increment: 1 } },
       });
       revalidateFleet(orderId);
       return { ok: true, status: completion.order.status };
@@ -427,11 +428,20 @@ export type ApplyResult = { ok: false; message: string };
  * for, all PENDING. `enabledServices` stays empty until somebody approves them
  * — a partner is not approved by asking, and the per-service model is the whole
  * point: approval for food is not approval to carry a passenger.
+ *
+ * An `inviteCode` is attributed here, in the same transaction, because this is
+ * the moment the partner record exists to attach it to. A bad code is
+ * DELIBERATELY IGNORED rather than refused: somebody joining the fleet has
+ * filled in a form about their vehicle and their documents, and losing that to
+ * a mistyped six characters — or to a friend's code that turned out not to be a
+ * rider's — would be trading an application for a bonus. The rider's invite
+ * screen is where a code that did not take can be explained.
  */
 export async function applyToFleetAction(input: {
   vehicleType: VehicleType;
   vehiclePlate?: string;
   serviceKeys: ServiceKey[];
+  inviteCode?: string;
 }): Promise<ApplyResult> {
   const user = await requireOnboardedUser();
 
@@ -471,6 +481,21 @@ export async function applyToFleetAction(input: {
       })),
       skipDuplicates: true,
     });
+
+    // Who brought them, if anybody did. Inside the transaction so an
+    // attributed referral can never point at a partner record that rolled
+    // back; ignored on refusal so a dead code cannot cost them the
+    // application.
+    if (input.inviteCode?.trim()) {
+      await attributePartnerReferral(
+        {
+          refereePartnerId: partner.id,
+          refereeUserId: user.id,
+          code: input.inviteCode,
+        },
+        tx,
+      );
+    }
 
     // The person is now both a customer and a fleet partner on one record,
     // which is what the roles array is for.

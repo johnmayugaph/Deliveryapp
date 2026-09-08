@@ -14,6 +14,7 @@ import {
   InvalidSettlementEntryError,
   MAX_COMMISSION_BASIS_POINTS,
   SettlementDoesNotBalanceError,
+  arisesFromOneOrder,
   assertCommissionInRange,
   collectorFor,
   commissionCentavos,
@@ -376,11 +377,63 @@ describe('the direction of an entry comes from its type', () => {
       expect(guards, type).toContain(type);
     }
     expect(guards).toMatch(
-      /'ORDER_EARNINGS', 'CASH_REMITTED'\) AND "amountCentavos" > 0/,
+      /'ORDER_EARNINGS', 'CASH_REMITTED', 'REFERRAL_BONUS'\) AND "amountCentavos" > 0/,
     );
     expect(guards).toMatch(
       /'CASH_COLLECTED', 'PAYOUT_SENT'\) AND "amountCentavos" < 0/,
     );
+  });
+
+  /**
+   * An invite bonus is the first entry that is written by the system and has
+   * no order behind it, which used to be the same thing. The two lists that
+   * used to be one are asserted separately here, because collapsing them again
+   * would either demand an order a bonus cannot supply or demand an actor the
+   * system cannot name.
+   */
+  it('treats an invite bonus as an accrual that names no order', () => {
+    expect(isAccrual(SettlementEntryType.REFERRAL_BONUS)).toBe(true);
+    expect(arisesFromOneOrder(SettlementEntryType.REFERRAL_BONUS)).toBe(false);
+    expect(referenceIsRequired(SettlementEntryType.REFERRAL_BONUS)).toBe(false);
+    // And the two order-derived types still demand one.
+    expect(arisesFromOneOrder(SettlementEntryType.ORDER_EARNINGS)).toBe(true);
+    expect(arisesFromOneOrder(SettlementEntryType.CASH_COLLECTED)).toBe(true);
+  });
+
+  it('adds an invite bonus to what we owe, and not to what riding earned', () => {
+    const position = positionFrom([
+      { type: SettlementEntryType.ORDER_EARNINGS, amountCentavos: 8_000 },
+      { type: SettlementEntryType.REFERRAL_BONUS, amountCentavos: 50_000 },
+    ]);
+    expect(position.balanceCentavos).toBe(58_000);
+    expect(position.bonusCentavos).toBe(50_000);
+    // The whole reason it has its own field: a rider comparing what they
+    // earned against the jobs they rode must not find recruitment in it.
+    expect(position.earnedCentavos).toBe(8_000);
+  });
+
+  it('lets a bonus be paid out like anything else we owe', () => {
+    const position = positionFrom([
+      { type: SettlementEntryType.REFERRAL_BONUS, amountCentavos: 50_000 },
+    ]);
+    // No separate payment path: the money joins the balance and leaves in the
+    // payout somebody records.
+    expect(payableCentavos(position)).toBe(50_000);
+    expect(settlementSideFor(position)).toBe('WE_OWE');
+  });
+
+  it('and the guards let it through with no actor and no order', () => {
+    const guards = source('prisma/sql/settlement_append_only.sql');
+    expect(guards).toMatch(
+      /settlement_entry_actor_required[\s\S]*'REFERRAL_BONUS'/,
+    );
+    // Guard 6 lists only the order-derived types, so a bonus with no order is
+    // accepted. If REFERRAL_BONUS ever appears in that CHECK, every bonus
+    // fails at the database.
+    const accrualNeedsOrder = /settlement_entry_accrual_needs_order CHECK \(([\s\S]*?)\);/.exec(
+      guards,
+    );
+    expect(accrualNeedsOrder?.[1]).not.toContain('REFERRAL_BONUS');
   });
 });
 

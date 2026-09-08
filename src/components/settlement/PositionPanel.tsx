@@ -98,6 +98,19 @@ export function PositionPanel({
             </dd>
           </div>
         ) : null}
+        {/* Only when there is one. A permanent "Invite bonuses ₱0.00" tile
+            advertises a programme that may not even be running, and a rider
+            who has earned none does not need to be told so on every visit. */}
+        {position.bonusCentavos > 0 ? (
+          <div className="rounded-lg bg-surface px-3 py-2 ring-1 ring-black/5">
+            <dt className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">
+              Invite bonuses
+            </dt>
+            <dd className="text-sm font-bold tabular-nums">
+              {formatCentavos(position.bonusCentavos)}
+            </dd>
+          </div>
+        ) : null}
       </dl>
 
       {entries.length === 0 ? (

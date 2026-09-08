@@ -11,6 +11,19 @@ export interface ApplyServiceOption {
   isActive: boolean;
 }
 
+/**
+ * What the rider-invite programme pays, when it is running.
+ *
+ * Null when it is off, and then the field is not rendered at all rather than
+ * rendered disabled: a box asking for a code that can earn nothing is a
+ * promise the app cannot keep, and somebody who types their friend's code into
+ * it will be waiting for a bonus that was never coming.
+ */
+export interface ApplyInviteFacts {
+  refereeCentavos: number;
+  qualifyingDeliveries: number;
+}
+
 const VEHICLE_LABELS: Record<VehicleType, string> = {
   [VehicleType.ON_FOOT]: 'Naglalakad',
   [VehicleType.BICYCLE]: 'Bisikleta',
@@ -29,10 +42,17 @@ const VEHICLE_LABELS: Record<VehicleType, string> = {
  * button would hide that. Coming-soon services can be applied for so the
  * verification queue is warm on the day one launches.
  */
-export function ApplyForm({ services }: { services: ApplyServiceOption[] }) {
+export function ApplyForm({
+  services,
+  invite,
+}: {
+  services: ApplyServiceOption[];
+  invite: ApplyInviteFacts | null;
+}) {
   const [vehicleType, setVehicleType] = useState<VehicleType | ''>('');
   const [plate, setPlate] = useState('');
   const [selected, setSelected] = useState<ServiceKey[]>([]);
+  const [inviteCode, setInviteCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -62,6 +82,7 @@ export function ApplyForm({ services }: { services: ApplyServiceOption[] }) {
             vehicleType: vehicleType as VehicleType,
             vehiclePlate: plate,
             serviceKeys: selected,
+            inviteCode,
           });
           if (result && !result.ok) setError(result.message);
         });
@@ -98,6 +119,7 @@ export function ApplyForm({ services }: { services: ApplyServiceOption[] }) {
           <span className="text-[13px] font-semibold">Plate number</span>
           <input
             type="text"
+            name="vehiclePlate"
             value={plate}
             onChange={(event) => setPlate(event.target.value.toUpperCase())}
             maxLength={20}
@@ -142,6 +164,35 @@ export function ApplyForm({ services }: { services: ApplyServiceOption[] }) {
           ))}
         </div>
       </fieldset>
+
+      {invite ? (
+        <label className="block">
+          <span className="text-[13px] font-semibold">
+            Invite code{' '}
+            <span className="font-normal text-ink-faint">(optional)</span>
+          </span>
+          <input
+            type="text"
+            name="inviteCode"
+            value={inviteCode}
+            onChange={(event) => setInviteCode(event.target.value.toUpperCase())}
+            maxLength={40}
+            autoComplete="off"
+            placeholder="From the rider who told you about TARA"
+            className="mt-1.5 w-full rounded-xl bg-surface-sunken px-3 py-2.5 text-sm uppercase tracking-wide ring-1 ring-black/5 focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+          <span className="mt-1 block text-[11px] leading-relaxed text-ink-muted">
+            {invite.refereeCentavos > 0
+              ? `You both get paid once you have completed ${invite.qualifyingDeliveries} ${
+                  invite.qualifyingDeliveries === 1 ? 'delivery' : 'deliveries'
+                } — added to what TARA owes you, not to credits.`
+              : `The rider who invited you gets paid once you have completed ${invite.qualifyingDeliveries} ${
+                  invite.qualifyingDeliveries === 1 ? 'delivery' : 'deliveries'
+                }.`}{' '}
+            A code that does not work will not hold up your application.
+          </span>
+        </label>
+      ) : null}
 
       {error ? (
         <p role="alert" className="text-xs text-rose-700">

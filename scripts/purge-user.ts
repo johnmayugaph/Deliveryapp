@@ -158,6 +158,40 @@ async function main() {
     // to override that intent. Deleting an order cascades to its addresses,
     // status events, applied benefits and dispatch offers, and nulls the
     // references from wallet transactions and support tickets.
+    //
+    // Referral rows go FIRST, and this one is not tidiness — it is the
+    // difference between an erasure request working and failing.
+    //
+    // Both referral tables point at the order that paid them with
+    // `onDelete: SetNull`, and both have a CHECK saying a REWARDED row must
+    // name that order (`referral_reward_names_its_order`,
+    // `partner_referral_reward_names_its_delivery`). Those two facts
+    // contradict each other exactly here: nulling the column is what the FK
+    // does when the order goes, and it is what the CHECK forbids. The purge
+    // transaction failed on a constraint violation for anybody who had ever
+    // been referred and whose first order paid their referrer — which is the
+    // successful case of the referral feature.
+    //
+    // Found by a live-database script for the rider programme, in the
+    // customer programme it had been latent in for four phases.
+    //
+    // Deleting the rows is the right answer rather than relaxing the CHECK: a
+    // referral row is personal data about TWO people — who invited whom —
+    // so erasing one of them has to take the link with it. What the money did
+    // is not lost, because it lives in the credits ledger and the settlement
+    // ledger, which keep their rows and their descriptions.
+    await tx.$executeRaw`
+      DELETE FROM "PartnerReferral"
+      WHERE "qualifyingOrderId" IN (
+        SELECT id FROM "Order" WHERE "customerId" = ${user.id}
+      )
+    `;
+    await tx.$executeRaw`
+      DELETE FROM "Referral"
+      WHERE "qualifyingOrderId" IN (
+        SELECT id FROM "Order" WHERE "customerId" = ${user.id}
+      )
+    `;
     await tx.$executeRaw`DELETE FROM "Order" WHERE "customerId" = ${user.id}`;
     await tx.$executeRaw`DELETE FROM "User" WHERE id = ${user.id}`;
   });

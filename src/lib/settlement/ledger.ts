@@ -7,6 +7,7 @@ import {
 import { prisma, type PrismaTransactionClient } from '@/lib/prisma';
 import {
   InvalidSettlementEntryError,
+  arisesFromOneOrder,
   isAccrual,
   payableCentavos,
   positionFrom,
@@ -89,7 +90,7 @@ export async function recordSettlementEntry(
           'how a ledger stops being evidence.',
       );
     }
-    if (isAccrual(input.type) && !input.orderId) {
+    if (arisesFromOneOrder(input.type) && !input.orderId) {
       throw new InvalidSettlementEntryError(
         `${input.type} arises from an order and must name it`,
       );

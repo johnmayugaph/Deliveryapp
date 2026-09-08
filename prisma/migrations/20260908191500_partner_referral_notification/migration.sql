@@ -1,0 +1,3 @@
+-- AlterEnum
+ALTER TYPE "NotificationKind" ADD VALUE 'PARTNER_REFERRAL_SETTLED';
+

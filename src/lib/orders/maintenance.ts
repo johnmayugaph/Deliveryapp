@@ -12,6 +12,7 @@ import { grantCredit, refundToCredits } from '@/lib/wallet/ledger';
 import { recordCashCollected } from '@/lib/payments/manual';
 import { accrueOrderSettlement } from '@/lib/settlement/accrual';
 import { payReferrerForOrder } from '@/lib/referrals/rewards';
+import { payPartnerReferralForDelivery } from '@/lib/referrals/partner-rewards';
 import { earnPointsForOrder } from '@/lib/loyalty/earning';
 import { expireLoyaltyPoints, type ExpiryPassResult } from '@/lib/loyalty/expiry';
 import {
@@ -431,6 +432,27 @@ export async function completeOrder(input: {
     // completion that awarded points in a separate step could award them twice
     // or not at all. Keyed on the order, so a retried completion earns once.
     await earnPointsForOrder(order, tx);
+
+    // If the RIDER who delivered this was invited by another rider, this may be
+    // the delivery that earns them both a bonus. Same transaction again, and
+    // the count it decides on is read from the orders rather than from
+    // `FleetPartner.completedOrderCount` — see `payPartnerReferralForDelivery`.
+    await payPartnerReferralForDelivery(order, tx);
+
+    // The rider's lifetime delivery count, which the console shows.
+    //
+    // Moved in here from `advanceJobAction`, where it ran AFTER this
+    // transaction committed: a process that died in between left a completed
+    // order the count never saw, and the number is only ever repaired by
+    // somebody noticing. It is a cache — the orders are the truth, and the
+    // referral rule above reads them rather than this — but a cache that
+    // cannot drift is worth more than one that usually agrees.
+    if (order.assignedRiderId) {
+      await tx.fleetPartner.update({
+        where: { id: order.assignedRiderId },
+        data: { completedOrderCount: { increment: 1 } },
+      });
+    }
 
     return { order, creditBackCentavos };
   });

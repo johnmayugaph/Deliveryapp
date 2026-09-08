@@ -3650,3 +3650,163 @@ saying "ok, nothing to tap" is a check that cannot fail. It now asserts the
 queue is empty, which is the reason there is nothing to tap.
 
 1736 tests pass; typecheck, lint and build clean.
+
+---
+
+## Phase 42 — Rider invites: referrals paid in money
+
+### What "referral payouts" could mean, and which one this is
+
+Two readings, and one of them is already built. The customer programme from
+Phase 37 pays both sides in credits and has done since; a customer referral
+cannot be "paid out" at all, because credits becoming cash is exactly the
+cash-out the wallet design refuses.
+
+The other reading is the one with work in it: **paying a rider real money for
+bringing another rider.** Nothing in the app did that, and credits could not —
+a rider does not order lunch from us, so a supply referral paid in credits is
+somebody paid in a currency they cannot spend. That looks like a reward and is
+not one.
+
+### The rail already existed
+
+The settlement ledger has moved money to partners since Phase 33: one write
+function, a signed amount forced by type, a payout that cannot exceed the
+balance, and a person's name against every claim that money left a bank
+account. A rider referral needed nothing new from it except a REASON for money
+to be owed.
+
+So `REFERRAL_BONUS` is a new `SettlementEntryType` and that is the whole
+mechanism. The bonus increases what TARA owes the rider; it leaves in the
+payout somebody records on a Friday, through the same form and the same
+ceiling as the fees they earn riding. **No second payment path, and no new way
+to move money.**
+
+Which is also why every sentence about it says *owed* rather than *paid*.
+Telling a rider "₱500 paid" when nothing has left a bank account is a lie with
+a number on it, and `PARTNER_REFERRAL_SETTLED` exists as its own notification
+kind because the customer version says "credits" — a lie about the currency to
+somebody who never orders food.
+
+### One code, two programmes
+
+Both resolve `User.referralCode`. A person has one code to share, and what it
+earns depends on what the invitee does: order, and it is credits; apply to
+ride, and it is money. A customer's code used by a rider applicant is refused
+with `NOT_A_RIDER_CODE` — a real thing, a different feature, and there is no
+settlement account to accrue to.
+
+`PartnerReferral` is nonetheless a separate TABLE rather than a flag, because
+`Referral.refereeId` is unique per user: somebody first invited to order by a
+friend and later invited to ride by a rider is the ordinary case, and one table
+could not hold both.
+
+### The defence is the work, so the console shows a different number
+
+The customer screen's headline figure is what a person nets by referring
+themselves. There is no equivalent here. To collect a rider bonus from
+yourself you would have to register a second rider account, pass verification
+again — a person looks at documents, per service — and then complete the
+qualifying deliveries, each of which already paid that account its fee. At the
+end of it you have delivered food and been paid for delivering food. That is
+not a farm; it is a second job with a hiring bonus, and the bonus is what it
+was for.
+
+So `/admin/referrals` says so out loud and shows **what a rider costs per
+qualifying delivery** instead — the number that can be quietly wrong for
+months, next to what a delivery earns the business. The caps remain, bounding
+the liability per referrer.
+
+### The caps refuse the inviter, not the rider who did the work
+
+A new rider told "₱250 after twenty deliveries", who then delivers twenty
+times, is paid — even if their inviter's monthly cap is spent, even if their
+inviter has been suspended. A promise broken by somebody else's cap is one the
+person who kept their end can do nothing about, cannot see, and cannot
+explain. `rewardForPartnerReferral` decides the two sides separately, and a
+REWARDED row can carry a `blockedReason` for the half that was refused.
+
+### Five defects, four of them in code that already shipped
+
+**A bonus race failed a rider's delivery.** Two of a rider's deliveries
+completing at the same moment both read the referral as ATTRIBUTED and both
+settled it. The immutability trigger refused the second write, correctly — and
+the exception came out of the referral code, out of the completion
+transaction, and failed the whole ORDER. A race about a bonus must never cost
+somebody their delivery. The settle is now a compare-and-set on the status;
+the loser matches no row and returns quietly, and the trigger is a backstop
+again rather than the thing breaking completions. Found by the live-database
+script.
+
+**An erasure request would have failed, and had done since Phase 37.** Both
+referral tables point at the order that paid them with `onDelete: SetNull`, and
+both have a CHECK requiring a REWARDED row to name that order. Those two facts
+contradict each other exactly where it matters: deleting a purged customer's
+orders nulls the column, and the CHECK forbids it. `db:purge-user` therefore
+failed with a constraint violation for anybody who had ever been referred and
+whose first order paid their referrer — the successful case of the feature.
+Both purge tools now delete the referral rows first, which is also the right
+answer on the merits: a referral row is personal data about two people, so
+erasing one of them takes the link with it, and what the money did survives in
+the two ledgers.
+
+**Two form fields had no `name`.** The rider application's plate field, and the
+invite-code field added in this phase. They worked for a human — controlled
+React state posted through a server action — and were invisible to autofill,
+to accessibility tooling and to a browser test looking for them.
+
+**A stray relation, again.** `Referral.fleetPartnerId` and
+`LoyaltyEntry.fleetPartnerId`, both auto-generated by `prisma format` from
+back-relations somebody added to `FleetPartner`, both written by nothing and
+read by nothing. Dropped, with a note. The first version of this phase's
+schema would have made a third.
+
+**A browser script that could not fail.** `try/finally` with no `catch` and a
+`process.exit` in the finally swallows every exception: the run stops wherever
+it threw, prints "all checks passed" for the checks it reached, and exits 0.
+Four of eight phases were being skipped silently. That shape was copied from
+an earlier e2e script, where every phase happened to run.
+
+I also moved `FleetPartner.completedOrderCount` into the completion
+transaction. It was incremented one line and one transaction later, so a
+process dying in between left a delivery the count never saw — and I had
+briefly, wrongly, told myself nothing maintained it at all, before reading the
+call site properly.
+
+### Verified in four places
+
+**Thirty-five new unit tests** (1778 total): every attribution refusal, the
+unknown-code versus customer-code distinction, the threshold at its boundary
+in both directions, both caps refusing the inviter while the new rider is
+still paid, blocked and suspended doing the same, the per-delivery cost
+rounding up, no divide-by-zero on a programme with no threshold, the ceiling
+agreeing with the SQL guard, and the notification saying "owed" and never
+"credits" — asserted against the exported values rather than by regexing
+source, which is where the first two attempts broke. Three seams were mutated
+to confirm the checks fail.
+
+**Eighteen SQL-guard checks** against the live database, each naming its own
+constraint through `GET STACKED DIAGNOSTICS`, every one paired with a control
+row that differs in exactly one field. Including the two the guards must NOT
+demand of a bonus — an actor and an order — because demanding either would
+fail every bonus, and the new guard that refuses a bonus which names one.
+
+**Twenty-five more against the live database**: attribution refusing a
+self-code, a customer's code and a second code against real rows; the bonus
+paid on the second delivery and not the first, counted from real completions;
+the ledger line positive, actor-less and order-less; the balance rising and
+then paying out to zero through the ordinary payout; two simultaneous
+completions of the qualifying delivery both landing and paying once; the cap
+refusing the inviter while the new rider is paid; and the console's accrued
+total matching the ledger rather than the referral rows.
+
+**Twenty-seven in a real browser**: the rider screen and the application form
+with the programme off, the console refusing a live programme that pays on
+signup, switching it on and reporting the cost per delivery, the rider reading
+her code with "money, not credits" on it, a bad code not costing an applicant
+their form, a real code attributing however it is typed, the count coming down
+by name, the bonus arriving as owed rather than paid, the Money tab separating
+invite bonuses from what was earned riding, the new rider told about her own
+welcome bonus, and the console listing who brought whom for what.
+
+1778 tests pass; typecheck, lint and build clean.

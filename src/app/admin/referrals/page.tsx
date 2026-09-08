@@ -1,10 +1,16 @@
+import { ReferralStatus } from '@prisma/client';
 import { requireAdmin } from '@/lib/admin/access';
 import { referralOverview } from '@/lib/admin/referrals';
+import { partnerReferralOverview } from '@/lib/admin/partner-referrals';
 import { MAX_REWARD_CENTAVOS } from '@/lib/referrals/policy';
+import { MAX_PARTNER_REWARD_CENTAVOS } from '@/lib/referrals/partner-policy';
 import { formatCentavos } from '@/lib/money';
 import { formatPhilippineMobile } from '@/lib/auth/phone';
 import { ReasonForm } from '@/components/admin/ReasonForm';
-import { setReferralProgrammeAction } from '@/lib/actions/admin-actions';
+import {
+  setPartnerReferralProgrammeAction,
+  setReferralProgrammeAction,
+} from '@/lib/actions/admin-actions';
 import {
   Empty,
   Panel,
@@ -14,6 +20,7 @@ import {
   Td,
   Th,
   PersonLink,
+  manilaTime,
 } from '@/components/admin/primitives';
 
 export const dynamic = 'force-dynamic';
@@ -34,7 +41,10 @@ export const dynamic = 'force-dynamic';
  */
 export default async function AdminReferralsPage() {
   await requireAdmin();
-  const overview = await referralOverview();
+  const [overview, partner] = await Promise.all([
+    referralOverview(),
+    partnerReferralOverview(),
+  ]);
   const { programme, margin } = overview;
 
   return (
@@ -222,6 +232,243 @@ export default async function AdminReferralsPage() {
                       >
                         {row.rewarded} of {programme.lifetimeRewardCap}
                       </Pill>
+                    ) : (
+                      <span className="text-ink-faint">—</span>
+                    )}
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </TableScroll>
+        )}
+      </Panel>
+
+      {/* ---------------------------------------------------------------- */}
+
+      <div className="border-t border-black/10 pt-5">
+        <h2 className="text-lg font-bold">Rider invites</h2>
+        <p className="mt-1 max-w-2xl text-xs leading-relaxed text-ink-muted">
+          A rider who brings a rider is paid <strong>money</strong>, not
+          credits: a bonus is added to what TARA owes them and goes out with
+          their next payout, on the same ledger as the fees they earn riding.
+          Credits would be no use to somebody who does not order lunch.
+          Off until you set the amounts.
+        </p>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-4">
+        <Stat
+          label="Programme"
+          value={partner.isLive ? 'On' : 'Off'}
+          note={
+            partner.isLive
+              ? `${formatCentavos(partner.programme.referrerCentavos)} to the inviter, ${formatCentavos(partner.programme.refereeCentavos)} to them`
+              : 'Codes earn no rider bonus and the apply screen hides the field'
+          }
+        />
+        <Stat
+          label="A rider costs"
+          value={formatCentavos(partner.cost.bothSidesCentavos)}
+          note={
+            partner.cost.qualifyingDeliveries > 0
+              ? `${formatCentavos(partner.cost.perQualifyingDeliveryCentavos)} per delivery over ${partner.cost.qualifyingDeliveries}`
+              : 'No delivery threshold set'
+          }
+        />
+        <Stat
+          label="Riding to their bonus"
+          value={String(partner.attributed)}
+          note={`${partner.rewarded} paid, ${partner.notRewarded} closed unpaid`}
+        />
+        <Stat
+          label="Accrued in bonuses"
+          value={formatCentavos(partner.accruedCentavos)}
+          note={`${formatCentavos(partner.accruedThisMonthCentavos)} this month, from the ledger`}
+        />
+      </div>
+
+      {partner.isLive ? (
+        <p className="rounded-xl bg-surface-sunken px-4 py-3 text-xs leading-relaxed text-ink-muted">
+          <span className="font-semibold text-ink">
+            There is no self-referral warning here, and that is deliberate.
+          </span>{' '}
+          Collecting a rider bonus means passing verification a second time and
+          completing {partner.cost.qualifyingDeliveries}{' '}
+          {partner.cost.qualifyingDeliveries === 1 ? 'delivery' : 'deliveries'} —
+          real orders, to real customers, each of which already paid that
+          account its own fee. Somebody who does all that has done the job the
+          bonus is for. What can go wrong instead is the number above:{' '}
+          {formatCentavos(partner.cost.perQualifyingDeliveryCentavos)} per
+          delivery, on top of what you pay the rider for it. Compare it to what
+          a delivery earns the business, because nothing else here will.
+          {partner.cost.lifetimeLiabilityPerReferrerCentavos > 0 ? (
+            <>
+              {' '}
+              The caps bound the rest: at most{' '}
+              {formatCentavos(partner.cost.lifetimeLiabilityPerReferrerCentavos)}{' '}
+              to any one rider, ever.
+            </>
+          ) : null}
+        </p>
+      ) : null}
+
+      <Panel
+        title="The rider programme"
+        description={`Both amounts are per invite, and one side may be worth at most ${formatCentavos(MAX_PARTNER_REWARD_CENTAVOS)}. Changing them never alters a bonus already paid.`}
+      >
+        <div className="px-4 py-3">
+          <ReasonForm
+            action={setPartnerReferralProgrammeAction}
+            hidden={{ isActive: String(!partner.programme.isActive) }}
+            submitLabel={
+              partner.programme.isActive ? 'Save and switch OFF' : 'Save and switch ON'
+            }
+            tone={partner.programme.isActive ? 'danger' : 'default'}
+            extraFields={
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                <Field
+                  name="referrerPesos"
+                  label="To the inviter (₱)"
+                  value={(partner.programme.referrerCentavos / 100).toFixed(2)}
+                />
+                <Field
+                  name="refereePesos"
+                  label="To the new rider (₱)"
+                  value={(partner.programme.refereeCentavos / 100).toFixed(2)}
+                />
+                <Field
+                  name="qualifyingDeliveries"
+                  label="Deliveries first"
+                  value={String(partner.programme.qualifyingDeliveries)}
+                />
+                <Field
+                  name="monthlyCap"
+                  label="Cap / month"
+                  value={String(partner.programme.monthlyRewardCap)}
+                />
+                <Field
+                  name="lifetimeCap"
+                  label="Cap / lifetime"
+                  value={String(partner.programme.lifetimeRewardCap)}
+                />
+              </div>
+            }
+          >
+            The delivery threshold is the defence and the caps are the budget.
+            At least one delivery is required to switch this on: paying on
+            signup would be paying for owning a SIM card rather than for the
+            work. The caps refuse the INVITER only — a new rider who did the
+            deliveries is still paid, because a promise broken by somebody
+            else&rsquo;s cap is not one they can do anything about.
+          </ReasonForm>
+        </div>
+      </Panel>
+
+      <Panel
+        title="Why rider invites did not pay"
+        description="A cap everybody hits, or a threshold nobody reaches, shows up here first."
+      >
+        {partner.refusals.length === 0 ? (
+          <Empty>
+            Nothing has been refused. With {partner.attributed} still riding
+            towards a bonus, that is either a healthy programme or a young one.
+          </Empty>
+        ) : (
+          <TableScroll>
+            <thead>
+              <tr>
+                <Th>Reason</Th>
+                <Th numeric>Invites</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {partner.refusals.map((row) => (
+                <tr key={row.reason}>
+                  <Td>{row.reason}</Td>
+                  <Td numeric>{row.count}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </TableScroll>
+        )}
+      </Panel>
+
+      <Panel
+        title="Who brought whom"
+        description="Newest first. The delivery count is what the bonus was paid against."
+      >
+        {partner.rows.length === 0 ? (
+          <Empty>No rider has applied with another rider&rsquo;s code yet.</Empty>
+        ) : (
+          <TableScroll>
+            <thead>
+              <tr>
+                <Th>Inviter</Th>
+                <Th>New rider</Th>
+                <Th>Code</Th>
+                <Th>State</Th>
+                <Th numeric>Paid</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {partner.rows.map((row) => (
+                <tr key={row.id}>
+                  <Td>
+                    {row.referrerName}
+                    <span className="mt-0.5 block text-[11px] tabular-nums text-ink-faint">
+                      {formatPhilippineMobile(row.referrerPhone)}
+                    </span>
+                  </Td>
+                  <Td>
+                    {row.refereeName}
+                    <span className="mt-0.5 block text-[11px] tabular-nums text-ink-faint">
+                      {formatPhilippineMobile(row.refereePhone)}
+                    </span>
+                  </Td>
+                  <Td muted>
+                    <span className="font-mono text-[11px]">{row.codeUsed}</span>
+                    <span className="mt-0.5 block text-[11px] text-ink-faint">
+                      {manilaTime(row.createdAt)}
+                    </span>
+                  </Td>
+                  <Td>
+                    <Pill
+                      tone={
+                        row.status === ReferralStatus.REWARDED
+                          ? 'good'
+                          : row.status === ReferralStatus.NOT_REWARDED
+                            ? 'bad'
+                            : 'neutral'
+                      }
+                    >
+                      {row.status === ReferralStatus.REWARDED
+                        ? 'Paid'
+                        : row.status === ReferralStatus.NOT_REWARDED
+                          ? 'Unpaid'
+                          : 'Riding'}
+                    </Pill>
+                    {row.qualifyingDeliveryCount !== null ? (
+                      <span className="mt-0.5 block text-[11px] text-ink-faint">
+                        at {row.qualifyingDeliveryCount} deliveries
+                      </span>
+                    ) : null}
+                    {row.blockedReason ? (
+                      <span className="mt-0.5 block text-[11px] text-ink-faint">
+                        {row.blockedReason}
+                      </span>
+                    ) : null}
+                  </Td>
+                  <Td numeric>
+                    {row.referrerRewardCentavos + row.refereeRewardCentavos > 0 ? (
+                      <>
+                        {formatCentavos(
+                          row.referrerRewardCentavos + row.refereeRewardCentavos,
+                        )}
+                        <span className="mt-0.5 block text-[11px] font-normal text-ink-faint">
+                          {formatCentavos(row.referrerRewardCentavos)} +{' '}
+                          {formatCentavos(row.refereeRewardCentavos)}
+                        </span>
+                      </>
                     ) : (
                       <span className="text-ink-faint">—</span>
                     )}

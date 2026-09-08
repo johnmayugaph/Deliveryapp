@@ -304,12 +304,21 @@ describe('the purge can only remove what it listed', () => {
 
   it('deletes only the ids it listed, never by predicate', () => {
     // A `deleteMany({ where: { isDemo: true } })` would be one edit away from
-    // `{ isDemo: false }`. Keying every delete on the id arrays gathered for
-    // the summary means what the operator confirmed is exactly what goes.
+    // `{ isDemo: false }`. Keying every delete on an id ARRAY gathered from
+    // what the operator confirmed means the blast radius is the list they saw.
+    //
+    // Any `*Ids` array counts, not just `userIds` and `storeIds`: the referral
+    // rows that name a demo order are deleted by `demoOrderIds`, which is
+    // derived from those same confirmed users one query later. Naming the two
+    // originals here made the test about the variable rather than about the
+    // property, and it failed the first time a third list was legitimately
+    // needed.
     const deletes = purge.match(/deleteMany\(\{[^}]*\}/g) ?? [];
     expect(deletes.length).toBeGreaterThan(0);
     for (const call of deletes) {
-      expect(call).toMatch(/\{ in: (userIds|storeIds) \}/);
+      expect(call, call).toMatch(/\{ in: \w+Ids \}/);
+      // And never a boolean flag, which is the shape this guards against.
+      expect(call, call).not.toMatch(/isDemo|true|false/);
     }
   });
 

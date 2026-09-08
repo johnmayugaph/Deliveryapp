@@ -25,6 +25,7 @@ export function FleetTabs({
     { href: '/fleet/job', label: hasActiveJob ? 'Job ●' : 'Job' },
     { href: '/fleet/earnings', label: holdingCash ? 'Money ●' : 'Money' },
     { href: '/fleet/history', label: 'History' },
+    { href: '/fleet/invite', label: 'Invite' },
     { href: '/fleet/profile', label: 'Profile' },
   ];
 

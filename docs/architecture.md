@@ -1838,6 +1838,57 @@ an unexplained absence is how a referral programme becomes a support queue. The
 reasons are also grouped on the console screen, because a minimum nobody clears
 or a cap everybody hits shows up there first.
 
+### Rider invites — the same idea, paid in money
+
+`PartnerReferral` and `PartnerReferralProgramme`, with the rules in
+`lib/referrals/partner-policy.ts`. A rider brings a rider; the customer
+programme above pays credits, and this one pays **money**.
+
+**Because credits would be useless to the person earning them.** A rider does
+not order lunch from us. Paying a supply referral in credits would be paying
+somebody in a currency they cannot spend, which is worse than not paying them —
+it looks like a reward and is not one. So a partner bonus is a `REFERRAL_BONUS`
+accrual on the settlement ledger: it increases what TARA owes that rider and
+leaves in the payout somebody records, through the same form and the same
+ceiling as every peso they earn riding. **This feature adds a reason for money
+to be owed and no new way to move money.**
+
+And a customer referral cannot become money, in the other direction: that is
+the cash-out the credits design refuses. A customer whose code brings a rider
+gets `NOT_A_RIDER_CODE` — real, and a different feature, since there is no
+settlement account to accrue to.
+
+**One code, two programmes.** Both resolve `User.referralCode`, so a person has
+one code to share and what it earns depends on what the invitee does: order,
+and it is credits; apply to ride, and it is money. `PartnerReferral` is a
+separate TABLE though, because `Referral.refereeId` is unique per user and
+somebody first invited to order by a friend, then invited to ride by a rider,
+is the ordinary case.
+
+**What stops it being farmed is the work, not the caps.** To collect from
+yourself you would have to register a second rider account, pass verification
+again — a person looks at documents, per service — then complete
+`qualifyingDeliveries` real deliveries, each of which already paid that account
+its own fee. At the end you have delivered food and been paid for delivering
+food. So `/admin/referrals` shows no self-referral warning for this programme
+and shows **what a rider costs per qualifying delivery** instead, which is the
+thing that can quietly be wrong for months. The caps are still there, bounding
+the liability per referrer.
+
+**The caps refuse the INVITER only.** A new rider told "₱250 after twenty
+deliveries", who then delivered twenty times, is paid — even when their
+inviter's monthly cap is spent, or their inviter is suspended. A promise broken
+by somebody else's cap is one the person who kept their end can do nothing
+about. `rewardForPartnerReferral` therefore decides the two sides separately,
+and the row can be REWARDED with a `blockedReason` explaining the refused half.
+
+The settle is a **compare-and-set** on `status = ATTRIBUTED`, and that was
+found rather than reasoned: two of a rider's deliveries completing at the same
+moment both read the row as ATTRIBUTED, both settled it, and the database
+trigger correctly refused the second write — which failed the whole ORDER
+COMPLETION. A race about a bonus must never cost a rider their delivery. The
+loser now matches no row and returns quietly.
+
 ## Gift cards — a bearer instrument, not a top-up
 
 `GiftCard`, with the rules in `lib/gift-cards/policy.ts` (no database, no

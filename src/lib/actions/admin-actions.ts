@@ -43,6 +43,11 @@ import {
   voidGiftCard,
 } from '@/lib/gift-cards/issue';
 import { PROGRAMME_ID } from '@/lib/referrals/programme';
+import { PARTNER_PROGRAMME_ID } from '@/lib/referrals/partner-programme';
+import {
+  MAX_PARTNER_REWARD_CENTAVOS,
+  acquisitionCost,
+} from '@/lib/referrals/partner-policy';
 import {
   MAX_POINTS_PER_PESO_BASIS_POINTS,
   effectiveGivebackBasisPoints,
@@ -3066,6 +3071,163 @@ export async function voidSubscriptionInvoiceAction(
         `${invoice.reference} is cancelled and ` +
         `${formatCentavos(invoice.amountCentavos)} is no longer owed. Their ` +
         'plan still ends on its current date unless somebody extends it.',
+    };
+  });
+}
+
+/**
+ * Sets the rider-invite programme.
+ *
+ * The same shape as `setReferralProgrammeAction` and one important difference:
+ * this one commits REAL MONEY. Every rider acquired through it adds a
+ * `REFERRAL_BONUS` to what TARA owes somebody, and that leaves through a
+ * payout rather than reducing a future bill — so the refusals here are about
+ * spending rather than about farming.
+ *
+ * There is no farmer's-margin warning, because there is no margin to warn
+ * about: collecting a partner bonus means passing verification and completing
+ * real deliveries, and somebody who does that has done the job the bonus was
+ * for. The confirmation says what a rider costs instead, per delivery, which
+ * is the number that can quietly be wrong for months.
+ */
+export async function setPartnerReferralProgrammeAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const reason = normaliseReason(formData.get('reason'));
+
+    const pesos = (field: string): number | null =>
+      centavosFromPesoInput(String(formData.get(field) ?? ''));
+    const whole = (field: string): number | null => {
+      const raw = String(formData.get(field) ?? '').trim();
+      const value = Number(raw);
+      return Number.isInteger(value) && value >= 0 ? value : null;
+    };
+
+    const referrerCentavos = pesos('referrerPesos');
+    const refereeCentavos = pesos('refereePesos');
+    const qualifyingDeliveries = whole('qualifyingDeliveries');
+    const monthlyRewardCap = whole('monthlyCap');
+    const lifetimeRewardCap = whole('lifetimeCap');
+    const isActive = String(formData.get('isActive') ?? '') === 'true';
+
+    if (referrerCentavos === null || refereeCentavos === null) {
+      return { ok: false, message: 'Write the amounts in pesos, like 500 or 250.50.' };
+    }
+    if (
+      qualifyingDeliveries === null ||
+      monthlyRewardCap === null ||
+      lifetimeRewardCap === null
+    ) {
+      return {
+        ok: false,
+        message: 'The deliveries and the caps are whole numbers.',
+      };
+    }
+    if (
+      referrerCentavos > MAX_PARTNER_REWARD_CENTAVOS ||
+      refereeCentavos > MAX_PARTNER_REWARD_CENTAVOS
+    ) {
+      return {
+        ok: false,
+        message:
+          `The most one side may be worth is ${formatCentavos(
+            MAX_PARTNER_REWARD_CENTAVOS,
+          )}. More than that is usually a decimal point in the wrong place — ` +
+          'and here that is a decimal point in a real payout.',
+      };
+    }
+    if (isActive && qualifyingDeliveries < 1) {
+      return {
+        ok: false,
+        message:
+          'A live programme needs at least one qualifying delivery. Paying on ' +
+          'signup would be paying for owning a SIM card rather than for the work.',
+      };
+    }
+    if (isActive && (monthlyRewardCap === 0 || lifetimeRewardCap === 0)) {
+      return {
+        ok: false,
+        message:
+          'A live programme needs both caps above zero, or it advertises a code ' +
+          'that can never pay.',
+      };
+    }
+    if (lifetimeRewardCap > 0 && lifetimeRewardCap < monthlyRewardCap) {
+      return {
+        ok: false,
+        message: 'The lifetime cap cannot be lower than the monthly one.',
+      };
+    }
+    if (isActive && referrerCentavos === 0 && refereeCentavos === 0) {
+      return {
+        ok: false,
+        message: 'A live programme has to pay somebody something.',
+      };
+    }
+
+    const before = await prisma.partnerReferralProgramme.findUnique({
+      where: { id: PARTNER_PROGRAMME_ID },
+    });
+
+    const data = {
+      isActive,
+      referrerCentavos,
+      refereeCentavos,
+      qualifyingDeliveries,
+      monthlyRewardCap,
+      lifetimeRewardCap,
+    };
+
+    await prisma.$transaction(async (tx) => {
+      await tx.partnerReferralProgramme.upsert({
+        where: { id: PARTNER_PROGRAMME_ID },
+        create: { id: PARTNER_PROGRAMME_ID, ...data },
+        update: data,
+      });
+      await recordAdminAction(
+        {
+          actorId: admin.id,
+          action: AdminAction.PARTNER_REFERRAL_PROGRAMME_CHANGED,
+          subjectType: 'PartnerReferralProgramme',
+          subjectId: PARTNER_PROGRAMME_ID,
+          subjectLabel: isActive ? 'Rider invites on' : 'Rider invites off',
+          reason,
+          detail: {
+            before: before
+              ? {
+                  isActive: before.isActive,
+                  referrerCentavos: before.referrerCentavos,
+                  refereeCentavos: before.refereeCentavos,
+                  qualifyingDeliveries: before.qualifyingDeliveries,
+                  monthlyRewardCap: before.monthlyRewardCap,
+                  lifetimeRewardCap: before.lifetimeRewardCap,
+                }
+              : null,
+            after: data,
+          },
+        },
+        tx,
+      );
+    });
+
+    revalidatePath('/admin/referrals');
+    revalidatePath('/fleet/invite');
+    revalidatePath('/fleet/apply');
+
+    const cost = acquisitionCost(data);
+    return {
+      ok: true,
+      message: isActive
+        ? `Rider invites are on. A rider acquired this way costs ` +
+          `${formatCentavos(cost.bothSidesCentavos)} over ` +
+          `${cost.qualifyingDeliveries} ${
+            cost.qualifyingDeliveries === 1 ? 'delivery' : 'deliveries'
+          } — ${formatCentavos(cost.perQualifyingDeliveryCentavos)} per delivery. ` +
+          'Bonuses already earned keep the amounts they were paid at.'
+        : 'Rider invites are off. Codes already shared will stop paying, and ' +
+          'bonuses already earned are still owed.',
     };
   });
 }
