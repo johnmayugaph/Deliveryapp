@@ -12,7 +12,8 @@ import { prisma } from '@/lib/prisma';
 import { requireCurrentUser } from '@/lib/auth/session';
 import { getLifecycle } from '@/lib/orders/transitions';
 import { cashToCollectCentavos } from '@/lib/payments/policy';
-import { partnerEarningsCentavos } from '@/lib/fleet/offer-policy';
+import { earningsParts, partnerEarningsCentavos } from '@/lib/fleet/offer-policy';
+import { accruedEarningsByOrder, earningsFor } from '@/lib/settlement/earnings';
 import { ACTIVE_JOB_STATUSES } from '@/lib/fleet/job-policy';
 
 /**
@@ -59,6 +60,8 @@ export interface ActiveJob {
   /** Transitions this partner may perform now, from the lifecycle map. */
   nextActions: OrderStatus[];
   earningsCentavos: number;
+  /** How the figure is made up: fee, surge, tip. Only the parts present. */
+  earningsParts: { label: string; centavos: number }[];
   /**
    * What to collect at the door, in cash. Zero when it is already paid.
    *
@@ -128,6 +131,7 @@ export async function getActiveJob(fleetPartnerId: string): Promise<ActiveJob | 
       (to) => (lifecycle.permittedActors[to] ?? []).includes('FLEET_PARTNER'),
     ),
     earningsCentavos: partnerEarningsCentavos(order),
+    earningsParts: earningsParts(order),
     cashToCollectCentavos: cashToCollectCentavos(
       order.paymentMethod,
       order.paymentStatus,
@@ -191,6 +195,14 @@ export interface PartnerEarnings {
  *
  * Counted on COMPLETED orders only — a cancelled job pays nothing, and showing
  * it as earned would be a promise we break at payout.
+ *
+ * Read from the settlement LEDGER rather than recomputed from the pay rule.
+ * These totals used to be a sum of `partnerEarningsCentavos` over the week's
+ * orders, which meant a change to the rule restated a rider's whole history —
+ * and worse, the query selected only the fee and the tip, so once surge became
+ * the rider's it would have been silently missing here while appearing on the
+ * job list. Two figures on one screen, disagreeing. See
+ * `settlement/earnings.ts`.
  */
 export async function getPartnerEarnings(partner: FleetPartner): Promise<PartnerEarnings> {
   const startOfDay = new Date();
@@ -204,14 +216,25 @@ export async function getPartnerEarnings(partner: FleetPartner): Promise<Partner
       status: OrderStatus.COMPLETED,
       completedAt: { gte: startOfWeek },
     },
-    select: { completedAt: true, deliveryFeeCentavos: true, tipCentavos: true },
+    select: {
+      id: true,
+      completedAt: true,
+      deliveryFeeCentavos: true,
+      surgeCentavos: true,
+      tipCentavos: true,
+    },
   });
+
+  const accrued = await accruedEarningsByOrder(
+    partner.id,
+    rows.map((row) => row.id),
+  );
 
   const today = rows.filter(
     (row) => row.completedAt !== null && row.completedAt >= startOfDay,
   );
   const sum = (list: typeof rows) =>
-    list.reduce((total, row) => total + partnerEarningsCentavos(row), 0);
+    list.reduce((total, row) => total + earningsFor(row, accrued), 0);
 
   return {
     todayCentavos: sum(today),
@@ -239,11 +262,19 @@ export async function listPartnerHistory(
     include: { service: true },
   });
 
+  const accrued = await accruedEarningsByOrder(
+    fleetPartnerId,
+    rows.map((row) => row.id),
+  );
+
   return rows.map(({ service, ...order }) => ({
     order: order as Order,
     service,
+    // A cancelled job pays nothing, so it is not even asked about. A completed
+    // one is answered by the ledger, which knows what was accrued under the
+    // rule in force when it settled.
     earningsCentavos:
-      order.status === OrderStatus.COMPLETED ? partnerEarningsCentavos(order) : 0,
+      order.status === OrderStatus.COMPLETED ? earningsFor(order, accrued) : 0,
   }));
 }
 

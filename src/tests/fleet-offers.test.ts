@@ -11,6 +11,7 @@ import {
   offerSecondsRemaining,
   OFFER_FANOUT,
   OFFER_TTL_SECONDS,
+  earningsParts,
   partnerEarningsCentavos,
   REFANOUT_AFTER_SECONDS,
 } from '@/lib/fleet/offer-policy';
@@ -110,8 +111,62 @@ describe('offer windows', () => {
 });
 
 describe('what a partner earns', () => {
-  it('is the delivery fee plus the whole tip', () => {
-    expect(partnerEarningsCentavos({ deliveryFeeCentavos: 4_900, tipCentavos: 2_000 })).toBe(6_900);
+  it('is the delivery fee, the surge and the whole tip', () => {
+    expect(
+      partnerEarningsCentavos({
+        deliveryFeeCentavos: 4_900,
+        surgeCentavos: 1_500,
+        tipCentavos: 2_000,
+      }),
+    ).toBe(8_400);
+  });
+
+  it('pays the surge to the RIDER, not the platform', () => {
+    // A deliberate pay decision, taken after settlement made the old split
+    // visible. Surge used to fall to the platform — not by choice, but because
+    // this function did not mention it and the platform takes the remainder.
+    // Surge that reaches the platform is a price increase with no incentive
+    // attached: the customer pays more and nobody is any more willing to ride
+    // in the rain.
+    const base = { deliveryFeeCentavos: 4_900, tipCentavos: 0 };
+    expect(partnerEarningsCentavos({ ...base, surgeCentavos: 2_500 })).toBe(7_400);
+    expect(partnerEarningsCentavos({ ...base, surgeCentavos: 2_500 })).toBe(
+      partnerEarningsCentavos(base) + 2_500,
+    );
+  });
+
+  it('reads a missing surge as zero', () => {
+    // Most callers pass a whole Order; every row in the database has surge 0.
+    expect(partnerEarningsCentavos({ deliveryFeeCentavos: 4_900, tipCentavos: 0 })).toBe(
+      4_900,
+    );
+  });
+
+  it('breaks the figure into parts that add back up to it', () => {
+    // A breakdown that does not sum to the number above it is worse than no
+    // breakdown.
+    const order = {
+      deliveryFeeCentavos: 3_900,
+      surgeCentavos: 1_500,
+      tipCentavos: 2_000,
+    };
+    const parts = earningsParts(order);
+    expect(parts.map((part) => part.label)).toEqual(['fee', 'surge', 'tip']);
+    expect(parts.reduce((sum, part) => sum + part.centavos, 0)).toBe(
+      partnerEarningsCentavos(order),
+    );
+  });
+
+  it('leaves out the parts that are not there', () => {
+    // One part means the breakdown is not rendered at all: "₱39.00 fee" under
+    // a heading that already says ₱39.00 is noise.
+    expect(earningsParts({ deliveryFeeCentavos: 3_900, tipCentavos: 0 })).toHaveLength(1);
+    expect(
+      earningsParts({ deliveryFeeCentavos: 3_900, surgeCentavos: 0, tipCentavos: 0 }),
+    ).toHaveLength(1);
+    expect(
+      earningsParts({ deliveryFeeCentavos: 3_900, surgeCentavos: 1_500, tipCentavos: 0 }),
+    ).toHaveLength(2);
   });
 
   it('pays the full fee even when a subscription waived it for the customer', () => {

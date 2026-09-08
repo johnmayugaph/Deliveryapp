@@ -2489,3 +2489,85 @@ with every movement still on the record, and a commission rate refused at 99.99%
 then accepted at 2.5% with an audit row.
 
 1277 tests pass; typecheck, lint and build clean.
+
+## Phase 34 — Surge belongs to the rider
+
+Settlement made the old split visible: surge was falling to the platform. Not
+by decision — `partnerEarningsCentavos` counted the fee and the tip, and the
+platform takes whatever the split leaves over, so surge went there by omission.
+This is the decision taken once it was visible.
+
+Surge exists to get somebody to accept a job in bad weather or at 2am. Surge
+that reaches the platform instead of the rider is a price increase with no
+incentive attached: the customer pays more and nobody is any more willing to
+ride.
+
+**The change is one line**, which is what having a single definition of rider
+pay buys you — the fleet screens, dispatch offers and settlement accrual all
+followed, and the settlement split needed no edit at all because the platform
+takes the remainder. The remainder design paying for itself.
+
+### The trap the one-line change walked into
+
+Every screen showing a rider their finished jobs was RECOMPUTING earnings from
+that function. So the moment the rule changed, every job they had ever done
+silently restated itself — a figure that was never accrued and never paid. A
+rider would open last Tuesday and see money they did not get.
+
+That is the settlement ledger's own failure mode arriving from the opposite
+direction: an app promising one number and settling another. So for a settled
+job the **ledger** is now the truth, because it holds what was accrued under
+the rule in force at the time; the rule is consulted only for jobs still in
+flight, where it is exactly right because it is what the rider is about to be
+paid.
+
+The general lesson is worth more than the feature: **a derived money figure
+recomputed on read is a figure that rewrites itself whenever the formula
+changes.** Store it when it is decided, or read it from where it was stored.
+
+A near-miss in the same place, caught while fixing it: the query behind a
+rider's today/week totals selected only the fee and the tip. Once surge became
+the rider's it would have been missing from those totals while appearing on the
+job list — two figures on one screen, disagreeing.
+
+### A pay rise nobody can see is not a pay rise
+
+The rider's job screen and each dispatch offer now break the figure down —
+"₱39.00 fee + ₱25.00 surge + ₱20.00 tip" — but only when there is more than one
+part, because "₱39.00 fee" under a heading that already says ₱39.00 is noise.
+The parts are derived from the same fields the total adds up, so they always sum
+to it: a breakdown that does not match the number above it is worse than no
+breakdown.
+
+### Nothing sets surge
+
+`quoteOrderPrice` accepts `surgeCentavos` and no caller passes it. Every order
+in the database has zero, so **this change is retroactively invisible and no
+rider is owed a backfill** — which is the one genuinely convenient thing about
+having found it late.
+
+What is missing is the pricing decision, not the plumbing: when surge applies
+and how much. That is a product and economics question — demand against
+available riders, weather, time of day, a cap so a customer is never surprised
+— and it wants a rule that can be explained to both sides of the market. I did
+not invent one. `DeliveryFeeRule` is where it would live, and the rider's
+screens are already ready for it.
+
+### Verified in three places
+
+Twelve new unit tests: the allocation, the surge going to the rider and coming
+off the platform, a missing surge reading as zero, the breakdown summing to the
+total and omitting absent parts, the split still balancing on a surged order
+and on a surged order nobody delivered, and the history rules.
+
+Nine checks against the real database: a surged order accruing fee + surge + tip
+to the rider with the platform keeping only the service fee and the shop
+untouched; **a job settled under the old rule still showing what it paid**
+(₱59.00) where today's rule would say ₱84.00; and a rider's week total computed
+ledger-first across a mixed set of settled and pre-ledger orders, differing from
+the rule-only total by exactly the surge.
+
+Four in a real browser: ₱84.00 on the job screen with the breakdown beneath it,
+and a plain job showing the figure with no breakdown at all.
+
+1289 tests pass; typecheck, lint and build clean.

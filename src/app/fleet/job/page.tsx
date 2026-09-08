@@ -54,8 +54,15 @@ export default async function FleetJobPage() {
           >
             {label}
           </span>
-          <span className="text-sm font-bold tabular-nums">
+          <span className="text-right text-sm font-bold tabular-nums">
             {formatCentavos(job.earningsCentavos)}
+            {job.earningsParts.length > 1 ? (
+              <span className="block text-[10px] font-normal text-ink-faint">
+                {job.earningsParts
+                  .map((part) => `${formatCentavos(part.centavos)} ${part.label}`)
+                  .join(' + ')}
+              </span>
+            ) : null}
           </span>
         </div>
         <p className="mt-2 text-[11px] text-ink-faint tabular-nums">

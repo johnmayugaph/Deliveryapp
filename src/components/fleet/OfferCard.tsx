@@ -14,6 +14,12 @@ export interface OfferCardData {
   dropoffArea: string;
   distanceMeters: number;
   earningsCentavos: number;
+  /**
+   * How the figure is made up. Rendered only when there is more than one part
+   * — a rider deciding whether to take a job in the rain wants to know the
+   * extra is surge and not a tip they might not get.
+   */
+  earningsParts: { label: string; centavos: number }[];
   secondsRemaining: number;
 }
 
@@ -48,6 +54,13 @@ export function OfferCard({ offer }: { offer: OfferCardData }) {
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-sm font-bold">
           {formatCentavos(offer.earningsCentavos)}
+          {offer.earningsParts.length > 1 ? (
+            <span className="ml-1.5 text-[11px] font-normal text-ink-faint">
+              {offer.earningsParts
+                .map((part) => `${formatCentavos(part.centavos)} ${part.label}`)
+                .join(' + ')}
+            </span>
+          ) : null}
         </span>
         <span
           className={`text-[11px] font-bold tabular-nums ${urgent ? 'text-amber-800' : 'text-ink-faint'}`}

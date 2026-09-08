@@ -90,15 +90,80 @@ export function offerSecondsRemaining(
 /**
  * What a partner earns from an order.
  *
- * The delivery fee plus the whole tip. Note that the delivery fee is the
- * order's full quoted fee even when a subscription benefit waived it for the
- * customer — that waiver is our marketing cost, not a pay cut for the person
- * doing the ride. Platform commission is not modelled yet; when it is, it comes
- * off our side, not out of the tip.
+ * THE one definition. The fleet screens show a partner this number, dispatch
+ * quotes it on an offer, and settlement accrues it — so any change to what a
+ * rider is paid happens here and nowhere else. Two functions computing this is
+ * how an app promises one figure and settles another.
+ *
+ * **The delivery fee, the surge and the whole tip.**
+ *
+ * The delivery fee is the order's full quoted fee even when a subscription
+ * benefit waived it for the customer — that waiver is our marketing cost, not
+ * a pay cut for the person doing the ride.
+ *
+ * **Surge belongs to the rider**, and it took a deliberate decision to say so.
+ * It used to fall to the platform, not by choice but because this function did
+ * not mention it and the platform takes whatever is left over. That was the
+ * wrong default: surge exists to get somebody to accept a job in bad weather or
+ * at 2am, and surge that reaches the platform instead of the rider is a price
+ * increase with no incentive attached — the customer pays more and nobody is
+ * any more willing to ride. Paying it to the rider is the only version that
+ * does what the fee is named for.
+ *
+ * Commission comes off the SHOP's side of an order, never out of any of this.
  */
 export function partnerEarningsCentavos(order: {
   deliveryFeeCentavos: number;
   tipCentavos: number;
+  /**
+   * Optional because most callers pass a whole `Order` and older rows predate
+   * the field being meaningful. Absent reads as zero, which is what every
+   * order in the database has — see `docs/architecture.md`: nothing sets surge
+   * yet, so this rule governs orders that do not exist until somebody decides
+   * when surge applies.
+   */
+  surgeCentavos?: number;
 }): number {
-  return order.deliveryFeeCentavos + order.tipCentavos;
+  return (
+    order.deliveryFeeCentavos + (order.surgeCentavos ?? 0) + order.tipCentavos
+  );
+}
+
+/** One component of a rider's pay, for a screen that shows the make-up. */
+export interface EarningsPart {
+  label: string;
+  centavos: number;
+}
+
+/**
+ * A rider's pay, broken into the parts they can recognise.
+ *
+ * Only the parts that are actually there, and only worth rendering when there
+ * is more than one — "₱39.00 fee" under a heading that already says ₱39.00 is
+ * noise, whereas "₱39 fee + ₱15 surge + ₱20 tip" answers the question a rider
+ * asks when the number is bigger than usual.
+ *
+ * Derived from the same fields `partnerEarningsCentavos` adds up, so the parts
+ * always sum to the total. A breakdown that does not add up to the figure above
+ * it is worse than no breakdown.
+ */
+export function earningsParts(order: {
+  deliveryFeeCentavos: number;
+  tipCentavos: number;
+  surgeCentavos?: number;
+}): EarningsPart[] {
+  const parts: EarningsPart[] = [];
+  if (order.deliveryFeeCentavos > 0) {
+    parts.push({ label: 'fee', centavos: order.deliveryFeeCentavos });
+  }
+  if ((order.surgeCentavos ?? 0) > 0) {
+    // Named "surge" rather than "bonus": it is the customer paying more
+    // because the job is harder to fill, and calling it a bonus implies we
+    // chose to be generous.
+    parts.push({ label: 'surge', centavos: order.surgeCentavos ?? 0 });
+  }
+  if (order.tipCentavos > 0) {
+    parts.push({ label: 'tip', centavos: order.tipCentavos });
+  }
+  return parts;
 }

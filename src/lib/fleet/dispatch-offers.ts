@@ -15,6 +15,7 @@ import {
   CLOSED_OFFER_STATUSES,
   OFFER_FANOUT,
   OFFER_TTL_SECONDS,
+  earningsParts,
   partnerEarningsCentavos,
   REFANOUT_AFTER_SECONDS,
 } from '@/lib/fleet/offer-policy';
@@ -230,6 +231,7 @@ export interface PartnerOffer {
   pickup: { label: string | null; line1: string; barangay: string | null; cityName: string };
   dropoff: { barangay: string | null; cityName: string };
   earningsCentavos: number;
+  earningsParts: { label: string; centavos: number }[];
   secondsRemaining: number;
 }
 
@@ -280,6 +282,7 @@ export async function listPartnerOffers(
         },
         dropoff: { barangay: dropoff.barangay, cityName: dropoff.cityName },
         earningsCentavos: partnerEarningsCentavos(order),
+        earningsParts: earningsParts(order),
         secondsRemaining: Math.max(
           0,
           Math.ceil((row.expiresAt.getTime() - now.getTime()) / 1000),

@@ -115,6 +115,7 @@ export default async function FleetOffersPage() {
                   .join(', '),
                 distanceMeters: entry.offer.distanceMeters,
                 earningsCentavos: entry.earningsCentavos,
+                earningsParts: entry.earningsParts,
                 secondsRemaining: entry.secondsRemaining,
               }}
             />

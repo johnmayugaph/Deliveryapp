@@ -491,6 +491,45 @@ describe('one definition of what a rider earns', () => {
     );
   });
 
+  it('gives the surge to the rider, taking it off the platform', () => {
+    // The pay decision, seen from the settlement side. The split needed NO
+    // change for this: the platform takes the remainder, so moving surge into
+    // `partnerEarningsCentavos` moved it across on its own. That is the
+    // remainder design paying for itself.
+    const surged = { ...PLAIN, surgeCentavos: 2_500 };
+    const split = splitOrderValue({
+      order: surged,
+      riderCentavos: partnerEarningsCentavos(surged),
+      commissionBasisPoints: 0,
+      discountedCentavos: 0,
+    });
+
+    expect(split.riderCentavos).toBe(3_900 + 2_500);
+    // The platform keeps only the service fee.
+    expect(split.platformCentavos).toBe(1_000);
+    // And the shop is untouched by any of it.
+    expect(split.storeCentavos).toBe(35_000);
+    expect(
+      split.storeCentavos + split.riderCentavos + split.platformCentavos,
+    ).toBe(split.grossCentavos);
+  });
+
+  it('still balances when a surged order has nobody to deliver it', () => {
+    // Surge on an undelivered order falls to the platform rather than
+    // vanishing — the remainder again.
+    const surged = { ...PLAIN, surgeCentavos: 2_500 };
+    const split = splitOrderValue({
+      order: surged,
+      riderCentavos: 0,
+      commissionBasisPoints: 0,
+      discountedCentavos: 0,
+    });
+    expect(split.platformCentavos).toBe(1_000 + 3_900 + 2_500);
+    expect(
+      split.storeCentavos + split.riderCentavos + split.platformCentavos,
+    ).toBe(split.grossCentavos);
+  });
+
   it('pays nothing to a rider on an order nobody delivered', () => {
     const split = splitOrderValue({
       order: PLAIN,
@@ -545,5 +584,73 @@ describe('what settlement does NOT claim to do', () => {
   it('does not pretend a rate change rewrites settled orders', () => {
     const page = source('src/app/admin/settlement/page.tsx');
     expect(page).toMatch(/future orders only/i);
+  });
+});
+
+describe('a pay-rule change cannot restate history', () => {
+  it('reads a settled job from the ledger, not from today’s rule', () => {
+    // The failure this prevents: every screen showing a rider their finished
+    // jobs used to RECOMPUTE earnings from `partnerEarningsCentavos`, so the
+    // moment surge moved to riders, every job they had ever done silently
+    // restated itself — a figure that was never accrued and never paid.
+    //
+    // That is the settlement ledger's own failure mode arriving from the
+    // opposite direction: an app promising one number and settling another.
+    const earnings = codeOnly('src/lib/settlement/earnings.ts');
+    expect(earnings).toMatch(/accruedEarningsByOrder/);
+    expect(earnings).toMatch(/type: SettlementEntryType\.ORDER_EARNINGS/);
+
+    const partner = codeOnly('src/lib/fleet/partner.ts');
+    // Both the job list AND the today/week totals.
+    expect(partner).toMatch(/earningsFor\(order, accrued\)/);
+    expect(partner).toMatch(/earningsFor\(row, accrued\)/);
+  });
+
+  it('falls back to the rule only for jobs with no ledger row', () => {
+    // Orders completed before the ledger existed have none, and have to show
+    // something. Safe today because no order carries surge, so the old rule
+    // and the new one agree on every one of them.
+    const earnings = codeOnly('src/lib/settlement/earnings.ts');
+    expect(earnings).toMatch(/settled \?\? partnerEarningsCentavos\(order\)/);
+  });
+
+  it('still computes from the rule for a job in flight', () => {
+    // An unsettled job has no accrual to read, and quoting the current rule is
+    // exactly right there — it is what the rider will be paid.
+    const partner = codeOnly('src/lib/fleet/partner.ts');
+    const activeJob = partner.slice(partner.indexOf('export async function getActiveJob'));
+    const body = activeJob.slice(0, activeJob.indexOf('\nexport '));
+    expect(body).toMatch(/earningsCentavos: partnerEarningsCentavos\(order\)/);
+  });
+
+  it('selects surge in the query that sums a rider’s week', () => {
+    // The near-miss: that query used to select only the fee and the tip, so
+    // once surge became the rider's it would have been missing from the totals
+    // while appearing on the job list. Two figures on one screen, disagreeing.
+    const partner = codeOnly('src/lib/fleet/partner.ts');
+    expect(partner).toMatch(/surgeCentavos: true/);
+  });
+
+  it('attributes only earnings to a job, not adjustments', () => {
+    // An adjustment belongs on a partner's statement. Filing it against a job
+    // would say that job paid it.
+    const earnings = codeOnly('src/lib/settlement/earnings.ts');
+    expect(earnings).not.toMatch(/ADJUSTMENT/);
+  });
+});
+
+describe('what surge still does not do', () => {
+  it('is set by nothing, and the docs say so', () => {
+    // The rule now sends surge to riders. Nothing decides when surge applies
+    // or how much — `quoteOrderPrice` accepts it and no caller passes it — so
+    // this governs orders that do not exist yet. Recorded here so the next
+    // person does not go looking for the pricing logic.
+    const checkout = codeOnly('src/lib/pricing/checkout.ts');
+    expect(checkout).toMatch(/surgeCentavos: input\.surgeCentavos \?\? 0/);
+
+    const placeOrder = codeOnly('src/lib/orders/place-order.ts');
+    // Placement passes through whatever the quote produced and invents nothing.
+    expect(placeOrder).toMatch(/surgeCentavos: quote\.price\.surgeCentavos/);
+    expect(placeOrder).not.toMatch(/surgeCentavos: \d/);
   });
 });

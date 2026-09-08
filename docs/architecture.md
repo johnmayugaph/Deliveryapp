@@ -1199,12 +1199,66 @@ holding our cash it would be handing money to somebody already in debt to us.
   accrual, so an order completed a week late accrues at today's rate rather
   than the rate on the day it was placed. A snapshot column would fix it and is
   not worth a migration while every rate is zero.
-- **Surge goes to the platform**, because `partnerEarningsCentavos` counts only
-  the fee and the tip and settlement deliberately does not disagree with the
-  number the fleet screens already show a rider. Surge arguably belongs to
-  riders — it exists to make somebody accept a job in bad weather — but that is
-  a pay decision to take deliberately, and it changes in one function when it
-  is taken.
+
+## Surge belongs to the rider
+
+Surge used to fall to the platform. Not by decision — `partnerEarningsCentavos`
+counted the fee and the tip, and the settlement split gives the platform
+whatever is left over, so surge went there by omission. Settlement is what made
+that visible, and this is the decision taken once it was.
+
+**Surge exists to get somebody to accept a job in bad weather or at 2am.**
+Surge that reaches the platform instead of the rider is a price increase with
+no incentive attached: the customer pays more and nobody is any more willing to
+ride. Paying it to the rider is the only version that does what the fee is
+named for.
+
+The change is one line in `partnerEarningsCentavos`, which is the point of
+having a single definition — the fleet screens, dispatch offers and settlement
+accrual all followed from it, and **the split needed no edit at all** because
+the platform takes the remainder. That is the remainder design paying for
+itself.
+
+### The trap it walked into
+
+Every screen showing a rider their finished jobs was RECOMPUTING earnings from
+that function. So the moment the rule changed, every job the rider had ever
+done silently restated itself — a figure that was never accrued and never paid.
+
+That is the settlement ledger's own failure mode arriving from the opposite
+direction: an app promising one number and settling another.
+
+The fix, in `settlement/earnings.ts`: **for a settled job the ledger is the
+truth**, because it holds what was accrued under the rule in force at the time.
+The rule is consulted only for jobs that have not settled yet — where quoting
+it is exactly right, since it is what the rider is about to be paid. A fallback
+covers orders completed before the ledger existed, and is safe only because no
+order carries surge, so the old rule and the new one agree on every one of
+them.
+
+The general lesson, worth more than this feature: **a derived money figure that
+is recomputed on read is a figure that rewrites itself whenever the formula
+changes.** Store it when it is decided, or read it from where it was stored.
+
+A near-miss in the same place: the query behind a rider's today/week totals
+selected only the fee and the tip. Once surge became the rider's it would have
+been missing from those totals while appearing on the job list — two figures on
+one screen, disagreeing.
+
+### Nothing sets surge
+
+`quoteOrderPrice` accepts `surgeCentavos` and no caller passes it, so every
+order in the database has zero. This rule therefore governs orders that do not
+exist yet, and the change is retroactively invisible: no rider is owed a
+backfill.
+
+What is missing is the pricing decision, not the plumbing — **when** surge
+applies and **how much**. That is a product and economics question (demand
+against available riders, weather, time of day, a cap so a customer is never
+surprised) and it wants a rule somebody can explain to both sides of the
+market. `DeliveryFeeRule` is where it would live; the rider's screens already
+break the figure down, so the day it is set a rider sees "₱39.00 fee + ₱25.00
+surge + ₱20.00 tip" without another change.
 
 ## 6. Subscription tier
 
@@ -2963,7 +3017,7 @@ sense as an undrained outbox, and says which command to run.
 
 ## Verification
 
-Database-free, in CI (`npm run verify`) — **1277 tests across 38 files**. The
+Database-free, in CI (`npm run verify`) — **1289 tests across 38 files**. The
 table below names the ones that carry a rule rather than a case; the rest cover
 a single feature each and are named for it.
 
