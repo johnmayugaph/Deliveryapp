@@ -3099,3 +3099,178 @@ the giveback stated as 1.00%, the never-expires warning, a ₱1,200 order earnin
 leaving the balance untouched.
 
 1544 tests pass; typecheck, lint and build clean.
+
+## Phase 39 — Promo codes
+
+### What makes this different from the other two code features
+
+A referral code belongs to one person and pays credits. A loyalty balance
+belongs to one person and converts to credits. **A promo code is public.** It
+goes on a tarpaulin, into a Facebook group, and round a group chat, and a code
+meant for a hundred people is used by ten thousand within the hour.
+
+So none of the design is about secrecy — a code somebody has to remember and
+say out loud is guessable by construction. All of it is about **bounds**: how
+many orders it may touch, how much it may cost in total, how much it may take
+off one order, and who it applies to. Every one of those is a column, and every
+one is checked in a pure module and again in the database.
+
+### Three kinds, one number
+
+`PERCENTAGE`, `FIXED_AMOUNT` and `FREE_DELIVERY` all resolve to a single
+centavos figure. `Order.promoDiscountCentavos` and the arithmetic in
+`applyBenefits` have existed since the first schema and handle exactly one
+number, so nothing about the checkout needs a third case. It also means a
+free-delivery code shows the customer a *named discount line* rather than a
+delivery fee that mysteriously reads zero.
+
+Until now that column was set on every order and always to 0 — another of the
+plumbed-but-never-wired fields this project keeps turning up. This phase is the
+first thing that writes it.
+
+### Two classes of refusal, and why the messages differ
+
+A refusal about **this order** — too small, wrong city, not your first — is
+stated precisely, because the customer can act on it. "Your order is below the
+minimum for that code" is useful.
+
+A refusal about **the code itself** — unknown, expired, exhausted, switched off
+— is answered uniformly, as "That code is not available". Not to be unhelpful:
+distinguishing them turns the checkout field into an **oracle**. Try a hundred
+guesses and the different messages tell you which of them are real codes that
+have merely run out. There is nothing a customer can do differently with the
+distinction anyway.
+
+### Resolving is free; consuming is not
+
+A quote runs on every price-bearing change at checkout. If resolving consumed a
+use, a customer who typed a code and then changed their address would have
+burned it — exactly the mistake `commitBenefitUsage` exists to avoid for a
+subscription's monthly allowance.
+
+So `promo/resolve.ts` only reads, and `promo/consume.ts` runs **inside
+placement's serializable transaction**, re-resolving rather than trusting the
+quote. A client that could name its own discount would be a client that could
+name its own price. Usage is *counted* from `PromoRedemption` every time, never
+read from a cached counter: a cached count is a second truth, and the moment it
+drifts a code either stops working early or runs past its budget with nobody
+able to say which.
+
+### Three defects worth recording
+
+**A non-stacking code made a subscriber pay MORE for typing it.** The obvious
+reading of `stacksWithSubscription: false` is "drop the plan's benefits, keep
+the code" — and the schema comment said so in the first draft. Under that rule
+a Plus subscriber with free delivery types a ₱20 code, loses a ₱49 waiver, and
+pays **₱29 more than if they had typed nothing at all**. Nobody would ever have
+explained that to them, because nothing errors: the screen shows a discount
+line and a bigger total. `bestOutcome` now prices both bills and keeps the
+cheaper one, counting credit-back at face value; when the plan wins the code is
+left *unspent*, so their one use and the campaign's budget both survive. A tie
+goes to the plan for the same reason. That "valid code, no discount" state is
+the fourth thing the checkout field can say, and `promoDisplay` names it so the
+screen never shows an accepted code and a silent nothing.
+
+**A popular code serialised checkout for everybody.** Placement is
+`Serializable`, and until now it only ever contended *per customer* — their own
+credits ledger. Counting a redemption cap across everybody changes that:
+four concurrent placements against one code produced **three `P2034` failures
+and one order**, while the campaign was nowhere near its cap of two. Each
+refused customer read "that did not go through". The contention is not a
+mistake to optimise away — it is what makes the cap hold to the centavo, and
+counting outside the transaction would go over budget silently instead. So
+placement now retries a serialization conflict up to four times with jittered
+backoff, re-quoting each attempt. The same four placements now produce two
+discounted orders, two full-price ones, and no failures. No unit test can see
+this and a browser click never will; it took four placements at once against a
+real database.
+
+**A code that ran out between the render and the tap billed full price in
+silence.** Placement re-quotes, saw the code exhausted, priced the order at
+zero discount, and placed it. The customer read ₱50 off, tapped once, and paid
+₱50 more — precisely what `acceptedSurgeCentavos` exists to prevent, arriving
+from the other side of the total. There is now an
+`acceptedPromoDiscountCentavos` **floor**, the exact mirror of the surge
+ceiling and safe in the same way: a client-supplied number never used as a
+price, only compared against what placement independently resolved, so a
+tampered value can only cause a refusal. A caller with no screen (a script, a
+test) omits it and places at full price, which is right — nothing was shown to
+anybody.
+
+### The number the console makes impossible to miss
+
+The referrals screen shows what a self-referrer nets. The equivalent here is
+two figures:
+
+**What a campaign can still cost.** Not its redemption count — the money still
+on the table, bounded by whichever of the budget and the remaining redemptions
+is tighter. A code with neither is reported as **Unbounded** rather than as a
+large number, and creating one is *refused*: the dates bound how long a
+campaign runs, not how much it costs. Put a big number in if that is what you
+mean, and it goes in the audit row next to your reason.
+
+**Whether a code makes food free.** A fixed amount at or above the minimum
+order means somebody eats for nothing while we pay the shop and the rider in
+full. `resolvePromo` already stops the total going below zero, which is why
+this is not a correctness bug and is easy to miss: the order goes through, the
+arithmetic is right, and the money is gone. A percentage can only do it at
+100%, so the usual shape is a minimum somebody forgot to raise. This one is
+*warned about* rather than refused — a deliberate acquisition subsidy is a real
+choice — and the warning stays on the row, not just on the confirmation.
+
+### Two smaller decisions
+
+**`onDelete: Restrict` on a redemption's code.** The first draft cascaded,
+which would let deleting one row erase every record of what a campaign cost
+while leaving `promoDiscountCentavos` on each order: a discount with no reason
+and a marketing spend with no total. A used code cannot be deleted at all now —
+switch it off. That also means the receipt can name the code from the
+redemption without a cached label column, the way `surgeLabel` does for surge.
+
+**The promo discount is TARA's cost, not the shop's.** `splitOrderValue`
+already subtracted discounts from the platform's net rather than the store's
+payout, so a campaign does not quietly bill the restaurants for our marketing.
+Asserted rather than assumed, because it is one sign away from being wrong.
+
+### Verified in three places
+
+**81 unit tests**: a percentage off the food and not the rider's fee, floored;
+free delivery resolving to whatever the fee is; the amount bounded by the
+code's ceiling, the hard ceiling, the remaining budget and the order's own
+worth; the four code-level refusals producing one indistinguishable sentence;
+each order-level refusal naming its own cause with scope answered before
+amount; the resolve/consume split asserted against the source; the
+non-stacking comparison including the case where dropping the plan would cost
+₱29; and the giveaway detector at 99% versus 100%. Five seams were mutated to
+confirm the checks fail — including one that proved `capSurge`-style: removing
+the budget clamp, and making `consumePromoCode` record the resolved figure
+rather than the applied one.
+
+**Twenty-eight checks against the live database**: six SQL guards each firing
+for its own named constraint, five quotes writing no redemption, the cap
+holding at exactly two of four *concurrent* placements with no serialization
+failure reaching a customer, the budget spent to the centavo, a code that ran
+out refusing rather than charging full price, a redemption that cannot be
+edited, a used code that cannot be deleted, and the shop paid the same with or
+without the code.
+
+**Twenty-eight in a real browser**: an uncapped campaign refused in words with
+nothing created, a percentage with no ceiling refused, the free-food warning
+stated at creation *and* kept on the row, a lowercase code tidied and applied,
+the discount arriving as its own named line, the total falling by exactly ₱50,
+a wrong-city code naming the city rather than saying "invalid", an unknown code
+answered exactly like an exhausted one, applying and removing codes consuming
+nothing, the receipt still naming the code afterwards, and switching a campaign
+off leaving its redemptions — and so its cost — on the record.
+
+Two of the browser checks were wrong before they were right, both in the same
+way as the ones recorded last phase: one matched `₱450.00` against the whole
+page and passed on the `₱3,450.00` in a platform-wide total, and one asserted
+`placed + rejected === 4`, which is true of any four settled promises. A check
+that cannot fail is worse than no check. A brittle assertion in the surge suite
+went the other way — it counted three `normaliseReason` calls in the rest of
+the file and broke the day promo codes were appended after the surge actions,
+failing for a reason that had nothing to do with either. It now checks each
+action's own body.
+
+1631 tests pass; typecheck, lint and build clean.

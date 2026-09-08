@@ -5,6 +5,7 @@ import {
   AdminAction,
   NotificationDeliveryStatus,
   RecoveryMethod,
+  PromoKind,
   ServiceKey,
   SubscriptionStatus,
   StoreRole,
@@ -27,6 +28,13 @@ import {
   ladderFor,
 } from '@/lib/pricing/surge-policy';
 import { MAX_REWARD_CENTAVOS, farmerMargin } from '@/lib/referrals/policy';
+import {
+  MAX_DISCOUNT_CENTAVOS,
+  codeLooksPlausible,
+  exposureFor,
+  giveawayFor,
+  normalisePromoCode,
+} from '@/lib/promo/policy';
 import { PROGRAMME_ID } from '@/lib/referrals/programme';
 import {
   MAX_POINTS_PER_PESO_BASIS_POINTS,
@@ -2319,6 +2327,357 @@ export async function setSurgeBandActiveAction(
       message:
         `"${band.label}" is now ${isActive ? 'on' : 'off'}. ` +
         'The change reaches quotes at the next measurement.',
+    };
+  });
+}
+
+
+// =============================================================================
+// Promo codes
+// =============================================================================
+//
+// A promo code is the only thing in this console that hands a spending decision
+// to the public. Everything else an administrator changes affects one account,
+// one shop or one order; a code goes onto a tarpaulin and into a group chat,
+// and how much it costs is decided by whoever screenshots it.
+//
+// So creation refuses two things and warns about a third:
+//
+//   1. A code with NO bound on its total cost is refused. Not because an
+//      unlimited campaign is unthinkable, but because it has to be typed
+//      deliberately: set a redemption limit or a budget, even a large one, and
+//      the number goes into the audit row next to the reason for it. The dates
+//      are not a bound — a week of unlimited free delivery is still unlimited.
+//   2. A percentage with no ceiling is refused, mirroring the SQL guard. A
+//      percentage is unbounded on a large order.
+//   3. A code that makes food FREE is allowed and shouted about. That can be a
+//      deliberate acquisition subsidy. It usually is not: it is a minimum
+//      order somebody forgot to raise, and `resolvePromo` will place those
+//      orders correctly all day while we pay the shop and the rider in full.
+//
+// Codes are never DELETED, only switched off. A used code cannot be deleted at
+// all — the foreign key is RESTRICT — because deleting one would erase the
+// record of what the campaign cost.
+
+/** Reads a whole number from a form field. Null when it is not one. */
+function wholeNumber(raw: FormDataEntryValue | null): number | null {
+  const text = String(raw ?? '').trim();
+  if (text.length === 0) return null;
+  const value = Number(text);
+  return Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+/** Reads an OPTIONAL whole number: blank means "no limit", not "zero". */
+function optionalWholeNumber(
+  raw: FormDataEntryValue | null,
+): { ok: true; value: number | null } | { ok: false } {
+  const text = String(raw ?? '').trim();
+  if (text.length === 0) return { ok: true, value: null };
+  const value = wholeNumber(raw);
+  return value === null ? { ok: false } : { ok: true, value };
+}
+
+/** Reads a date-local input. Null when absent or unparseable. */
+function localDate(raw: FormDataEntryValue | null): Date | null {
+  const text = String(raw ?? '').trim();
+  if (text.length === 0) return null;
+  const value = new Date(text);
+  return Number.isNaN(value.getTime()) ? null : value;
+}
+
+export async function createPromoCodeAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const reason = normaliseReason(formData.get('reason'));
+
+    const code = normalisePromoCode(String(formData.get('code') ?? ''));
+    const label = String(formData.get('label') ?? '').trim().slice(0, 120);
+    const kindRaw = String(formData.get('kind') ?? '');
+
+    if (!codeLooksPlausible(code)) {
+      return {
+        ok: false,
+        message:
+          'A code is 3 to 40 characters of letters, digits and hyphens. It goes ' +
+          'on a poster and gets read aloud, so keep it short.',
+      };
+    }
+    if (label.length < 3) {
+      return {
+        ok: false,
+        message:
+          'Give it a name the customer will read on their bill — "₱50 off your ' +
+          'first order". A discount line with no name reads as a mistake.',
+      };
+    }
+    if (!Object.values(PromoKind).includes(kindRaw as PromoKind)) {
+      return { ok: false, message: 'Choose what the code takes off.' };
+    }
+    const kind = kindRaw as PromoKind;
+
+    const percentInput = String(formData.get('percent') ?? '').trim();
+    const percentBasisPoints =
+      percentInput.length > 0 ? Math.round(Number(percentInput) * 100) : null;
+    const amountCentavos = centavosFromPesoInput(String(formData.get('amountPesos') ?? ''));
+    const maxDiscountCentavos = centavosFromPesoInput(
+      String(formData.get('ceilingPesos') ?? ''),
+    );
+    const minimumOrderCentavos = centavosFromPesoInput(
+      String(formData.get('minimumPesos') ?? ''),
+    );
+
+    if (minimumOrderCentavos === null) {
+      return { ok: false, message: 'Write the minimum order in pesos, like 250.' };
+    }
+
+    // --- The kind carries its own fields. Mirrors `promo_kind_carries_its_own_fields`.
+    if (kind === PromoKind.PERCENTAGE) {
+      if (
+        percentBasisPoints === null ||
+        !Number.isInteger(percentBasisPoints) ||
+        percentBasisPoints <= 0 ||
+        percentBasisPoints > 10_000
+      ) {
+        return { ok: false, message: 'A percentage is between 0 and 100, like 15 or 12.5.' };
+      }
+      if (maxDiscountCentavos === null || maxDiscountCentavos <= 0) {
+        return {
+          ok: false,
+          message:
+            'A percentage needs a ceiling per order. Without one it is unbounded ' +
+            'on a large order, which is the usual way a campaign becomes a story.',
+        };
+      }
+    }
+    if (kind === PromoKind.FIXED_AMOUNT) {
+      if (amountCentavos === null || amountCentavos <= 0) {
+        return { ok: false, message: 'Write the amount off in pesos, like 50.' };
+      }
+      if (amountCentavos > MAX_DISCOUNT_CENTAVOS) {
+        return {
+          ok: false,
+          message:
+            `The most one order may be discounted is ${formatCentavos(MAX_DISCOUNT_CENTAVOS)}. ` +
+            'More than that is usually a decimal point in the wrong place.',
+        };
+      }
+    }
+    if (maxDiscountCentavos !== null && maxDiscountCentavos > MAX_DISCOUNT_CENTAVOS) {
+      return {
+        ok: false,
+        message: `The ceiling cannot be above ${formatCentavos(MAX_DISCOUNT_CENTAVOS)}.`,
+      };
+    }
+
+    // --- The window.
+    const startsAt = localDate(formData.get('startsAt'));
+    const endsAt = localDate(formData.get('endsAt'));
+    if (!startsAt || !endsAt) {
+      return { ok: false, message: 'Set the dates the code runs between.' };
+    }
+    if (endsAt <= startsAt) {
+      return { ok: false, message: 'The end has to come after the start.' };
+    }
+
+    // --- The caps.
+    const total = optionalWholeNumber(formData.get('totalLimit'));
+    const budget = String(formData.get('budgetPesos') ?? '').trim();
+    const budgetCentavos = budget.length > 0 ? centavosFromPesoInput(budget) : null;
+    const perCustomerLimit = wholeNumber(formData.get('perCustomerLimit'));
+
+    if (!total.ok) {
+      return { ok: false, message: 'The redemption limit is a whole number, or blank for none.' };
+    }
+    if (budget.length > 0 && budgetCentavos === null) {
+      return { ok: false, message: 'Write the budget in pesos, like 20000.' };
+    }
+    if (perCustomerLimit === null || perCustomerLimit < 1) {
+      return { ok: false, message: 'One account may use a code at least once.' };
+    }
+    if (total.value !== null && total.value < 1) {
+      return {
+        ok: false,
+        message: 'A limit of zero redemptions is a code that cannot be used. Leave it blank, or switch the code off.',
+      };
+    }
+    if (budgetCentavos !== null && budgetCentavos <= 0) {
+      return {
+        ok: false,
+        message: 'A budget of nothing is a code that cannot be used. Leave it blank instead.',
+      };
+    }
+
+    // The refusal this whole section exists for.
+    if (total.value === null && budgetCentavos === null) {
+      return {
+        ok: false,
+        message:
+          'Set a redemption limit or a budget. A public code with neither is an ' +
+          'open cheque — the dates bound how long it runs, not how much it ' +
+          'costs. Put a large number in if that is what you mean; it goes in ' +
+          'the log next to your reason.',
+      };
+    }
+
+    // --- Scope. Empty means everywhere, which is the default.
+    const serviceTypes = formData
+      .getAll('serviceTypes')
+      .map((value) => String(value))
+      .filter((value): value is ServiceKey =>
+        Object.values(ServiceKey).includes(value as ServiceKey),
+      );
+    const cityIds = formData
+      .getAll('cityIds')
+      .map((value) => String(value).trim())
+      .filter((value) => value.length > 0);
+    const storeId = String(formData.get('storeId') ?? '').trim() || null;
+
+    const existing = await prisma.promoCode.findUnique({ where: { code } });
+    if (existing) {
+      return {
+        ok: false,
+        message:
+          `${code} already exists. Codes are never reused — a code that has been ` +
+          'shared once is out there forever, so give this campaign its own.',
+      };
+    }
+
+    const data = {
+      code,
+      label,
+      kind,
+      percentBasisPoints: kind === PromoKind.PERCENTAGE ? percentBasisPoints : null,
+      amountCentavos: kind === PromoKind.FIXED_AMOUNT ? amountCentavos : null,
+      maxDiscountCentavos: kind === PromoKind.FREE_DELIVERY ? null : maxDiscountCentavos,
+      minimumOrderCentavos,
+      serviceTypes,
+      cityIds,
+      storeId,
+      firstOrderOnly: String(formData.get('firstOrderOnly') ?? '') === 'on',
+      startsAt,
+      endsAt,
+      totalRedemptionLimit: total.value,
+      perCustomerLimit,
+      budgetCentavos,
+      stacksWithSubscription: String(formData.get('stacksWithSubscription') ?? '') === 'on',
+      isActive: true,
+      createdById: admin.id,
+    };
+
+    const created = await prisma.$transaction(async (tx) => {
+      const row = await tx.promoCode.create({ data });
+      await recordAdminAction(
+        {
+          actorId: admin.id,
+          action: AdminAction.PROMO_CODE_CREATED,
+          subjectType: 'PromoCode',
+          subjectId: row.id,
+          subjectLabel: `${row.code} — ${row.label}`,
+          reason,
+          // The caps ARE the decision, so they go in the row rather than being
+          // reconstructible from a table somebody may later edit.
+          detail: {
+            kind: row.kind,
+            percentBasisPoints: row.percentBasisPoints,
+            amountCentavos: row.amountCentavos,
+            maxDiscountCentavos: row.maxDiscountCentavos,
+            minimumOrderCentavos: row.minimumOrderCentavos,
+            totalRedemptionLimit: row.totalRedemptionLimit,
+            perCustomerLimit: row.perCustomerLimit,
+            budgetCentavos: row.budgetCentavos,
+            startsAt: row.startsAt.toISOString(),
+            endsAt: row.endsAt.toISOString(),
+            serviceTypes: row.serviceTypes,
+            cityIds: row.cityIds,
+            storeId: row.storeId,
+            firstOrderOnly: row.firstOrderOnly,
+            stacksWithSubscription: row.stacksWithSubscription,
+          },
+        },
+        tx,
+      );
+      return row;
+    });
+
+    revalidatePath('/admin/promo');
+
+    // The worst case, stated back. An operator who has just typed a limit and a
+    // budget should read what the two of them add up to, once, rather than
+    // finding out at the end of the month.
+    const exposure = exposureFor(created, { redemptions: 0, spentCentavos: 0 });
+    const giveaway = giveawayFor(created);
+
+    const worstCase =
+      exposure.remainingCentavos === null
+        ? 'There is no bound on what it can cost.'
+        : `At most ${formatCentavos(exposure.remainingCentavos)} in total.`;
+
+    const freeFood = giveaway.coversTheFood
+      ? ' WARNING: ' +
+        (minimumOrderCentavos === 0
+          ? 'there is no minimum order, so ANY order is covered in full'
+          : `an order of ${formatCentavos(giveaway.smallestOrderCentavos)} is covered in full`) +
+        ' — somebody can eat for nothing while we pay the shop and the rider' +
+        ' in full. Raise the minimum order above the discount unless that is' +
+        ' the subsidy you mean to pay.'
+      : '';
+
+    return {
+      ok: true,
+      message: `${created.code} is live. ${worstCase}${freeFood}`,
+    };
+  });
+}
+
+export async function setPromoCodeActiveAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const reason = normaliseReason(formData.get('reason'));
+    const promoCodeId = String(formData.get('promoCodeId') ?? '');
+    const isActive = String(formData.get('isActive') ?? '') === 'true';
+
+    const code = await prisma.promoCode.findUnique({ where: { id: promoCodeId } });
+    if (!code) {
+      return { ok: false, message: 'No such code.' };
+    }
+    if (code.isActive === isActive) {
+      return {
+        ok: false,
+        message: `${code.code} is already ${isActive ? 'on' : 'off'}.`,
+      };
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.promoCode.update({
+        where: { id: promoCodeId },
+        data: { isActive },
+      });
+      await recordAdminAction(
+        {
+          actorId: admin.id,
+          action: AdminAction.PROMO_CODE_ACTIVATION_CHANGED,
+          subjectType: 'PromoCode',
+          subjectId: code.id,
+          subjectLabel: `${code.code} ${isActive ? 'on' : 'off'}`,
+          reason,
+          detail: { before: code.isActive, after: isActive },
+        },
+        tx,
+      );
+    });
+
+    revalidatePath('/admin/promo');
+
+    return {
+      ok: true,
+      message: isActive
+        ? `${code.code} works again, within its dates and caps.`
+        : `${code.code} is off. Anybody typing it now is told it is not available — ` +
+          'orders already placed with it keep their discount.',
     };
   });
 }

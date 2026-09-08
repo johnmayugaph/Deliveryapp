@@ -184,4 +184,6 @@ export const ADMIN_ACTION_LABEL: Readonly<Record<AdminAction, string>> = {
   [AdminAction.SURGE_BAND_CREATED]: 'Surge step added',
   [AdminAction.SURGE_BAND_CHANGED]: 'Surge step edited',
   [AdminAction.SURGE_BAND_ACTIVATION_CHANGED]: 'Surge step switched on or off',
+  [AdminAction.PROMO_CODE_CREATED]: 'Promo code created',
+  [AdminAction.PROMO_CODE_ACTIVATION_CHANGED]: 'Promo code switched on or off',
 };

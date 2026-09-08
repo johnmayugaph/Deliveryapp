@@ -59,6 +59,14 @@ export default async function OrderDetailPage({
       assignedRider: {
         select: { user: { select: { fullName: true, displayName: true } } },
       },
+      // The code's own name for the receipt line, on the same argument as
+      // `surgeLabel`: a bare "Promo −₱50" read next month says nothing about
+      // why. It cannot go missing while the discount is on the order, because
+      // `PromoRedemption.promoCode` is RESTRICT — a used code cannot be
+      // deleted, only switched off.
+      promoRedemption: {
+        include: { promoCode: { select: { label: true } } },
+      },
     },
   });
 
@@ -121,7 +129,11 @@ export default async function OrderDetailPage({
       sign: 1,
     },
     { label: 'Tip', centavos: order.tipCentavos, sign: 1 },
-    { label: 'Promo', centavos: order.promoDiscountCentavos, sign: -1 },
+    {
+      label: order.promoRedemption?.promoCode.label ?? 'Promo',
+      centavos: order.promoDiscountCentavos,
+      sign: -1,
+    },
     { label: 'Plus benefits', centavos: order.subscriptionDiscountCentavos, sign: -1 },
     { label: 'Credits', centavos: order.walletCreditAppliedCentavos, sign: -1 },
   ].filter((line) => line.centavos > 0);

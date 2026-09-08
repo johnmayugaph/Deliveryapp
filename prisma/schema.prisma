@@ -479,6 +479,8 @@ model User {
   referralReceived        Referral?                         @relation("RefereeReferral")
   loyaltyAccount          LoyaltyAccount?
   loyaltyAdjustments      LoyaltyEntry[]                    @relation("LoyaltyAdjustmentActor")
+  promoRedemptions        PromoRedemption[]
+  promoCodesCreated       PromoCode[]                       @relation("PromoCodeCreator")
 
   @@index([roles], type: Gin)
   @@index([preferredCityId])
@@ -707,6 +709,8 @@ model Store {
   members           StoreMember[]
   invites           StoreInvite[]
   settlementEntries SettlementEntry[]
+
+  promoCodes PromoCode[]
 
   @@index([cityId, isVisible, isOpen])
   @@index([serviceKeys], type: Gin)
@@ -1228,6 +1232,7 @@ model Order {
   notifications      Notification[]
   Referral           Referral[]
   LoyaltyEntry       LoyaltyEntry[]
+  promoRedemption    PromoRedemption?
 
   /// Powers the unified cross-service order history: one chronological list,
   /// every vertical, no per-service queries.
@@ -2377,6 +2382,14 @@ enum AdminAction {
   /// because "surge was on at 6pm" is the fact a dispute turns on, and it
   /// should be answerable without reading a diff of amounts.
   SURGE_BAND_ACTIVATION_CHANGED
+  /// A promo campaign was created. Audited because a public code is a spending
+  /// decision whose size is decided by whoever screenshots it, and the row
+  /// carries the caps that were set alongside the reason for setting them.
+  PROMO_CODE_CREATED
+  /// A promo code was switched off or back on. Distinct from creation because
+  /// "was TARA50 live on Friday" is the question a complaint turns on, and it
+  /// should be answerable without reading a diff.
+  PROMO_CODE_ACTIVATION_CHANGED
 }
 
 /// One privileged action, and why.
@@ -2951,4 +2964,164 @@ model LoyaltyTier {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// -----------------------------------------------------------------------------
+// Promo codes
+// -----------------------------------------------------------------------------
+
+/// A campaign code, with the rules that bound it.
+///
+/// `Order.promoDiscountCentavos` has existed since the first schema, the
+/// benefit arithmetic has always handled it, both receipts have always shown
+/// it, and settlement has always absorbed it against the platform's share —
+/// and nothing ever set it. This is what sets it.
+///
+/// ### The thing that makes promo codes different from the other two
+///
+/// A referral code belongs to one person and pays credits. A loyalty balance
+/// belongs to one person and converts to credits. **A promo code is public.**
+/// It is written on a tarpaulin, posted in a Facebook group, and screenshotted
+/// into a group chat, and a code meant for a hundred people is used by ten
+/// thousand within the hour. So almost every column here is a bound, and the
+/// two that matter most are `totalRedemptionLimit` and `budgetCentavos`: one
+/// caps how many orders it can touch, the other caps what it can cost however
+/// many that turns out to be.
+///
+/// ### Who pays for it
+///
+/// The platform, always. `splitOrderValue` gives the store its subtotal less
+/// commission and the rider their fee regardless of any discount, so a promo
+/// comes entirely out of the platform's share — which is correct and already
+/// the case. A store-funded promo, where a shop subsidises its own campaign
+/// out of its settlement, would be a change to the split rather than a column
+/// here, so there is deliberately no `fundedByStore` flag sitting unwired.
+model PromoCode {
+  id String @id @default(cuid())
+
+  /// Uppercase, trimmed. Marketing chooses these, so unlike a referral code
+  /// it is a word somebody can remember and say out loud — which is also why
+  /// it is guessable, and why the caps rather than secrecy are the defence.
+  code String @unique
+
+  /// What the customer reads on their bill next to the money. A code with no
+  /// name reads as a mistake, the same reason a surge band carries a label.
+  label String
+
+  kind PromoKind
+
+  /// For PERCENTAGE. Basis points: 1000 is 10%.
+  percentBasisPoints  Int?
+  /// For FIXED_AMOUNT.
+  amountCentavos      Int?
+  /// The ceiling on one order's discount. REQUIRED for PERCENTAGE — see
+  /// `promo_percentage_needs_a_ceiling`. A percentage with no ceiling is
+  /// unbounded on a large order, which is the classic way a campaign becomes
+  /// a story.
+  maxDiscountCentavos Int?
+
+  /// Below this the code does not apply. The main lever for making a campaign
+  /// pay for itself.
+  minimumOrderCentavos Int @default(0)
+
+  /// Empty means every service. Read from the registry, never a hardcoded
+  /// list — the same rule as everything else keyed on a vertical.
+  serviceTypes ServiceKey[] @default([])
+  /// Empty means every city.
+  cityIds      String[]     @default([])
+  /// Set for a code that only works at one shop.
+  storeId      String?
+  store        Store?       @relation(fields: [storeId], references: [id], onDelete: SetNull)
+
+  /// Only for somebody who has never had an order delivered. An acquisition
+  /// code, in other words, and the test is a COMPLETED order rather than any
+  /// order — somebody whose only order was cancelled has never been served.
+  firstOrderOnly Boolean @default(false)
+
+  startsAt DateTime
+  endsAt   DateTime
+
+  /// Null means no limit on how many orders may use it. Set it. A code with no
+  /// total limit is a code whose cost is decided by whoever screenshots it.
+  totalRedemptionLimit Int?
+  /// How many times one account may use it. One, usually.
+  perCustomerLimit     Int  @default(1)
+  /// The most this code may give away in total, across every redemption. Null
+  /// means unbounded, which the console warns about.
+  budgetCentavos       Int?
+
+  /// Whether this may be combined with a subscription's own benefits. When
+  /// false the two are priced separately and the CHEAPER BILL WINS — see
+  /// `bestOutcome` in src/lib/pricing/checkout.ts. Dropping the plan outright
+  /// would make a subscriber pay more for typing a code than for typing
+  /// nothing, and when the plan wins the code is left unspent.
+  stacksWithSubscription Boolean @default(true)
+
+  isActive Boolean @default(true)
+
+  /// Who created it. A campaign is a spending decision and this is half of the
+  /// record of it; the other half is the audit row with the reason.
+  createdById String?
+  createdBy   User?   @relation("PromoCodeCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  redemptions PromoRedemption[]
+
+  @@index([isActive, startsAt, endsAt])
+  @@index([storeId])
+}
+
+enum PromoKind {
+  /// A percentage off the subtotal, capped by `maxDiscountCentavos`.
+  PERCENTAGE
+  /// A flat amount off.
+  FIXED_AMOUNT
+  /// The delivery fee, whatever it happens to be for that order. Resolves to
+  /// a centavos figure like the other two, so the checkout arithmetic needs no
+  /// third case — and so a customer sees one discount line rather than a fee
+  /// that mysteriously reads zero.
+  FREE_DELIVERY
+}
+
+/// One use of one code, on one order.
+///
+/// There is no cached counter on `PromoCode`. Usage is COUNTED from these rows
+/// every time it matters, which is a few more reads in exchange for there being
+/// exactly one truth about whether a cap has been reached. A cached count is a
+/// second truth, and the moment it drifts a code either stops working early or
+/// keeps working past its budget — and nobody notices which.
+model PromoRedemption {
+  id String @id @default(cuid())
+
+  /// RESTRICT, not Cascade. A code that has been used cannot be deleted —
+  /// switch it off instead. Cascading would let deleting one row erase every
+  /// record of what a campaign cost, while leaving `promoDiscountCentavos` on
+  /// each order: a discount with no reason, and a marketing spend with no
+  /// total. The same discipline as the ledgers, for the same reason.
+  ///
+  /// The other two relations stay Cascade: purging an ACCOUNT or an ORDER
+  /// should take its redemption with it, which is what the append-only
+  /// trigger's `tara.allow_purge` hatch exists to allow.
+  promoCodeId String
+  promoCode   PromoCode @relation(fields: [promoCodeId], references: [id], onDelete: Restrict)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// One redemption per order, ever. The unique index is what makes consuming
+  /// a code idempotent under a retried placement.
+  orderId String @unique
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  /// What it actually took off, resolved at placement. Stored because the
+  /// code's rules can change afterwards and a receipt must not restate itself
+  /// — the same lesson `settlement/earnings.ts` learned about rider pay.
+  discountCentavos Int
+
+  createdAt DateTime @default(now())
+
+  @@index([promoCodeId, createdAt])
+  @@index([promoCodeId, userId])
 }

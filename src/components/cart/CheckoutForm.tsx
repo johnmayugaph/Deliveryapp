@@ -13,6 +13,8 @@ import {
 import type { CheckoutQuote } from '@/lib/orders/place-order';
 import { formatCentavos } from '@/lib/money';
 import { describeChoices } from '@/lib/merchant/option-policy';
+import { PromoField } from '@/components/cart/PromoField';
+import { promoDisplay } from '@/lib/promo/policy';
 
 export interface CheckoutAddressOption {
   id: string;
@@ -78,6 +80,9 @@ export function CheckoutForm({
   const [tipCentavos, setTipCentavos] = useState(0);
   const [includeCutlery, setIncludeCutlery] = useState(false);
   const [merchantNotes, setMerchantNotes] = useState('');
+  // The code being QUOTED WITH, not the code being typed — the typing lives in
+  // `PromoField`. Empty means none.
+  const [promoCode, setPromoCode] = useState('');
 
   const [quote, setQuote] = useState<CheckoutQuote | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
@@ -107,6 +112,7 @@ export function CheckoutForm({
           tipCentavos,
           includeCutlery,
           merchantNotes,
+          promoCode,
         }
       : null;
 
@@ -122,6 +128,7 @@ export function CheckoutForm({
     paymentMethod,
     useCredits,
     tipCentavos,
+    promoCode,
     requoteNonce,
   });
 
@@ -184,13 +191,22 @@ export function CheckoutForm({
         // The surge on the screen the customer is looking at, as a ceiling.
         // Placement re-quotes and refuses rather than charging more than this.
         acceptedSurgeCentavos: quote?.surge.surgeCentavos ?? 0,
+        // And the discount on that same screen, as a floor. Without it a code
+        // that ran out while they were choosing would place the order at full
+        // price with nothing said — the same surprise as a higher surge,
+        // arriving from the other side of the total.
+        acceptedPromoDiscountCentavos: quote?.price.promoDiscountCentavos ?? 0,
       });
       if (result.ok) {
         clear();
         router.push(`/orders/${result.orderId}?placed=1`);
       } else {
         setPlaceError(result.message);
-        if (result.code === 'SURGE_CHANGED') {
+        // Both of these are refusals the screen answers by showing the NEW
+        // total: the market moved, or the campaign ran out while they were
+        // choosing. Leaving the old price up would just be a button that
+        // stopped working.
+        if (result.code === 'SURGE_CHANGED' || result.code === 'PROMO_INVALID') {
           setRequoteNonce((nonce) => nonce + 1);
         }
       }
@@ -311,6 +327,28 @@ export function CheckoutForm({
           ))}
         </div>
       </section>
+
+      {/* --- Promo code -------------------------------------------------- */}
+      <PromoField
+        appliedCode={promoCode}
+        // Derived from the SERVER quote every render, never remembered here.
+        // `promo.discountCentavos` is what the code offered;
+        // `price.promoDiscountCentavos` is what came off — they differ when a
+        // non-stacking code lost to the customer's own plan.
+        display={
+          quote
+            ? promoDisplay({
+                code: promoCode,
+                refusal: quote.promo.refusal,
+                offeredCentavos: quote.promo.discountCentavos,
+                appliedCentavos: quote.price.promoDiscountCentavos,
+              })
+            : null
+        }
+        isQuoting={isQuoting}
+        onApply={setPromoCode}
+        onRemove={() => setPromoCode('')}
+      />
 
       {/* --- Payment ---------------------------------------------------- */}
       <section
@@ -460,6 +498,16 @@ export function CheckoutForm({
             {quote.price.tipCentavos > 0 ? (
               <Line label="Tip" centavos={quote.price.tipCentavos} />
             ) : null}
+            {quote.price.promoDiscountCentavos > 0 ? (
+              // Named with the code's own label — "₱50 off your first order" —
+              // and not folded into the subtotal, for the same reason surge
+              // gets its own line: a customer comparing this total against
+              // last week's needs to see which line moved.
+              <Line
+                label={quote.promo.label ?? promoCode}
+                centavos={-quote.price.promoDiscountCentavos}
+              />
+            ) : null}
             {quote.price.appliedBenefits
               .filter((benefit) => benefit.amountCentavos > 0)
               .map((benefit) => (
@@ -486,6 +534,18 @@ export function CheckoutForm({
                 {quote.surge.label} — more orders than riders right now. The
                 extra {formatCentavos(quote.price.surgeCentavos)} goes to your
                 rider.
+              </p>
+            ) : null}
+
+            {quote.price.subscriptionBenefitsDropped ? (
+              // The other half of the non-stacking rule. When the code wins,
+              // the plan's benefits are gone from this bill, and a subscriber
+              // whose free delivery silently vanished would reasonably think
+              // their plan had lapsed.
+              <p className="mt-1.5 text-[11px] text-ink-muted">
+                This code cannot be combined with your plan, and it saves you
+                more here — so your plan&apos;s benefits are set aside for this
+                order only.
               </p>
             ) : null}
 

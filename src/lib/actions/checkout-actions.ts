@@ -36,6 +36,14 @@ export interface CheckoutFormInput {
    * got busier since, rather than billing more than was shown.
    */
   acceptedSurgeCentavos?: number;
+  /** A promo code as typed. Resolved server-side; never a discount. */
+  promoCode?: string;
+  /**
+   * The promo discount the screen displayed. A floor, never a price — see
+   * `CheckoutInput.acceptedPromoDiscountCentavos`. Placement refuses if the
+   * code can no longer give that much, rather than billing the difference.
+   */
+  acceptedPromoDiscountCentavos?: number;
 }
 
 export type QuoteResult =
@@ -59,11 +67,12 @@ export type PlaceOrderResult =
       ok: false;
       message: string;
       /**
-       * Set when the refusal was the market getting busier mid-checkout. The
-       * screen needs to tell that apart from every other failure, because the
-       * fix is to show the new price rather than to try the old one again.
+       * Set when the refusal is one the screen fixes by RE-QUOTING rather than
+       * by retrying: the market got busier, or a code ran out while somebody
+       * was choosing. Both need the new total shown before another attempt;
+       * every other failure needs the message and nothing else.
        */
-      code?: 'SURGE_CHANGED';
+      code?: 'SURGE_CHANGED' | 'PROMO_INVALID';
     };
 
 export async function placeOrderAction(input: CheckoutFormInput): Promise<PlaceOrderResult> {
@@ -80,6 +89,9 @@ export async function placeOrderAction(input: CheckoutFormInput): Promise<PlaceO
     const message = toUserMessage(error);
     if (error instanceof Error && error.name === 'SurgeChangedError') {
       return { ok: false, message, code: 'SURGE_CHANGED' };
+    }
+    if (error instanceof Error && error.name === 'PromoNoLongerValidError') {
+      return { ok: false, message, code: 'PROMO_INVALID' };
     }
     return { ok: false, message };
   }
@@ -161,6 +173,10 @@ function toUserMessage(error: unknown): string {
     // "It got busier while you were ordering" — written for the customer, and
     // the message they need in order to know to look at the total again.
     'SurgeChangedError',
+    // "That code could not be applied" — a campaign ran out between the quote
+    // and the tap. Named for the same reason: the customer needs to know to
+    // look at the total again rather than to try the same thing twice.
+    'PromoNoLongerValidError',
     'IllegalTransitionError',
     'MissingTransitionReasonError',
     'ServiceDetailsNotImplementedError',

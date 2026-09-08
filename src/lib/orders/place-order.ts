@@ -18,6 +18,9 @@ import { getLifecycle } from '@/lib/orders/transitions';
 import { commitBenefitUsage, quoteOrderPrice, type PriceQuote } from '@/lib/pricing/checkout';
 import { quoteDeliveryFee, type DeliveryQuote } from '@/lib/pricing/delivery-fee';
 import { currentSurge } from '@/lib/pricing/surge';
+import { PromoNoLongerValidError, consumePromoCode } from '@/lib/promo/consume';
+import { resolvePromoForOrder, type ResolvedPromo } from '@/lib/promo/resolve';
+import type { PromoOrderFacts } from '@/lib/promo/policy';
 import type { SurgeCharge } from '@/lib/pricing/surge-policy';
 import { spendOnOrder } from '@/lib/wallet/ledger';
 import { bumpAddressUsage } from '@/lib/addresses/usage';
@@ -140,6 +143,37 @@ export interface CheckoutInput {
    * customer, which is why the form always sends it.
    */
   acceptedSurgeCentavos?: number;
+  /**
+   * A promo code the customer typed, verbatim.
+   *
+   * Unlike `acceptedSurgeCentavos` this is not a number and never becomes one
+   * here: the client sends the STRING and the discount is resolved
+   * server-side from the code's own rules. A client that could send a
+   * discount could send its own price.
+   *
+   * Resolving is free and consuming is not — see `promo/resolve.ts`. This is
+   * read on every quote and spent exactly once, inside the placement
+   * transaction.
+   */
+  promoCode?: string;
+  /**
+   * The promo discount the customer was SHOWN, as a FLOOR on what placement
+   * may give.
+   *
+   * The mirror image of `acceptedSurgeCentavos`, for the same reason and with
+   * the same safety: a client-supplied number that is never used as a price,
+   * only compared against the discount placement independently resolved. So
+   * the only thing a tampered value can do is make placement REFUSE — sending
+   * a bigger figure than the code allows does not buy a bigger discount, it
+   * buys an error.
+   *
+   * Without it, a code that ran out between the render and the tap would be
+   * quoted at zero by placement's own re-quote, and the order would go through
+   * at full price with nothing said. The customer read ₱50 off, tapped once,
+   * and paid ₱50 more. That is the exact failure the surge ceiling exists to
+   * prevent, arriving from the other direction.
+   */
+  acceptedPromoDiscountCentavos?: number;
 }
 
 export interface CheckoutQuote {
@@ -151,6 +185,18 @@ export interface CheckoutQuote {
   delivery: DeliveryQuote;
   /** What the market added, and why — for the line on the customer's bill. */
   surge: SurgeCharge;
+  /**
+   * The code, what it takes off, and why it does not — for the checkout
+   * screen's own line. `price.promoDiscountCentavos` is what was ACTUALLY
+   * applied, which is zero when a non-stacking code lost to the customer's
+   * plan; this is what the code itself offered.
+   */
+  promo: ResolvedPromo;
+  /**
+   * The order facts the promo was resolved against, so placement re-resolves
+   * against the same ones rather than rebuilding them and drifting.
+   */
+  promoBasis: PromoOrderFacts;
   price: PriceQuote;
   /** Set when `paymentMethod` is WALLET_CREDIT but the balance falls short. */
   creditShortfallCentavos: number;
@@ -283,6 +329,29 @@ export async function quoteCheckout(input: CheckoutInput): Promise<CheckoutQuote
   // added to: a rider is drawn to a job by where it starts.
   const surge = await currentSurge(ServiceKey.FOOD, store.cityId);
 
+  const promoBasis: PromoOrderFacts = {
+    serviceType: ServiceKey.FOOD,
+    cityId: store.cityId,
+    storeId: store.id,
+    subtotalCentavos,
+    // The fee BEFORE any waiver. `applyBenefits` keeps the fee on the order at
+    // full value and records a waiver as a discount line, so a FREE_DELIVERY
+    // code takes off the figure that is actually charged. Passing a
+    // subscription-waived zero here would make a free-delivery code worth
+    // nothing to the customer who already pays us monthly.
+    deliveryFeeCentavos: delivery.deliveryFeeCentavos,
+  };
+
+  // Resolved, never consumed. This runs on every checkout render — a keystroke
+  // in the code field must not burn the one use the customer gets, which is
+  // the mistake `commitBenefitUsage` exists to avoid for a monthly allowance.
+  // The use is spent in `placeOrder`'s transaction, where the caps can hold.
+  const promo = await resolvePromoForOrder({
+    code: input.promoCode,
+    customerId: input.customerId,
+    order: promoBasis,
+  });
+
   const price = await quoteOrderPrice({
     serviceType: ServiceKey.FOOD,
     customerId: input.customerId,
@@ -293,6 +362,8 @@ export async function quoteCheckout(input: CheckoutInput): Promise<CheckoutQuote
     smallOrderFeeCentavos: delivery.smallOrderFeeCentavos,
     surgeCentavos: surge.surgeCentavos,
     tipCentavos,
+    promoDiscountCentavos: promo.discountCentavos,
+    promoStacksWithSubscription: promo.stacksWithSubscription,
     // Credits cover as much as they can; the engine caps at what is owed.
     requestedWalletCreditCentavos: input.useCredits ? Number.MAX_SAFE_INTEGER : 0,
   });
@@ -309,6 +380,8 @@ export async function quoteCheckout(input: CheckoutInput): Promise<CheckoutQuote
     merchantPreparationMinutes: store.preparationMinutes,
     delivery,
     surge,
+    promo,
+    promoBasis,
     price,
     creditShortfallCentavos,
   };
@@ -331,6 +404,73 @@ export async function placeOrder(input: CheckoutInput): Promise<{
   order: Order;
   quote: CheckoutQuote;
 }> {
+  let lastConflict: unknown;
+
+  for (let attempt = 1; attempt <= MAX_PLACEMENT_ATTEMPTS; attempt += 1) {
+    try {
+      return await attemptPlacement(input);
+    } catch (error) {
+      // Only a serialization conflict is retried. Every domain refusal —
+      // a code that ran out, surge that moved, credits that fall short — is a
+      // DECISION, and retrying a decision just makes the same one slower.
+      if (!isSerializationConflict(error)) throw error;
+      lastConflict = error;
+      if (attempt < MAX_PLACEMENT_ATTEMPTS) await pauseBeforeRetry(attempt);
+    }
+  }
+
+  // Past four attempts this is not ordinary contention, and the caller's
+  // generic "try again in a moment" is the right thing for the customer. It is
+  // deliberately NOT wrapped in a named domain error: a persistent conflict
+  // should reach error monitoring rather than be filed as an expected refusal.
+  throw lastConflict;
+}
+
+/**
+ * How many times a placement may be retried after a serialization conflict.
+ *
+ * Placement is `Serializable`, and until promo codes it only ever contended
+ * per CUSTOMER — their own credits ledger. A promo code changes that: the
+ * redemption cap is counted across everybody, so every checkout using the same
+ * popular code now conflicts with every other one. Four concurrent placements
+ * against one code produced three `P2034` failures and one order, which the
+ * customer reads as "that did not go through" while the campaign was nowhere
+ * near its cap.
+ *
+ * That contention is not a mistake to be optimised away — it is what makes the
+ * cap hold to the centavo, and a design that counted outside the transaction
+ * would go over budget silently instead. So the fix is to absorb it: retry the
+ * whole placement, which re-quotes and re-resolves against fresh counts.
+ *
+ * Found by running four placements at once against a real database. No unit
+ * test can see it, and a single-threaded browser click never will.
+ */
+const MAX_PLACEMENT_ATTEMPTS = 4;
+
+function isSerializationConflict(error: unknown): boolean {
+  // P2034 is Prisma's code for "write conflict or deadlock, please retry",
+  // which is what Postgres's 40001 arrives as.
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034';
+}
+
+/**
+ * A short, growing, jittered pause.
+ *
+ * Retrying immediately re-collides with whoever won, which is how a retry loop
+ * turns a conflict into a stampede. The jitter matters more than the delay:
+ * four clients backing off by the same amount collide again together.
+ */
+async function pauseBeforeRetry(attempt: number): Promise<void> {
+  const base = 15 * 2 ** (attempt - 1);
+  const delay = base + Math.floor(Math.random() * base);
+  await new Promise((resolve) => setTimeout(resolve, delay));
+}
+
+/** One attempt. Everything it writes is inside one serializable transaction. */
+async function attemptPlacement(input: CheckoutInput): Promise<{
+  order: Order;
+  quote: CheckoutQuote;
+}> {
   const quote = await quoteCheckout(input);
 
   // Before anything is written: never charge more surge than was displayed.
@@ -343,6 +483,21 @@ export async function placeOrder(input: CheckoutInput): Promise<{
     throw new SurgeChangedError(
       input.acceptedSurgeCentavos,
       quote.surge.surgeCentavos,
+    );
+  }
+
+  // And never give LESS discount than was displayed. The mirror of the check
+  // above: placement refuses so the screen can re-quote and show the real
+  // total, rather than billing the difference without comment.
+  if (
+    input.acceptedPromoDiscountCentavos !== undefined &&
+    quote.price.promoDiscountCentavos < input.acceptedPromoDiscountCentavos
+  ) {
+    throw new PromoNoLongerValidError(
+      quote.promo.code,
+      quote.promo.refusal === null
+        ? 'it does not take off as much as it did a moment ago.'
+        : 'it is no longer available.',
     );
   }
 
@@ -435,6 +590,29 @@ export async function placeOrder(input: CheckoutInput): Promise<{
           },
         },
       });
+
+      // The code is spent HERE and nowhere else: inside the serializable
+      // transaction that creates the order, which is the only place a
+      // campaign's caps can actually hold. A hundred uses and two hundred
+      // people at checkout all hold a valid quote; the count that decides is
+      // the one taken where the orders are created, one at a time.
+      //
+      // `price.promoDiscountCentavos` rather than `promo.discountCentavos`:
+      // zero means the code was offered and not applied — a non-stacking code
+      // that lost to the customer's plan — and an unapplied code must not be
+      // spent.
+      if (quote.price.promoDiscountCentavos > 0) {
+        await consumePromoCode(
+          {
+            code: quote.promo.code,
+            customerId: input.customerId,
+            orderId: created.id,
+            order: quote.promoBasis,
+            appliedCentavos: quote.price.promoDiscountCentavos,
+          },
+          tx,
+        );
+      }
 
       // A prepaid order waits for the money before it reaches the shop.
       // `totalCentavos > 0` matters: credits can cover an order completely, and

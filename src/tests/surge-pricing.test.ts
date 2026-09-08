@@ -589,18 +589,40 @@ describe('editing the ladder is an audited decision', () => {
   });
 
   it('demands a reason and writes an audit row for each', () => {
+    // Checked per FUNCTION rather than by counting matches in the rest of the
+    // file. The first version of this sliced from `createSurgeBandAction` to
+    // the end of the source and asserted "three of each" — which passed only
+    // as long as the surge actions were the last thing in the file, and broke
+    // the day promo codes were appended after them. A test that measures where
+    // code sits rather than what it does fails for the wrong reason and tells
+    // you nothing when it does.
     const actions = codeOnly('src/lib/actions/admin-actions.ts');
-    const surge = actions.slice(actions.indexOf('createSurgeBandAction'));
-    for (const action of [
-      'SURGE_BAND_CREATED',
-      'SURGE_BAND_CHANGED',
-      'SURGE_BAND_ACTIVATION_CHANGED',
-    ]) {
-      expect(surge).toContain(`AdminAction.${action}`);
+
+    /** One exported action's body: from its signature to the next one. */
+    const bodyOf = (name: string): string => {
+      const start = actions.indexOf(`export async function ${name}(`);
+      expect(start, `${name} should exist`).toBeGreaterThan(-1);
+      const rest = actions.slice(start + 1);
+      const end = rest.indexOf('export async function ');
+      return end === -1 ? rest : rest.slice(0, end);
+    };
+
+    const surgeActions = {
+      createSurgeBandAction: 'SURGE_BAND_CREATED',
+      updateSurgeBandAction: 'SURGE_BAND_CHANGED',
+      setSurgeBandActiveAction: 'SURGE_BAND_ACTIVATION_CHANGED',
+    } as const;
+
+    for (const [name, action] of Object.entries(surgeActions)) {
+      const body = bodyOf(name);
+      expect(body, `${name} should log ${action}`).toContain(`AdminAction.${action}`);
+      expect(body, `${name} should demand a reason`).toContain(
+        "normaliseReason(formData.get('reason'))",
+      );
+      expect(body, `${name} should write an audit row`).toContain(
+        'await recordAdminAction(',
+      );
     }
-    // Three actions, three reasons, three audit writes.
-    expect((surge.match(/normaliseReason\(formData\.get\('reason'\)\)/g) ?? []).length).toBe(3);
-    expect((surge.match(/await recordAdminAction\(/g) ?? []).length).toBe(3);
   });
 
   it('turns each refusal into a sentence rather than a constraint violation', () => {

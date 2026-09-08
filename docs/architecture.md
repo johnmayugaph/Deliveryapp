@@ -1831,6 +1831,127 @@ an unexplained absence is how a referral programme becomes a support queue. The
 reasons are also grouped on the console screen, because a minimum nobody clears
 or a cap everybody hits shows up there first.
 
+## Promo codes — bounds, not secrecy
+
+`PromoCode` and `PromoRedemption`, with the rules in `lib/promo/policy.ts` (no
+database, no clock), the reading half in `resolve.ts`, and the spending half in
+`consume.ts`.
+
+### The difference from the other two code features
+
+A referral code belongs to one person. A loyalty balance belongs to one person.
+**A promo code is public**: it goes on a tarpaulin and round a group chat, and a
+code meant for a hundred people is used by ten thousand within the hour.
+
+So nothing here is about secrecy — a code somebody must remember and say aloud
+is guessable by construction. Everything is about **bounds**, and each one is a
+column checked in the pure module and again in the database:
+
+| Bound | Column | What it stops |
+| --- | --- | --- |
+| Orders it may touch | `totalRedemptionLimit` | A screenshot becoming the budget |
+| Total cost | `budgetCentavos` | The month's spend being a surprise |
+| Cost per order | `maxDiscountCentavos` | A percentage on a large order |
+| Uses per account | `perCustomerLimit` | One person taking the campaign |
+| Who | `firstOrderOnly`, `serviceTypes`, `cityIds`, `storeId` | Paying to reacquire customers we have |
+| When | `startsAt`, `endsAt` | A campaign nobody switched off |
+
+Creating a code with **neither** a redemption limit nor a budget is refused.
+The dates bound how long a campaign runs, not how much it costs.
+
+### Three kinds, one number
+
+`PERCENTAGE`, `FIXED_AMOUNT` and `FREE_DELIVERY` all resolve to a single
+centavos figure, because `Order.promoDiscountCentavos` and `applyBenefits` have
+handled exactly one number since the first schema. A free-delivery code
+therefore shows a *named discount line* rather than a fee that mysteriously
+reads zero. The percentage comes off the **subtotal**, never the delivery fee or
+surge — both of those are the rider's money.
+
+### Resolving is free; consuming is not
+
+`resolvePromoForOrder` reads and writes nothing, so a quote can run on every
+price-bearing change at checkout. If resolving consumed a use, changing your
+address after typing a code would burn it — the mistake `commitBenefitUsage`
+exists to avoid for a subscription's monthly allowance.
+
+`consumePromoCode` runs **inside placement's serializable transaction**, and
+re-resolves there rather than trusting the quote: a client that could name its
+own discount could name its own price. Usage is *counted* from
+`PromoRedemption` every time; there is deliberately no cached counter on the
+code, because a cached count is a second truth and a drifting one either stops
+a campaign early or runs it past its budget with nobody able to say which.
+
+That counting is what makes a popular code contend across everybody rather than
+per customer, and four concurrent placements against one code produced three
+`P2034` conflicts before `placeOrder` learned to retry. The contention is the
+price of the cap holding to the centavo; the retry (four attempts, jittered
+backoff, re-quoting each time) is what makes it invisible.
+
+### Never a number the customer did not see
+
+Two client-supplied figures bracket the total, and neither is ever used as a
+price — only compared against what placement independently resolved, so a
+tampered value can only cause a refusal:
+
+- `acceptedSurgeCentavos` — a **ceiling**. Placement refuses rather than
+  charging more surge than was displayed.
+- `acceptedPromoDiscountCentavos` — a **floor**. Placement refuses rather than
+  giving less discount than was displayed, which is what a code exhausted
+  between the render and the tap would otherwise do in silence.
+
+A caller with no screen omits both and takes whatever applies.
+
+### Not stacking means the cheaper bill, not "drop the plan"
+
+`stacksWithSubscription: false` reads as "keep the code, drop the plan's
+benefits". Under that rule a Plus subscriber with free delivery types a ₱20
+code, loses a ₱49 waiver, and **pays ₱29 more than if they had typed nothing**.
+
+So `bestOutcome` in `pricing/checkout.ts` prices both bills — code alone, plan
+alone — and keeps the cheaper, counting credit-back at face value because it is
+centavos in the ledger even though it is not money off this bill. When the plan
+wins the code is left *unspent*: the customer's one use and the campaign's
+budget both survive. A tie goes to the plan for the same reason.
+
+That produces a fourth thing the checkout field can say, beyond applied and
+refused: **a valid code that took nothing off**. `promoDisplay` names it, so the
+screen never shows an accepted code next to an unchanged total.
+
+### The two numbers on the console
+
+Mirroring the self-referral margin on the referrals screen:
+
+- **What a campaign can still cost** — the money on the table, bounded by
+  whichever of the budget and the remaining redemptions is tighter. A code with
+  neither reads **Unbounded**, not a large number.
+- **Whether a code makes food free** — a fixed amount at or above the minimum
+  order means somebody eats for nothing while we pay the shop and the rider in
+  full. `resolvePromo` stops the total going below zero, which is exactly why
+  this is easy to miss: the order goes through, the arithmetic is right, and
+  the money is gone. Warned about rather than refused, because a deliberate
+  acquisition subsidy is a real choice — and the warning stays on the row.
+
+### Codes are switched off, never deleted
+
+`PromoRedemption.promoCode` is `onDelete: Restrict`. Cascading would let one
+deletion erase the record of what a campaign cost while leaving
+`promoDiscountCentavos` on every order: a discount with no reason and a spend
+with no total. It also means the receipt can name the code from the redemption
+without a cached label column — `surgeLabel`'s job, done by a join.
+
+A redemption itself is immutable on update (with the transaction-scoped
+`tara.allow_purge` hatch for a lawful erasure), and one per order by a unique
+index, which is what makes a retried placement idempotent rather than
+double-counting a use.
+
+### Whose cost it is
+
+`splitOrderValue` subtracts promo, subscription and credits from the
+**platform's** net, not the store's payout. A campaign is our marketing spend,
+and netting it off the restaurants would be a transfer nobody agreed to. One
+sign away from being wrong, so it is asserted rather than assumed.
+
 ## 6. Subscription tier
 
 `SubscriptionPlan` (name, `monthlyPriceCentavos`, benefits, `isActive`) and
