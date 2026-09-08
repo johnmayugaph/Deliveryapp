@@ -26,6 +26,8 @@ import {
   firstDescendingStep,
   ladderFor,
 } from '@/lib/pricing/surge-policy';
+import { MAX_REWARD_CENTAVOS, farmerMargin } from '@/lib/referrals/policy';
+import { PROGRAMME_ID } from '@/lib/referrals/programme';
 import { centavosFromPesoInput, formatCentavos } from '@/lib/money';
 import { cancelSubscription } from '@/lib/subscriptions/enrollment';
 import {
@@ -1666,6 +1668,145 @@ export async function setStoreCommissionAction(
     return {
       ok: true,
       message: `${store.name} now pays ${(basisPoints / 100).toFixed(2)}% on food. Existing orders keep what they settled at.`,
+    };
+  });
+}
+
+// --- Referrals ---------------------------------------------------------------
+
+/**
+ * Sets the referral programme: the two amounts, the minimum and the caps.
+ *
+ * The one control in this console that creates a standing liability against
+ * every account at once, which is why it is audited and why the screen shows
+ * the operator what a person farming their own SIM cards would net at the
+ * numbers they just typed. The code does not refuse a farmable configuration —
+ * it might be a deliberate launch subsidy — but it will not let one be chosen
+ * by accident either.
+ */
+export async function setReferralProgrammeAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const reason = normaliseReason(formData.get('reason'));
+
+    const pesos = (field: string): number | null =>
+      centavosFromPesoInput(String(formData.get(field) ?? ''));
+    const whole = (field: string): number | null => {
+      const raw = String(formData.get(field) ?? '').trim();
+      const value = Number(raw);
+      return Number.isInteger(value) && value >= 0 ? value : null;
+    };
+
+    const refereeCentavos = pesos('refereePesos');
+    const referrerCentavos = pesos('referrerPesos');
+    const minimumOrderCentavos = pesos('minimumPesos');
+    const monthlyRewardCap = whole('monthlyCap');
+    const lifetimeRewardCap = whole('lifetimeCap');
+    const isActive = String(formData.get('isActive') ?? '') === 'true';
+
+    if (
+      refereeCentavos === null ||
+      referrerCentavos === null ||
+      minimumOrderCentavos === null
+    ) {
+      return { ok: false, message: 'Write the amounts in pesos, like 50 or 49.50.' };
+    }
+    if (monthlyRewardCap === null || lifetimeRewardCap === null) {
+      return { ok: false, message: 'The caps are whole numbers of referrals.' };
+    }
+    if (
+      refereeCentavos > MAX_REWARD_CENTAVOS ||
+      referrerCentavos > MAX_REWARD_CENTAVOS
+    ) {
+      return {
+        ok: false,
+        message:
+          `The most one side may be worth is ${formatCentavos(MAX_REWARD_CENTAVOS)}. ` +
+          'A referral worth more than a large order is usually a decimal point ' +
+          'in the wrong place.',
+      };
+    }
+    if (isActive && (monthlyRewardCap === 0 || lifetimeRewardCap === 0)) {
+      return {
+        ok: false,
+        message:
+          'A live programme needs both caps above zero, or it advertises a code ' +
+          'that can never pay.',
+      };
+    }
+    if (lifetimeRewardCap > 0 && lifetimeRewardCap < monthlyRewardCap) {
+      return {
+        ok: false,
+        message: 'The lifetime cap cannot be lower than the monthly one.',
+      };
+    }
+    if (isActive && refereeCentavos === 0 && referrerCentavos === 0) {
+      return {
+        ok: false,
+        message: 'A live programme has to pay somebody something.',
+      };
+    }
+
+    const before = await prisma.referralProgramme.findUnique({
+      where: { id: PROGRAMME_ID },
+    });
+
+    const data = {
+      isActive,
+      refereeCentavos,
+      referrerCentavos,
+      minimumOrderCentavos,
+      monthlyRewardCap,
+      lifetimeRewardCap,
+    };
+
+    await prisma.$transaction(async (tx) => {
+      await tx.referralProgramme.upsert({
+        where: { id: PROGRAMME_ID },
+        create: { id: PROGRAMME_ID, ...data },
+        update: data,
+      });
+      await recordAdminAction(
+        {
+          actorId: admin.id,
+          action: AdminAction.REFERRAL_PROGRAMME_CHANGED,
+          subjectType: 'ReferralProgramme',
+          subjectId: PROGRAMME_ID,
+          subjectLabel: isActive ? 'Referrals on' : 'Referrals off',
+          reason,
+          detail: {
+            before: before
+              ? {
+                  isActive: before.isActive,
+                  refereeCentavos: before.refereeCentavos,
+                  referrerCentavos: before.referrerCentavos,
+                  minimumOrderCentavos: before.minimumOrderCentavos,
+                  monthlyRewardCap: before.monthlyRewardCap,
+                  lifetimeRewardCap: before.lifetimeRewardCap,
+                }
+              : null,
+            after: data,
+          },
+        },
+        tx,
+      );
+    });
+
+    revalidatePath('/admin/referrals');
+    revalidatePath('/invite');
+
+    const margin = farmerMargin(data);
+    return {
+      ok: true,
+      message:
+        (isActive
+          ? 'Referrals are on. Existing referrals keep the amounts they were attributed at.'
+          : 'Referrals are off. Codes already shared will stop paying.') +
+        (isActive && margin.farmingPays
+          ? ` Warning: at these amounts somebody referring themselves nets ${formatCentavos(margin.netCentavos)} per account.`
+          : ''),
     };
   });
 }

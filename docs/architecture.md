@@ -1550,6 +1550,140 @@ audited separately from amounts because *"was surge on in Manila at 6pm?"* is
 the question a complaint actually asks and it should be answerable without
 reading a diff.
 
+## Referrals — the only credits a user can cause
+
+Every other credit in this app is granted because an order completed or because
+an administrator acted against their own name. A referral is the one path by
+which credits come into existence **at the invitation of a user** — which makes
+it the one place where a stranger with a drawer of SIM cards can make money
+appear, and why nearly all of it is refusals.
+
+### What actually stops abuse, and what only looks like it does
+
+The obvious attack is self-referral: one person, an account per SIM. A
+`referrerId <> refereeId` check catches the naive version and nothing else. Two
+accounts held by one person are, to the database, two people, and there is no
+honest way to tell them apart here: phone numbers are cheap, no device identity
+is held, and address matching would refuse mostly-honest cases, because
+households in the Philippines routinely share an address and a feature that
+accuses a mother and her daughter of fraud is worse than one that pays them
+both.
+
+So the defence is not detection. It is three structural facts:
+
+1. **The reward is credits**, and credits cannot be topped up, transferred or
+   cashed out — they only reduce a future bill. A farmer's payoff is discounted
+   food, not money. This is the wallet constraint doing work it was not written
+   for.
+2. **The inviter is paid only when the referee's first order COMPLETES**, above
+   a minimum order value. Farming costs a real order that was really paid for
+   and really delivered.
+3. **Caps**, per month and for life, per inviter. This is what turns an
+   open-ended liability into a budget, and it is the only mechanism that works
+   without needing to know who anybody is — an enthusiast and a farmer look
+   identical for the first three referrals.
+
+### The number the console shows, and why
+
+Which leaves one thing that decides whether the whole feature is farmable, and
+it is not the code's to pick: the amounts. So `farmerMargin` computes what a
+person referring themselves nets per account at a given pair of amounts, and
+`/admin/referrals` puts it on the screen — in green when self-referral costs
+money, in a red alert when it pays, with the arithmetic spelled out. The
+save action repeats it in its own confirmation, so the warning cannot be missed
+by somebody who never scrolls back.
+
+It is a warning rather than a refusal. A launch subsidy that loses money per
+account can be a deliberate choice; buying accounts by accident cannot.
+
+The referee credits count towards the outlay, because they do — that is what
+they are for. Which is why **a generous referee reward with a low minimum is the
+dangerous combination**, not a generous inviter reward alone.
+
+### Off until somebody sets it
+
+No `ReferralProgramme` row means referrals are off, and the invite screen says
+so plainly rather than showing a code that earns nothing. Same posture as
+commission at zero and surge with no bands. There is also deliberately no way
+to save a live programme with a zero cap or with both amounts at zero — those
+would advertise a code that can never pay.
+
+### Attribution is a fact, not a field
+
+One `Referral` row per referee, ever, and the three columns that say who invited
+whom are immutable — enforced by the `referral_no_reattribution` trigger, which
+still allows the reward columns to be filled in because that is the only
+legitimate edit the row ever needs.
+
+That is not tidiness. An attribution that could be rewritten would let a second
+inviter claim an account after its first order completed, which is the whole
+game. The database also refuses a payment with no qualifying order behind it, a
+refusal with no reason, an amount with no timestamp, and more than one
+programme row.
+
+`NOT_A_NEW_CUSTOMER` is the refusal worth naming: an account that has already
+ordered cannot be introduced, whatever link they clicked. Without it two
+existing customers could refer each other and both collect — self-referral with
+an extra step and no SIM cards needed.
+
+### The code has to survive the signup it triggers
+
+A shared link is opened by somebody with no account. What follows is a login, an
+SMS round trip and an onboarding form — three navigations that all lose the
+query string. So the middleware parks the code in an httpOnly cookie, and
+onboarding claims it.
+
+Three details matter. The code is captured **on the login redirect as well as on
+public pages**, because the most likely shape of a shared link is a deep one
+("look at this shop") which bounces before any page renders. The **first link
+wins**: otherwise anybody could overwrite a pending attribution by sending a
+second one, which is whoever-messaged-last rather than whoever-invited-them. And
+claiming **never blocks onboarding** — a stale code, a programme switched off
+since, somebody's own code: none of them is a reason a person cannot finish
+typing their name.
+
+The cookie is cleared even when attribution is refused. A code that cannot be
+used will not become usable, and leaving it means every future signup on that
+browser retries a dead code.
+
+Codes are minted lazily, the first time somebody opens the invite screen. Most
+accounts never will, and a column of unused codes only makes collisions likelier.
+
+### The alphabet, and one bug worth recording
+
+`CODE_ALPHABET` excludes O, 0, I, 1, L and S — a code is read off one phone
+screen and typed into another, usually by somebody who did not choose it, and
+"was that an O or a zero" is a support ticket rather than a signup.
+
+Excluding **both** members of each confusable pair is what lets `normaliseCode`
+strip rather than guess. The first version of that function was helpful instead:
+it folded `0`→`O`→`Q` and `S`→`5`, reasoning that somebody typing O for Q has
+misread rather than mistyped. True, and still wrong — `Q` and `5` are themselves
+valid code characters, so the fold could silently turn a typo into **a different
+real code** and attribute somebody to a stranger who happens to own it. The
+alphabet exists to remove that ambiguity; guessing on top of it puts the
+ambiguity back with a worse failure mode. A confusable now leaves the code the
+wrong length, which is a dead end the person can see and escape.
+
+### Both sides, through the one ledger function
+
+The referee's credits land at attribution, so they can be put towards the first
+order — that is the entire incentive. The inviter's land on completion of that
+order, in the same transaction as the settlement accrual, keyed
+`referral-referrer:<id>` so a retried completion pays once.
+
+The minimum is tested against the order's own worth, not against what the
+customer paid. Otherwise a referee could spend their welcome credits to drop a
+₱250 order below a ₱200 minimum and cost their inviter the reward — a customer's
+discount is not evidence about an order's size.
+
+A referral that will not pay is settled `NOT_REWARDED` with its reason rather
+than left pending forever, and the inviter is told either way. Somebody who
+shared a code and watched a friend order deserves to know why nothing arrived;
+an unexplained absence is how a referral programme becomes a support queue. The
+reasons are also grouped on the console screen, because a minimum nobody clears
+or a cap everybody hits shows up there first.
+
 ## 6. Subscription tier
 
 `SubscriptionPlan` (name, `monthlyPriceCentavos`, benefits, `isActive`) and
@@ -3307,7 +3441,7 @@ sense as an undrained outbox, and says which command to run.
 
 ## Verification
 
-Database-free, in CI (`npm run verify`) — **1400 tests across 40 files**. The
+Database-free, in CI (`npm run verify`) — **1471 tests across 41 files**. The
 table below names the ones that carry a rule rather than a case; the rest cover
 a single feature each and are named for it.
 
@@ -3331,6 +3465,7 @@ a single feature each and are named for it.
 | `live-tracking.test.ts` | The four gates on a rider's position, the share throttle including a held fix, distance wording, and greps for the privacy boundary and the map's honesty |
 | `payments.test.ts` | The no-top-up rule per instrument and in the database, the prepaid hold across every lifecycle, event signs, the derived status including a short payment, and what the rider is told to collect |
 | `settlement.test.ts` | The order-value split proved exhaustive over every combination of fees, tips and commission; who holds the money per payment method; the cash round trip netting to zero; and the payout ceiling |
+| `referrals.test.ts` | Self-referral and re-attribution refused at every layer; the code alphabet excluding both members of each confusable pair; whether a given pair of amounts makes farming profitable; the Manila month boundary a cap resets on; and that no path exists from a referral to cash |
 | `surge-alerts.test.ts` | Only a step up counts as news, proved over an hour of simulated measurements; the perishable rule dropping rather than deferring; the sustained-run clock arithmetic; and that no self-detecting stall alert exists |
 | `surge-pricing.test.ts` | The step ladder proved monotonic across the whole ratio range on a mistyped ladder as well as a good one, the ceiling agreeing with the SQL guard, every uncertainty resolving to ₱0, a free-delivery benefit not reaching the rider's surge, and greps that the sweep measures after the timeout pass and the screen sends the figure it displayed |
 | `menu-options.test.ts` | Server-authoritative choice pricing, group bounds, satisfiability, and every tamper case |

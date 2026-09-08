@@ -1,0 +1,3 @@
+-- AlterEnum
+ALTER TYPE "AdminAction" ADD VALUE 'REFERRAL_PROGRAMME_CHANGED';
+

@@ -276,6 +276,22 @@ export const KIND_POLICY: Readonly<Record<NotificationKind, KindPolicy>> = {
   },
 
   /**
+   * A referral was settled, paid or refused.
+   *
+   * INFORMATIONAL and not perishable: credits that arrived read the same over
+   * breakfast, and so does the reason none did. Quiet hours defer it, which is
+   * right — nobody needs waking at 2am to hear that a friend's order landed.
+   *
+   * Not SMS. It is bounded by how many referrals settle, which on a good
+   * campaign is the number that spikes; and unlike a dispatch offer nothing is
+   * waiting on the recipient reading it.
+   */
+  [NotificationKind.REFERRAL_SETTLED]: {
+    urgency: NotificationUrgency.INFORMATIONAL,
+    channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
+  },
+
+  /**
    * It is busy, come out.
    *
    * The only PERISHABLE kind, and the flag exists for it. Deferring this to

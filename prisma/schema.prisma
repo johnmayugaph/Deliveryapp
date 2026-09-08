@@ -421,6 +421,16 @@ model User {
   locale          String  @default("fil-PH")
   isBlocked       Boolean @default(false)
 
+  /// This account's own invite code. Minted lazily — the first time somebody
+  /// opens the invite screen — rather than at signup, because most accounts
+  /// will never share one and a column full of unused codes is a column that
+  /// makes collisions likelier for no benefit.
+  ///
+  /// Uppercase, from an alphabet with no O/0/I/1: a code is read off one
+  /// phone screen and typed into another, and "was that an O or a zero" is a
+  /// support ticket.
+  referralCode String? @unique
+
   /// Written only by `prisma/seed.ts`. Demo rows exist so that a fresh clone
   /// has something to click; in production they are the single most dangerous
   /// thing in the database, because the seed uses real Philippine number
@@ -465,6 +475,8 @@ model User {
   serviceInterest         ServiceInterest[]
   errorReports            ErrorReport[]
   resolvedErrorReports    ErrorReport[]                     @relation("ErrorResolver")
+  referralsMade           Referral[]                        @relation("ReferrerReferrals")
+  referralReceived        Referral?                         @relation("RefereeReferral")
 
   @@index([roles], type: Gin)
   @@index([preferredCityId])
@@ -1212,6 +1224,7 @@ model Order {
   supportTickets     SupportTicket[]
   appliedBenefits    OrderAppliedBenefit[]
   notifications      Notification[]
+  Referral           Referral[]
 
   /// Powers the unified cross-service order history: one chronological list,
   /// every vertical, no per-service queries.
@@ -1346,6 +1359,7 @@ model FleetPartner {
   orders               Order[]
   dispatchOffers       DispatchOffer[]
   settlementEntries    SettlementEntry[]
+  referralsQualified   Referral[]
 
   @@index([isOnline, isSuspended, homeCityId])
   @@index([enabledServices], type: Gin)
@@ -2064,6 +2078,12 @@ enum NotificationKind {
   /// Surge that nobody is told about is a price rise with no incentive
   /// attached: the customer pays more and no more riders come out.
   SURGE_ACTIVE
+  /// To whoever did the inviting: their referral has been settled, either paid
+  /// or refused with a reason. Both cases are sent, because somebody who shared
+  /// a code and watched a friend order deserves to know why nothing arrived —
+  /// an unexplained absence is how a referral programme becomes a support
+  /// queue.
+  REFERRAL_SETTLED
   /// To an administrator: a market has sat at its top surge step long enough
   /// that it is not a spike. The fourth kind addressed to the people running
   /// the business, and the one that is not asking them to fix an incident —
@@ -2327,6 +2347,11 @@ enum AdminAction {
   SURGE_BAND_CREATED
   /// A surge step's threshold, amount or name was changed.
   SURGE_BAND_CHANGED
+  /// The referral programme's amounts, caps or on/off state were changed.
+  /// Audited because it is the only control in the console that creates a
+  /// standing liability against every account at once — and because the
+  /// amounts decide whether the feature can be farmed.
+  REFERRAL_PROGRAMME_CHANGED
   /// A surge step was switched off or back on. Kept distinct from a change
   /// because "surge was on at 6pm" is the fact a dispute turns on, and it
   /// should be answerable without reading a diff of amounts.
@@ -2625,4 +2650,120 @@ model BackupRun {
 
   @@index([ok, startedAt])
   @@index([startedAt])
+}
+
+// -----------------------------------------------------------------------------
+// Referrals
+// -----------------------------------------------------------------------------
+
+/// What a referral is worth, and how much of it one person may earn.
+///
+/// The amounts are DATA and there are no rows by default, the same posture as
+/// commission starting at 0% and surge shipping with no bands — and here the
+/// reason is sharper than consistency. **These two numbers decide whether the
+/// feature is farmable.** A person with a drawer of SIM cards refers themselves:
+/// they pay for one real order and collect both sides. Whether that nets them
+/// money or costs them money is arithmetic on the amounts an operator chooses,
+/// so `/admin/referrals` computes it and shows them, and the code invents
+/// nothing.
+///
+/// One row, ever. Enforced by `referral_programme_singleton` in
+/// `prisma/sql/referrals.sql`: two competing programmes would make what a
+/// referral is worth depend on which row a query happened to read.
+model ReferralProgramme {
+  /// Always "default". A one-row table with a fixed key rather than a settings
+  /// blob, so the columns are typed and a missing amount is a missing column
+  /// rather than a missing JSON path nobody notices.
+  id String @id @default("default")
+
+  /// Off unless somebody turned it on. With this false the invite screen says
+  /// so plainly rather than showing a code that earns nothing.
+  isActive Boolean @default(false)
+
+  /// To the person who was invited, granted when their account is attributed —
+  /// before their first order, so it can pay for part of it, which is the whole
+  /// incentive. The acquisition cost, in other words.
+  refereeCentavos Int @default(0)
+
+  /// To the person who invited them, granted only when the referee's first
+  /// order COMPLETES. Never on signup: a reward for creating an account is a
+  /// reward for owning a SIM card, and this one has to be earned by an order
+  /// somebody paid for and received.
+  referrerCentavos Int @default(0)
+
+  /// A referee's order must be worth at least this much before the referrer is
+  /// paid, so a ₱60 order cannot unlock a ₱100 reward.
+  minimumOrderCentavos Int @default(0)
+
+  /// How many referrals one account may be paid for, per calendar month and
+  /// ever. The caps are what turn an unbounded liability into a budget, and
+  /// they do the work that fraud detection cannot: an honest enthusiast and a
+  /// farmer look identical for the first three referrals.
+  monthlyRewardCap  Int @default(0)
+  lifetimeRewardCap Int @default(0)
+
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+}
+
+/// Who invited whom, and what came of it.
+///
+/// One row per REFEREE, ever — `@@unique([refereeId])` plus an append-only-ish
+/// guard on the attribution columns. Attribution is a fact about how somebody
+/// arrived, and a fact that can be rewritten is not one: allowing an update
+/// would let a second referrer claim an account after its first order, which
+/// is the whole game.
+model Referral {
+  id String @id @default(cuid())
+
+  referrerId String
+  referrer   User   @relation("ReferrerReferrals", fields: [referrerId], references: [id], onDelete: Cascade)
+
+  /// The invited account. Unique, so nobody can be referred twice.
+  refereeId String @unique
+  referee   User   @relation("RefereeReferral", fields: [refereeId], references: [id], onDelete: Cascade)
+
+  /// The code as typed or followed, kept verbatim for support: "I used Ana's
+  /// code" is answerable from this column even after Ana's code is reissued.
+  codeUsed String
+
+  status ReferralStatus @default(ATTRIBUTED)
+
+  /// What the referee was granted at attribution, and when.
+  refereeGrantedCentavos Int       @default(0)
+  refereeGrantedAt       DateTime?
+
+  /// What the referrer was paid, when, and for which order. Null until the
+  /// referee's first order completes — and stays null forever if it never
+  /// does, which is the point.
+  referrerRewardCentavos Int       @default(0)
+  referrerRewardedAt     DateTime?
+  qualifyingOrderId      String?
+  qualifyingOrder        Order?    @relation(fields: [qualifyingOrderId], references: [id], onDelete: SetNull)
+
+  /// Why nothing was paid, when nothing was paid. Written for the operator and
+  /// for the referrer's own screen: "your friend's order was cancelled" is an
+  /// answer, and silence is not.
+  blockedReason String?
+
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  FleetPartner   FleetPartner? @relation(fields: [fleetPartnerId], references: [id])
+  fleetPartnerId String?
+
+  @@index([referrerId, status])
+  @@index([status, createdAt])
+}
+
+enum ReferralStatus {
+  /// The referee's account is attributed and their own credits are granted.
+  /// Waiting on their first completed order.
+  ATTRIBUTED
+  /// The referrer has been paid.
+  REWARDED
+  /// Attributed, but the referrer will not be paid, and `blockedReason` says
+  /// why: a cap was reached, the programme was off, the qualifying order was
+  /// too small. A terminal state rather than a silent nothing, so the referrer
+  /// can be told and an operator can count how often it happens.
+  NOT_REWARDED
 }

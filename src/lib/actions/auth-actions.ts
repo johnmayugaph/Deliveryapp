@@ -9,6 +9,7 @@ import {
   sendLoginCode,
 } from '@/lib/auth/login';
 import { normalisePhilippineMobile } from '@/lib/auth/phone';
+import { claimReferralCookie } from '@/lib/referrals/attribution';
 import type { LoginFormState } from '@/lib/auth/login-state';
 import {
   createSession,
@@ -146,6 +147,17 @@ export async function completeOnboardingAction(
       onboardedAt: new Date(),
     },
   });
+
+  // The invite code, if they arrived by one. This is the first moment there is
+  // an onboarded account to attach it to — the link was opened before any of
+  // this existed, so the code has been waiting in a cookie since.
+  //
+  // Deliberately after the update and outside its transaction: a code that
+  // cannot be attributed (programme off, already used, their own) must not
+  // stop somebody finishing signup. The refusal is silent here on purpose —
+  // the invite screen tells them where they stand, and a stranger's expired
+  // campaign is not an error the person typing their name should read.
+  await claimReferralCookie(user.id);
 
   revalidatePath('/', 'layout');
   redirect('/');

@@ -497,6 +497,34 @@ export const NOTIFICATION_TEMPLATES: Readonly<Record<NotificationKind, Template>
   },
 
   /**
+   * Your invite was settled.
+   *
+   * Two messages from one kind, because they are the same event and a person
+   * who shared a code is waiting on the answer either way. The refusal names
+   * the reason verbatim — "their first order was below the minimum" is
+   * something they can act on next time, and an unexplained absence is not.
+   */
+  [NotificationKind.REFERRAL_SETTLED]: (context) => {
+    const amount = context.amountCentavos ?? 0;
+    if (amount > 0) {
+      return {
+        title: `${formatCentavos(amount)} in credits from your invite`,
+        body:
+          `Somebody you invited placed their first order and it arrived, so ` +
+          `${formatCentavos(amount)} is in your credits. Spend it on your next order.`,
+        sms: `TARA: ${formatCentavos(amount)} credits from your invite.`,
+      };
+    }
+    return {
+      title: 'Your invite did not earn credits',
+      body:
+        (context.reason ?? 'Your invite could not be paid this time.') +
+        ' Nothing was taken from you, and your code still works.',
+      sms: 'TARA: your invite did not earn credits. Open the app for details.',
+    };
+  },
+
+  /**
    * To an offline rider: your city is short of riders and there is more money
    * on every job right now.
    *

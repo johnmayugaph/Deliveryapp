@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { WalletTransactionType } from '@prisma/client';
 import { getCurrentUser } from '@/lib/auth/session';
 import {
@@ -68,6 +69,23 @@ export default async function CreditsPage() {
           <li>• Spend it on orders in this app — that is all.</li>
         </ul>
       </section>
+
+      {/* Where credits come from, on the screen where somebody is looking at
+          how few they have. The one earning path a customer controls. */}
+      <Link
+        href="/invite"
+        className="mx-4 mt-4 flex items-center justify-between gap-3 rounded-xl bg-surface px-4 py-3 shadow-sm ring-1 ring-black/5"
+      >
+        <span className="min-w-0">
+          <span className="block text-sm font-semibold">Invite friends</span>
+          <span className="mt-0.5 block text-[11px] text-ink-muted">
+            Credits for you and for them
+          </span>
+        </span>
+        <span aria-hidden className="text-sm text-ink-faint">
+          →
+        </span>
+      </Link>
 
       <section aria-labelledby="credits-history" className="mt-5">
         <h2

@@ -2835,3 +2835,127 @@ later step-up then reporting "1 market stepped up, 0 offline riders invited",
 and the panel disappearing when the market calms rather than showing a zero.
 
 1400 tests pass; typecheck, lint and build clean.
+
+## Phase 37 — Referrals
+
+Referrals are the only path in this app by which credits come into existence
+**at the invitation of a user.** Every other grant is caused by an order
+completing or by an administrator acting against their own name. So this phase
+is mostly refusals, and the interesting part is which defences are real.
+
+### What does not work
+
+The obvious attack is self-referral: one person, an account per SIM card. A
+`referrerId <> refereeId` check catches the naive version and nothing else — two
+accounts held by one person are, to the database, two people. Phone numbers are
+cheap here, no device identity is held, and address matching would refuse
+mostly-honest cases, because households routinely share an address and a feature
+that accuses a mother and her daughter of fraud is worse than one that pays them
+both.
+
+I did not build fraud detection, and the reason is written down rather than
+implied: there is nothing honest to detect with.
+
+### What does work
+
+Three structural facts, none of them clever:
+
+- **The reward is credits**, which cannot be topped up, transferred or cashed
+  out. A farmer's payoff is discounted food, not money — the wallet constraint
+  doing work it was not written for.
+- **The inviter is paid only when the referee's first order COMPLETES**, above a
+  minimum. Farming costs a real order that was paid for and delivered.
+- **Caps**, per month and for life, per inviter. The only mechanism that works
+  without knowing who anybody is: an enthusiast and a farmer look identical for
+  the first three referrals.
+
+### The one number the console shows
+
+That leaves the amounts, which decide whether the whole thing is farmable and
+are not mine to pick. So `farmerMargin` computes what a person referring
+themselves nets per account, and `/admin/referrals` shows it — green when
+self-referral costs money, a red alert when it pays, with the arithmetic spelled
+out, and repeated in the save confirmation so it cannot be missed by somebody who
+never scrolls back.
+
+A warning rather than a refusal: a launch subsidy that loses money per account
+can be deliberate; buying accounts by accident cannot. The welcome credits count
+towards the farmer's outlay, which is why **a generous referee reward with a low
+minimum is the dangerous combination**, not a generous inviter reward alone.
+
+Off until somebody sets it, like commission at zero and surge with no bands. And
+a live programme with a zero cap, or with both amounts at zero, is refused — it
+would advertise a code that can never pay.
+
+### Attribution is a fact, not a field
+
+One `Referral` row per referee, ever, and the three columns saying who invited
+whom are immutable — a trigger refuses to change them while still allowing the
+reward columns to be filled in. An attribution that could be rewritten would let
+a second inviter claim an account after its first order completed, which is the
+whole game.
+
+`NOT_A_NEW_CUSTOMER` is the refusal worth naming: an account that has already
+ordered cannot be introduced, whatever link they clicked. Without it two existing
+customers refer each other and both collect — self-referral with an extra step
+and no SIM cards needed.
+
+### A bug in my own helpfulness
+
+`normaliseCode` originally folded confusables onto the alphabet — `0`→`O`→`Q`,
+`S`→`5` — reasoning that somebody typing O for Q has misread rather than
+mistyped. True, and still wrong: `Q` and `5` are themselves valid code
+characters, so the fold could silently turn a typo into **a different real code**
+and attribute somebody to a stranger who owns it. The alphabet excludes both
+members of each confusable pair precisely so that stripping is safe; guessing on
+top of it put the ambiguity back with a worse failure mode. A confusable now
+leaves the code the wrong length, which is a dead end the person can see.
+
+### The code has to survive the signup it triggers
+
+A shared link is opened by somebody with no account, and what follows is a
+login, an SMS round trip and an onboarding form — three navigations that lose
+the query string. The middleware parks the code in an httpOnly cookie and
+onboarding claims it. Captured on the login **redirect** too, since the most
+likely shared link is a deep one that bounces before any page renders; the
+**first** link wins, so a second cannot steal a pending attribution; and
+claiming never blocks onboarding, because a stale code is not a reason somebody
+cannot finish typing their name.
+
+There is also a plain field for typing a code in, since most sharing is a code
+read out or pasted into a group chat, which never touches the cookie.
+
+### Verified in three places
+
+**67 unit tests**: the alphabet excluding both halves of every confusable pair,
+the fold bug asserted as a refusal, every attribution and reward refusal named,
+the caps counting referrals PAID rather than attributed, the minimum tested
+against the order's own worth, the Manila month boundary a cap resets on, and
+that no path exists from a referral to a balance field. Four seams were mutated
+to confirm the checks fail.
+
+**Eleven SQL-guard checks** against the live database: two programmes, a
+self-referral, a double attribution, a rewritten attribution, a payment with no
+order, money with no timestamp, a refusal with no reason, a ₱600 reward, and a
+live programme with a zero cap — each refusal naming the constraint that fired.
+One of those checks passed for the wrong reason on the first run and was fixed:
+it used the referee as its own second referrer, so `referral_not_self` fired
+before the unique constraint under test was reached.
+
+**Nineteen more against the live database**: attribution granting exactly one
+`REFERRAL_BONUS` row, the inviter paid on completion and named against the order
+that earned it, a retried completion paying once, a cancelled first order paying
+nothing, an order below the minimum refused with its reason while the referee
+keeps their own credits, the monthly cap binding on the third, and the balance
+still equalling the sum of the ledger after all of it.
+
+**Nineteen in a real browser**: the console showing referrals off, then warning
+"at these amounts, referring yourself pays" with the ₱100 figure when set
+farmably, then saying self-referral costs money at sensible ones; a code minted
+on first opening the invite screen; and the whole shared-link journey — a
+stranger opening `/orders?ref=CODE`, bouncing to login with the code parked,
+signing in with a real SMS code, typing a name, and landing attributed with ₱50
+in their ledger and the cookie cleared, while the inviter's screen shows them
+waiting on a first order.
+
+1471 tests pass; typecheck, lint and build clean.

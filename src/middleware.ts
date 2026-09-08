@@ -89,11 +89,61 @@ export function isPublicPath(pathname: string): boolean {
   );
 }
 
+/**
+ * An invite code has to be captured before there is anybody to attach it to.
+ *
+ * Somebody opens a shared `?ref=CODE` link with no account. What follows is a
+ * login, an SMS round trip and an onboarding form — three navigations that all
+ * lose the query string. So the code is parked in a cookie here, in the one
+ * place that sees every request, and claimed when the account is onboarded.
+ *
+ * Only if there is no code already: the first link wins. Otherwise anybody
+ * could overwrite a pending attribution by sending a second link, which is
+ * whoever-messaged-last rather than whoever-actually-invited-them.
+ *
+ * Only when signed OUT, too. A code arriving for an account that already
+ * exists is either somebody sharing a link with a customer we already have, or
+ * a person trying to attribute themselves after the fact — and attribution is
+ * for new accounts, so there is nothing to hold.
+ *
+ * The value is length-capped and stripped to the code alphabet before it is
+ * stored. It is echoed back to nothing and read only as a database lookup key,
+ * but a cookie written from a query parameter is attacker-controlled by
+ * definition and bounding it here costs one line.
+ */
+const CODE_ALPHABET_PATTERN = /[^ABCDEFGHJKMNPQRTUVWXYZ23456789]/g;
+const REFERRAL_COOKIE = 'tara_ref';
+const REFERRAL_COOKIE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
+
+function captureReferralCode(
+  request: NextRequest,
+  response: NextResponse,
+): NextResponse {
+  const raw = request.nextUrl.searchParams.get('ref');
+  if (!raw) return response;
+  if (request.cookies.has(SESSION_COOKIE)) return response;
+  if (request.cookies.has(REFERRAL_COOKIE)) return response;
+
+  const code = raw.toUpperCase().slice(0, 32).replace(CODE_ALPHABET_PATTERN, '');
+  if (code.length !== 6) return response;
+
+  response.cookies.set({
+    name: REFERRAL_COOKIE,
+    value: code,
+    maxAge: REFERRAL_COOKIE_MAX_AGE_SECONDS,
+    path: '/',
+    sameSite: 'lax',
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+  });
+  return response;
+}
+
 export function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
 
   if (isPublicPath(pathname)) {
-    return NextResponse.next();
+    return captureReferralCode(request, NextResponse.next());
   }
 
   if (request.cookies.has(SESSION_COOKIE)) {
@@ -104,7 +154,10 @@ export function middleware(request: NextRequest) {
   // Carry the destination so a deep link survives the detour. The login page
   // validates it as a same-site path before using it.
   login.searchParams.set('next', pathname + search);
-  return NextResponse.redirect(login);
+  // Set on the REDIRECT, not on a response nobody receives: a code arriving on
+  // a protected deep link would otherwise be lost at the login bounce, which
+  // is the most likely shape of a shared link ("look at this shop").
+  return captureReferralCode(request, NextResponse.redirect(login));
 }
 
 export const config = {

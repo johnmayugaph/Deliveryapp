@@ -11,6 +11,7 @@ import { ALL_STATUS_TIMEOUTS } from '@/lib/orders/transitions';
 import { grantCredit, refundToCredits } from '@/lib/wallet/ledger';
 import { recordCashCollected } from '@/lib/payments/manual';
 import { accrueOrderSettlement } from '@/lib/settlement/accrual';
+import { payReferrerForOrder } from '@/lib/referrals/rewards';
 import {
   recordSurgeSnapshots,
   type SnapshotPassResult,
@@ -416,6 +417,13 @@ export async function completeOrder(input: {
     // and the only way to find those afterwards is to trawl every order
     // against the ledger.
     await accrueOrderSettlement(order, tx);
+
+    // If this customer was invited by somebody, this is the moment that
+    // somebody gets paid — a COMPLETED order, not a placed one, which is what
+    // makes farming cost a real order that was really delivered. In the same
+    // transaction for the same reason as the accrual: a completion that paid a
+    // referral in a separate step could pay it twice or not at all.
+    await payReferrerForOrder(order, tx);
 
     return { order, creditBackCentavos };
   });
