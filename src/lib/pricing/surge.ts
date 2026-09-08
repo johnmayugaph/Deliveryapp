@@ -2,6 +2,7 @@ import { OrderStatus, type ServiceKey } from '@prisma/client';
 import { prisma, type PrismaTransactionClient } from '@/lib/prisma';
 import { ACTIVE_JOB_STATUSES } from '@/lib/fleet/job-policy';
 import {
+  SNAPSHOT_MAX_AGE_SECONDS,
   ladderFor,
   surgeForMarket,
   surgeFromSnapshot,
@@ -136,19 +137,55 @@ export function marketKey(serviceType: ServiceKey, cityId: string): string {
  * A fallback ladder (`cityId: null`) expands to every city where the service is
  * live, from `Service.availableCityIds`. A service live nowhere expands to
  * nothing, which is the right answer for a coming-soon vertical.
+ *
+ * ### The one exception, and the bug it fixes
+ *
+ * A market with a FRESH SURGING SNAPSHOT is measured even when its ladder has
+ * gone — because switching the last step off is exactly when a measurement
+ * matters most.
+ *
+ * Found against the real database. Deactivating a city's only band removed the
+ * pair from this list, so no further snapshot was written, so the newest
+ * snapshot stayed at ₱50 with its label — and `currentSurge` reads the newest
+ * snapshot, which was still inside the freshness window. Customers went on
+ * being charged a surge an operator had just switched off, for up to five
+ * minutes, while `/admin/surge` said "no steps anywhere, surge adds nothing to
+ * any order". The screen and the till disagreeing is the exact failure this
+ * feature is arranged against.
+ *
+ * Including such a pair writes ONE zero row, which stops the charge
+ * immediately and then takes the pair back out of this list — so the steady
+ * state is still "no bands, no rows".
  */
 export async function pairsToMeasure(
   client?: PrismaTransactionClient,
+  now: Date = new Date(),
 ): Promise<MarketPair[]> {
   const db = client ?? prisma;
 
-  const [bands, services, cities] = await Promise.all([
+  const [bands, services, cities, stillCharging] = await Promise.all([
     db.surgeBand.findMany({
       where: { isActive: true },
       select: { serviceType: true, cityId: true },
     }),
     db.service.findMany({ select: { key: true, availableCityIds: true } }),
     db.city.findMany({ where: { isActive: true }, select: { id: true } }),
+    // The NEWEST reading per market, within the freshness window — the row a
+    // quote would actually read. Filtering on `surgeCentavos > 0` inside this
+    // query would be wrong: `distinct` applies after the filter, so it would
+    // return the newest SURGING row rather than the newest row, and a market
+    // would keep being measured for the whole window after it had already
+    // been recorded as calm. One zero, then out of the list.
+    db.surgeSnapshot.findMany({
+      where: {
+        createdAt: {
+          gte: new Date(now.getTime() - SNAPSHOT_MAX_AGE_SECONDS * 1_000),
+        },
+      },
+      distinct: ['serviceType', 'cityId'],
+      orderBy: { createdAt: 'desc' },
+      select: { serviceType: true, cityId: true, surgeCentavos: true },
+    }),
   ]);
 
   const liveCities = new Set(cities.map((city) => city.id));
@@ -172,6 +209,18 @@ export async function pairsToMeasure(
       });
     }
   }
+
+  // The exception above: one more reading for anything still charging, so a
+  // ladder that has just been switched off is recorded as off rather than
+  // left to age out on the customer's bill.
+  for (const row of stillCharging) {
+    if (row.surgeCentavos === 0) continue;
+    pairs.set(marketKey(row.serviceType, row.cityId), {
+      serviceType: row.serviceType,
+      cityId: row.cityId,
+    });
+  }
+
   return [...pairs.values()];
 }
 
@@ -211,6 +260,40 @@ export async function measureMarket(
 export interface SnapshotPassResult {
   measured: number;
   surging: number;
+  /**
+   * Exactly the rows written, for the alert pass.
+   *
+   * Handed back rather than re-read, so the message a rider gets and the price
+   * a customer is charged come from ONE reading. Re-measuring for the alert
+   * would let the two disagree, and then a rider is invited out by a number no
+   * customer was ever quoted.
+   */
+  written: MarketOutcome[];
+  /**
+   * The instant every row of this pass was stamped with.
+   *
+   * Returned so the alert pass cannot use a different one, which is not a
+   * hypothetical: the sweep originally called the two passes with two separate
+   * `new Date()` calls, milliseconds apart. `previousReadings` asks for the
+   * newest row with `createdAt < now`, so the alert pass's slightly later
+   * instant INCLUDED the row just written — the previous reading was the
+   * current reading, no market ever looked changed, and not one rider was ever
+   * told anything. Every unit test passed and the live-database check passed
+   * too, because that harness helpfully passed one clock to both.
+   *
+   * Handing the instant back makes the two agree by construction.
+   */
+  at: Date;
+}
+
+/** One measured market, as written. */
+export interface MarketOutcome {
+  serviceType: ServiceKey;
+  cityId: string;
+  ordersWaiting: number;
+  ridersAvailable: number;
+  surgeCentavos: number;
+  bandLabel: string | null;
 }
 
 /**
@@ -223,11 +306,12 @@ export interface SnapshotPassResult {
  */
 export async function recordSurgeSnapshots(
   client?: PrismaTransactionClient,
+  now: Date = new Date(),
 ): Promise<SnapshotPassResult> {
   const db = client ?? prisma;
 
-  const pairs = await pairsToMeasure(db);
-  if (pairs.length === 0) return { measured: 0, surging: 0 };
+  const pairs = await pairsToMeasure(db, now);
+  if (pairs.length === 0) return { measured: 0, surging: 0, written: [], at: now };
 
   const [readings, bands] = await Promise.all([
     measureMarket(pairs, db),
@@ -256,6 +340,11 @@ export async function recordSurgeSnapshots(
       ratio: outcome.ratio,
       surgeCentavos: outcome.surgeCentavos,
       bandLabel: outcome.label,
+      // Stamped from the pass's own instant rather than left to the column
+      // default. Every row of one pass then shares one timestamp, which is
+      // what lets "the reading before this pass" be expressed exactly — see
+      // `previousReadings` — instead of by counting rows.
+      createdAt: now,
     };
   });
 
@@ -264,6 +353,15 @@ export async function recordSurgeSnapshots(
   return {
     measured: rows.length,
     surging: rows.filter((row) => row.surgeCentavos > 0).length,
+    at: now,
+    written: rows.map((row) => ({
+      serviceType: row.serviceType,
+      cityId: row.cityId,
+      ordersWaiting: row.ordersWaiting,
+      ridersAvailable: row.ridersAvailable,
+      surgeCentavos: row.surgeCentavos,
+      bandLabel: row.bandLabel,
+    })),
   };
 }
 
@@ -316,4 +414,39 @@ export async function activeLadder(
     where: { serviceType, isActive: true, OR: [{ cityId }, { cityId: null }] },
   });
   return ladderFor(bands, cityId);
+}
+
+/**
+ * What a rider in this city would earn extra per job right now, per service.
+ *
+ * For the rider's own screen, and it reads the SAME snapshot a quote does. That
+ * is the point: a notification saying "₱20 extra" points at this screen, and if
+ * the screen recomputed from the live queue the two could disagree — a rider
+ * would tap a message about ₱20 and land on a page saying ₱40, or nothing.
+ *
+ * Empty when nothing is surging, so a calm market renders no panel rather than
+ * a row of zeroes.
+ */
+export async function busyMarketsForPartner(
+  partner: { homeCityId: string | null; enabledServices: readonly ServiceKey[] },
+  now: Date = new Date(),
+  client?: PrismaTransactionClient,
+): Promise<{ serviceType: ServiceKey; label: string; surgeCentavos: number }[]> {
+  if (partner.homeCityId === null || partner.enabledServices.length === 0) {
+    return [];
+  }
+  const cityId = partner.homeCityId;
+
+  const busy: { serviceType: ServiceKey; label: string; surgeCentavos: number }[] = [];
+  for (const serviceType of partner.enabledServices) {
+    const charge = await currentSurge(serviceType, cityId, now, client);
+    if (charge.surgeCentavos > 0 && charge.label !== null) {
+      busy.push({
+        serviceType,
+        label: charge.label,
+        surgeCentavos: charge.surgeCentavos,
+      });
+    }
+  }
+  return busy;
 }

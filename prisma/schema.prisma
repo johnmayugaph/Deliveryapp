@@ -1310,6 +1310,21 @@ model FleetPartner {
   isOnline    Boolean @default(false)
   isSuspended Boolean @default(false)
 
+  /// Whether to be told when this partner's city goes busy — see
+  /// `NotificationKind.SURGE_ACTIVE`.
+  ///
+  /// Lives here rather than in `NotificationPreference` because that table is
+  /// keyed by CHANNEL, and the choice a rider needs to make is about a kind:
+  /// declining an invitation to work should not also mute the message saying an
+  /// order is waiting for them. A general per-kind preference table would have
+  /// exactly one row worth setting — this is the only kind in the system that
+  /// asks somebody to do something rather than telling them something happened
+  /// — so it is one column on the party it concerns.
+  ///
+  /// On by default. A rider who has not thought about it is better served
+  /// hearing that tonight pays more, and one tap turns it off.
+  wantsBusyAlerts Boolean @default(true)
+
   currentLatitude   Float?
   currentLongitude  Float?
   locationUpdatedAt DateTime?
@@ -2040,6 +2055,20 @@ enum NotificationKind {
   /// "you are approved" without saying for what is not actionable. A refusal
   /// carries the reason verbatim, since the point is that they can fix it.
   FLEET_VERIFICATION_DECIDED
+  /// To a fleet partner who is OFFLINE: their city has more orders than riders
+  /// and there is extra money on every job right now.
+  ///
+  /// The only kind in the system that is an INVITATION rather than news about
+  /// something that already happened — which is why it is the only `perishable`
+  /// one, and the only one a recipient can decline without muting a channel.
+  /// Surge that nobody is told about is a price rise with no incentive
+  /// attached: the customer pays more and no more riders come out.
+  SURGE_ACTIVE
+  /// To an administrator: a market has sat at its top surge step long enough
+  /// that it is not a spike. The fourth kind addressed to the people running
+  /// the business, and the one that is not asking them to fix an incident —
+  /// sustained surge is understaffing, and no price fixes understaffing.
+  SURGE_SUSTAINED
 }
 
 /// How a message reaches someone.
@@ -2077,6 +2106,15 @@ enum NotificationDeliveryStatus {
   FAILED
   /// Not attempted, on purpose: the recipient turned this channel off.
   SKIPPED
+  /// Not attempted because it stopped being true before it could be sent.
+  ///
+  /// Only reachable for a `perishable` kind — a message whose whole content is
+  /// "right now". "It is busy, come out" held overnight and delivered at 6am
+  /// is not a late message, it is a false one, so it is dropped rather than
+  /// deferred. Kept distinct from SKIPPED because "they muted this" and "we
+  /// decided this had gone stale" are different facts, and only one of them
+  /// means somebody chose not to hear it.
+  EXPIRED
 }
 
 /// One thing that happened, addressed to one person.

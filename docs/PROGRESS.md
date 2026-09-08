@@ -2714,3 +2714,124 @@ second tap went through; the receipt naming the charge; and the console showing
 the market, the charge, and the stopped-sweep alert.
 
 1360 tests pass; typecheck, lint and build clean.
+
+## Phase 36 — Surge notifications
+
+Phase 35 set the price. Nobody was told about it — which meant surge was, for
+one phase, exactly the thing I had written it must never be: a price rise with
+no incentive attached. The customer pays more and no more riders come out.
+
+### The problem is not sending, it is not sending
+
+The market is measured every minute, and almost none of those minutes are news.
+A feature that notified on every measurement sends sixty pushes an hour to
+every rider in a city, and the result is not an informed fleet — it is an app
+whose notifications everybody has switched off, including the ones that say an
+order is waiting for them. So nearly all of this phase is filters:
+
+- **Only a step UP.** Unchanged is not news. Falling is deliberately silent: a
+  rider invited by "₱40 extra" who arrives to ₱20 was misled by a message that
+  was true when it was sent, which is worse than never sending it. A unit test
+  runs an hour of realistic readings — surge starts, holds, steps up, holds,
+  fades — and asserts **two** messages, not sixty.
+- **Only riders who are offline.** An online rider is already in the dispatch
+  loop and their offers carry the surge inside the earnings figure.
+- **A 45-minute cooldown**, read from the notification table rather than a
+  column on the rider, because the record of what somebody was told is the
+  right place to ask what somebody was told.
+- **Nothing at 2am** — which needed a new idea.
+
+### Perishable
+
+Every other message in the system describes something that happened, so quiet
+hours DEFER an informational push to 6am; those read no differently over
+breakfast. "It is busy right now, come out" held overnight does not become
+late, it becomes **false**. A rider who gets up for a surge that ended at
+midnight has been lied to by the app.
+
+So `KindPolicy` gained `perishable`, `deliverableAt` gained a **null** return
+meaning never rather than later, and the delivery is recorded `EXPIRED` — kept
+distinct from `SKIPPED` because "they muted this" and "we decided it had gone
+stale" are different facts. The same flag makes the delivery pass drop a
+perishable row that waited longer than five minutes, which is what stops a
+sweep that was down for twenty minutes from coming back and telling two hundred
+riders about a rush that is over.
+
+The inbox copy is never dropped. What quiet hours remove is the interruption,
+not the information.
+
+`OPERATIONAL` would have pushed it through the night, and that is wrong rather
+than bolder: nothing waits on this particular rider, so an invitation to work at
+2am is not the app's decision to make for somebody who chose to be offline.
+
+### One switch, and why it is not a channel
+
+`wantsBusyAlerts` is the only per-kind preference in the app.
+`NotificationPreference` is keyed by CHANNEL, so declining an invitation to work
+through it would also mute "an order is waiting for you", and those are not the
+same consent. The switch's copy says what it does **not** change, because "stop
+telling me about surge" reads as "stop paying me surge" to somebody scanning it.
+
+### The alert nobody can write
+
+There is no "the sweep has stopped" notification and there cannot be a useful
+one: the thing that would detect it is the thing that stopped. A check that can
+never fire is worse than an acknowledged gap, and this codebase has produced
+enough of those. The console banner covers it as far as a screen can, and the
+rest belongs to whatever watches the cron from outside.
+
+### Three bugs, each found one layer further out
+
+**Units passed. The live database found that switching surge off kept charging
+it.** Deactivating a city's only band removed the market from
+`pairsToMeasure`, so no snapshot was written, so the newest one stayed at ₱50 —
+and quotes read the newest snapshot. Customers paid a surge the operator had
+just switched off for up to five minutes, while `/admin/surge` said surge was
+off everywhere. A market whose newest reading is non-zero is now measured even
+with no ladder: one zero row, then out of the list.
+
+**Then it found that a ladder change rewrote history.** `sustainedRun` counted
+readings at-or-above the ceiling, so switching the top step off dropped the
+ceiling and made every older, higher reading count — the run stretched back
+through a ladder that no longer existed and the alert announced 765 minutes of
+short staffing. The comparison is exact now.
+
+**Then the browser found that nobody was ever told anything at all.** The sweep
+called the measure pass and the alert pass with two separate `new Date()` calls
+milliseconds apart. `previousReadings` asks for the newest row strictly before
+`now`, so the later instant included the row just written: the previous reading
+was the current reading, no market ever looked changed, and not one alert was
+sent. Every unit test passed. **The live-database check passed too — because
+that harness helpfully passed one clock to both, and so verified a wiring that
+did not exist.** It surfaced only as a sweep printing no alert line in a real
+run. `recordSurgeSnapshots` now returns the instant it stamped and the alert
+pass takes it, so the two agree by construction.
+
+That is the sharpest version yet of the lesson this project keeps relearning: a
+test harness more careful than production tests the harness.
+
+### Verified in three places
+
+**41 unit tests**: an hour of measurements yielding two messages, every
+transition case, the perishable rule dropping rather than deferring, the inbox
+copy surviving quiet hours, the run arithmetic measured from the clock rather
+than by counting rows, a ladder change ending a run, and greps that the switch
+exists, that no self-detecting stall alert does, and that the two passes share
+one instant. Three seams were mutated to confirm the checks fail.
+
+**Eighteen against the live database**: twenty sweeps of one busy market
+producing ONE message; the online rider and the opted-out rider not told; a step
+up inside the cooldown held; a new rush past the cooldown landing; switching the
+last step off writing one zero and stopping the charge; a 2am alert written
+EXPIRED while its inbox copy stays PENDING; a stale queued alert dropped with
+zero send attempts; the offers board agreeing with the figure the alert quoted;
+and a market at a lower step never reported however long it lasts.
+
+**Thirteen in a real browser**: the sweep's own line reporting one rider
+invited, the amber panel reading "Food · Sobrang busy ngayon +₱30.00" with the
+sentence about the fee and the tip, the message in the inbox naming the city and
+the amount, the switch starting on and its new value reaching the database, a
+later step-up then reporting "1 market stepped up, 0 offline riders invited",
+and the panel disappearing when the market calms rather than showing a zero.
+
+1400 tests pass; typecheck, lint and build clean.

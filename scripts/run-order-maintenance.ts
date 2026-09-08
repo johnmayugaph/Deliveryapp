@@ -29,6 +29,7 @@ async function main() {
     dispatched,
     expired,
     surge,
+    surgeAlerts,
     subscriptions,
     launchAnnouncements,
     errorAlerts,
@@ -58,6 +59,16 @@ async function main() {
     console.log(
       `Surge: measured ${surge.measured} service/city market(s), ` +
         `${surge.surging} above a band. See /admin/surge.`,
+    );
+  }
+  if (surgeAlerts.markets > 0 || surgeAlerts.sustained > 0) {
+    console.log(
+      `Surge alerts: ${surgeAlerts.markets} market(s) stepped up, ` +
+        `${surgeAlerts.riders} offline rider(s) invited` +
+        (surgeAlerts.sustained > 0
+          ? `; ${surgeAlerts.sustained} market(s) reported as short-staffed`
+          : '') +
+        '.',
     );
   }
 

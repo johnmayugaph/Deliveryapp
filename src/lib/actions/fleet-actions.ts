@@ -110,6 +110,34 @@ export async function setAvailabilityAction(input: {
   }
 }
 
+/**
+ * Turn busy alerts on or off.
+ *
+ * A rider's own decision about being invited to work, and the reason it is not
+ * a `NotificationPreference` row: that table is keyed by channel, so declining
+ * "it is busy, come out" through it would also mute the push that says an
+ * order is waiting. Those are not the same consent.
+ *
+ * Nothing else changes. The busy panel stays on their own screen either way —
+ * what this switches off is the interruption, not the information.
+ */
+export async function setBusyAlertsAction(
+  wantsBusyAlerts: boolean,
+): Promise<FleetActionResult> {
+  try {
+    const partner = await requireFleetPartner();
+    await prisma.fleetPartner.update({
+      where: { id: partner.id },
+      data: { wantsBusyAlerts },
+    });
+    revalidateFleet();
+    revalidatePath('/fleet/profile');
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: toFleetMessage(error) };
+  }
+}
+
 /** Position update while online, for the candidate query's bounding box. */
 export async function updateLocationAction(input: {
   latitude: number;

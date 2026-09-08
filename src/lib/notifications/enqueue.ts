@@ -99,12 +99,27 @@ export async function enqueueNotification(
         unmutable: policy.unmutable,
       }) &&
       (channel !== NotificationChannel.PUSH || pushDevices > 0);
+
+    // Null means the message would have been deferred into being untrue — a
+    // perishable kind in quiet hours. EXPIRED rather than SKIPPED, because
+    // nobody muted anything: we decided it had no future worth waiting for.
+    const when = carries
+      ? deliverableAt({
+          urgency: policy.urgency,
+          channel,
+          now,
+          perishable: policy.perishable,
+        })
+      : null;
+
     return {
       channel,
-      status: carries ? ('PENDING' as const) : ('SKIPPED' as const),
-      nextAttemptAt: carries
-        ? deliverableAt({ urgency: policy.urgency, channel, now })
-        : now,
+      status: !carries
+        ? ('SKIPPED' as const)
+        : when === null
+          ? ('EXPIRED' as const)
+          : ('PENDING' as const),
+      nextAttemptAt: when ?? now,
     };
   });
 

@@ -1400,6 +1400,132 @@ size. Found against the real database; the console now shows Manila charging,
 Quezon City **stale** and Makati **no snapshot** as three different states,
 which is the distinction an operator needs.
 
+### Telling people about it
+
+Surge that nobody is told about is a price rise with no incentive attached: the
+customer pays more and no more riders come out, which is the failure the fee is
+named against. So the notifications are not decoration on this feature — they
+are the half that makes it do its job.
+
+Two messages, to two audiences, shaped by opposite concerns.
+
+**To riders, the danger is noise.** The market is measured every minute, and
+almost none of those minutes are news. A feature that notified on every
+measurement would send sixty pushes an hour to every rider in a city, and the
+result is not an informed fleet but an app whose notifications everybody has
+switched off — including the ones saying an order is waiting. Four filters turn
+a continuous measurement into the small number of moments a person wants:
+
+- **Only a step UP.** Surge appearing or climbing is news. Unchanged is not.
+  Falling is not, and is deliberately silent: a rider invited by "₱40 extra"
+  who arrives to ₱20 was misled by a message that was true when sent, which is
+  worse than never sending it.
+- **Only riders who are OFFLINE.** An online rider is already in the dispatch
+  loop and their offers carry the surge inside the earnings figure; a second
+  message says nothing their own screen does not. The supply surge is meant to
+  reach is the rider who has closed the app.
+- **A 45-minute cooldown per market per rider**, checked against the
+  notification table itself rather than a `lastAlertedAt` column — the record of
+  what somebody was told is the right place to ask what somebody was told, and a
+  column would be a second truth that can disagree with the inbox.
+- **Never in quiet hours**, which needed a new idea; see below.
+
+**To administrators, the danger is silence.** A market pinned at its top step
+for forty minutes has been offered everything the ladder has and is still
+short. From the pricing screen that looks like surge working. `SURGE_SUSTAINED`
+says it in as many words — that this is understaffing rather than a spike, and
+a higher step will not fix it — so nobody spends the evening adding one. Once
+per market per four hours, so a bad night is one message rather than nine.
+
+### Perishable: the one kind that is dropped rather than deferred
+
+Every other notification in the system describes something that HAPPENED — an
+order was cancelled, a payment cleared, a rating arrived — and quiet hours
+therefore DEFER an informational push to 6am, because those read no differently
+over breakfast.
+
+"It is busy right now, come out" is not like that. Held overnight it does not
+become late, it becomes **false**: a rider who gets up for a surge that ended at
+midnight has been lied to by the app, and will read the next one as noise. So
+`KindPolicy` gained `perishable`, `deliverableAt` gained the ability to return
+**null** meaning never, and the delivery row is written `EXPIRED` — a status
+distinct from `SKIPPED`, because "they muted this" and "we decided it had gone
+stale" are different facts and only one of them means somebody chose not to
+hear it.
+
+The same flag covers the other way a message goes stale: the delivery pass
+drops a perishable row that has waited longer than `PERISHABLE_MAX_AGE_SECONDS`
+(the same five minutes the snapshot itself is trusted for). That is what stops a
+sweep which was down for twenty minutes from coming back and telling two
+hundred riders about a rush that is over.
+
+What quiet hours remove is the interruption, not the information: `IN_APP` is
+always-on, so the message is still in the inbox for a rider who opens the app
+at 2am of their own accord.
+
+Marking it `OPERATIONAL` would have pushed it through the night, and that is the
+wrong outcome rather than a bolder one. Nothing waits on this particular rider —
+the orders go to whoever is online and the surge is paid to them — so an
+invitation to work at 2am is not the app's decision to make for somebody who
+chose to be offline.
+
+### One switch, and why it is not a channel
+
+`FleetPartner.wantsBusyAlerts` is the only per-KIND preference in the app.
+`NotificationPreference` is keyed by channel, so declining an invitation to work
+through it would also mute "an order is waiting for you" — those are not the
+same consent. A general per-kind table would have exactly one row worth setting,
+because this is the only kind that asks somebody to do something.
+
+On by default: a rider who has not thought about it is better served knowing
+tonight pays more, and one tap turns it off. The switch's copy says what it does
+NOT change, because "stop telling me about surge" reads as "stop paying me
+surge" to somebody scanning it, and a rider who believes that will never touch
+it. The busy panel stays on their offers board either way.
+
+### The alert nobody can write
+
+There is no "the sweep has stopped measuring" notification, and there cannot be
+a useful one: **the thing that would detect it is the thing that stopped.** An
+alert written from inside the sweep to announce that the sweep is not running is
+a check that can never fire. That failure is covered where it can be — the
+banner on `/admin/surge`, which is honest about being visible only to somebody
+who opens it — and properly belongs to whatever watches the cron from outside.
+
+### Three bugs the verification found
+
+**Switching the last step off kept charging.** Deactivating a city's only band
+removed the pair from `pairsToMeasure`, so no further snapshot was written, so
+the newest snapshot stayed at ₱50 with its label — and `currentSurge` reads the
+newest snapshot, which was still inside the freshness window. Customers went on
+paying a surge an operator had just switched off, for up to five minutes, while
+`/admin/surge` said "no steps anywhere, surge adds nothing to any order". The
+screen and the till disagreeing is the exact failure this feature is arranged
+against. A market whose newest reading is non-zero is now measured even with no
+ladder, which writes one zero row and then drops out of the list.
+
+**A ladder change rewrote history.** `sustainedRun` counted readings at-or-above
+the ceiling, so switching the TOP step off — dropping the ceiling from ₱50 to
+₱20 — made every older ₱50 reading count as being at the new ceiling. The run
+stretched back through a ladder that no longer existed and the alert announced a
+city had been short of riders for 765 minutes. Comparison is exact now: a
+reading taken under a different ladder is not evidence about this one.
+
+**The two passes used two clocks, and nobody was ever told anything.** The sweep
+called `recordSurgeSnapshots()` and `sendSurgeAlerts()` with separate `new
+Date()` calls, milliseconds apart. `previousReadings` asks for the newest row
+with `createdAt < now`, so the alert pass's slightly later instant included the
+row the sweep had just written: the previous reading WAS the current reading,
+no market ever looked changed, and not a single alert was sent. Every unit test
+passed. The live-database check passed too — because that harness helpfully
+passed one clock to both, and so tested a wiring that did not exist. It was
+found in a browser, watching a sweep print no alert line. `recordSurgeSnapshots`
+now returns the instant it stamped and the alert pass takes it, so the two agree
+by construction.
+
+The lesson is the one this codebase keeps relearning in new clothes: a test
+harness that is more careful than production tests the harness.
+
 ### The console
 
 `/admin/surge` answers two questions that look like one. *How busy is it?* is
@@ -3181,7 +3307,7 @@ sense as an undrained outbox, and says which command to run.
 
 ## Verification
 
-Database-free, in CI (`npm run verify`) — **1360 tests across 39 files**. The
+Database-free, in CI (`npm run verify`) — **1400 tests across 40 files**. The
 table below names the ones that carry a rule rather than a case; the rest cover
 a single feature each and are named for it.
 
@@ -3205,6 +3331,7 @@ a single feature each and are named for it.
 | `live-tracking.test.ts` | The four gates on a rider's position, the share throttle including a held fix, distance wording, and greps for the privacy boundary and the map's honesty |
 | `payments.test.ts` | The no-top-up rule per instrument and in the database, the prepaid hold across every lifecycle, event signs, the derived status including a short payment, and what the rider is told to collect |
 | `settlement.test.ts` | The order-value split proved exhaustive over every combination of fees, tips and commission; who holds the money per payment method; the cash round trip netting to zero; and the payout ceiling |
+| `surge-alerts.test.ts` | Only a step up counts as news, proved over an hour of simulated measurements; the perishable rule dropping rather than deferring; the sustained-run clock arithmetic; and that no self-detecting stall alert exists |
 | `surge-pricing.test.ts` | The step ladder proved monotonic across the whole ratio range on a mistyped ladder as well as a good one, the ceiling agreeing with the SQL guard, every uncertainty resolving to ₱0, a free-delivery benefit not reaching the rider's surge, and greps that the sweep measures after the timeout pass and the screen sends the figure it displayed |
 | `menu-options.test.ts` | Server-authoritative choice pricing, group bounds, satisfiability, and every tamper case |
 | `menu-photos.test.ts` | Magic-byte sniffing, dimension limits, and the bytes never entering a page payload |

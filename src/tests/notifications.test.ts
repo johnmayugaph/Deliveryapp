@@ -25,6 +25,18 @@ import {
 } from '@/lib/notifications/order-events';
 import { NOTIFICATION_TEMPLATES, renderNotification } from '@/lib/notifications/templates';
 
+/**
+ * `deliverableAt` returns null only for a perishable kind in quiet hours. Every
+ * call below is a kind that is NOT perishable, so asserting non-null here makes
+ * each of these also a check that ordinary messages are still deferred rather
+ * than thrown away.
+ */
+function whenSent(input: Parameters<typeof deliverableAt>[0]): Date {
+  const when = deliverableAt(input);
+  expect(when, 'a non-perishable message must never be dropped').not.toBeNull();
+  return when as Date;
+}
+
 describe('the kind policy', () => {
   it('covers every kind', () => {
     for (const kind of Object.values(NotificationKind)) {
@@ -90,7 +102,7 @@ describe('the kind policy', () => {
     // precisely so quiet hours apply to it.
     const oneAmManila = new Date('2026-09-06T17:00:00.000Z');
     expect(
-      deliverableAt({
+      whenSent({
         urgency: NotificationUrgency.INFORMATIONAL,
         channel: NotificationChannel.PUSH,
         now: oneAmManila,
@@ -101,7 +113,7 @@ describe('the kind policy', () => {
   it('lets an operational push through quiet hours', () => {
     const oneAmManila = new Date('2026-09-06T17:00:00.000Z');
     expect(
-      deliverableAt({
+      whenSent({
         urgency: NotificationUrgency.OPERATIONAL,
         channel: NotificationChannel.PUSH,
         now: oneAmManila,
@@ -190,7 +202,7 @@ describe('quiet hours', () => {
   });
 
   it('defers an informational SMS to the end of quiet hours rather than dropping it', () => {
-    const when = deliverableAt({
+    const when = whenSent({
       urgency: NotificationUrgency.INFORMATIONAL,
       channel: NotificationChannel.SMS,
       now: twoAm,
@@ -203,7 +215,7 @@ describe('quiet hours', () => {
   it('sends an operational SMS at 2am anyway', () => {
     // A store that finds out at 6am about an order placed at 1am has lost it.
     expect(
-      deliverableAt({
+      whenSent({
         urgency: NotificationUrgency.OPERATIONAL,
         channel: NotificationChannel.SMS,
         now: twoAm,
@@ -213,7 +225,7 @@ describe('quiet hours', () => {
 
   it('never defers the inbox', () => {
     expect(
-      deliverableAt({
+      whenSent({
         urgency: NotificationUrgency.INFORMATIONAL,
         channel: NotificationChannel.IN_APP,
         now: twoAm,

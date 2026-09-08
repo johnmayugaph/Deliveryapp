@@ -11,6 +11,8 @@ import { computeAcceptanceRate } from '@/lib/fleet/offer-policy';
 import { OfferCard } from '@/components/fleet/OfferCard';
 import { OrderLiveRefresh } from '@/components/orders/OrderLiveRefresh';
 import { formatCentavos } from '@/lib/money';
+import { busyMarketsForPartner } from '@/lib/pricing/surge';
+import { getService } from '@/lib/services/registry';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,12 +30,22 @@ export default async function FleetOffersPage() {
     redirect('/fleet/apply');
   }
 
-  const [offers, activeJob, earnings, tallies] = await Promise.all([
+  const [offers, activeJob, earnings, tallies, busy] = await Promise.all([
     listPartnerOffers(partner.id),
     getActiveJob(partner.id),
     getPartnerEarnings(partner),
     getOfferTallies(partner.id),
+    busyMarketsForPartner(partner),
   ]);
+
+  // The service names for the busy panel. Read from the registry rather than
+  // rendered from the key, so the panel says "Food" and not "FOOD".
+  const busyRows = await Promise.all(
+    busy.map(async (market) => ({
+      ...market,
+      serviceName: (await getService(market.serviceType)).displayName,
+    })),
+  );
 
   // Computed from the offer records, not from the stored ranking figure: that
   // one defaults to 1 so a new partner is not buried in the candidate list,
@@ -54,6 +66,38 @@ export default async function FleetOffersPage() {
           value={acceptanceRate === null ? '—' : `${Math.round(acceptanceRate * 100)}%`}
         />
       </section>
+
+      {/* Why tonight pays more, on the screen the alert points at.
+          Read from the same snapshot a customer's quote reads, so the figure
+          in the notification and the figure here cannot disagree — and shown
+          to an offline rider too, since they are the ones being invited. */}
+      {busyRows.length > 0 && !partner.isSuspended ? (
+        <section
+          aria-label="Busy right now"
+          className="mx-4 mb-3 rounded-xl bg-amber-50 px-3 py-3 ring-1 ring-amber-200"
+        >
+          <p className="text-[13px] font-bold text-amber-900">Busy right now</p>
+          <ul className="mt-1.5 space-y-1">
+            {busyRows.map((market) => (
+              <li
+                key={market.serviceType}
+                className="flex items-baseline justify-between gap-3 text-xs text-amber-900"
+              >
+                <span>
+                  {market.serviceName} · {market.label}
+                </span>
+                <span className="font-bold tabular-nums">
+                  +{formatCentavos(market.surgeCentavos)}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-amber-800">
+            Added to every job you take while it lasts, on top of the fee and
+            any tip. It changes as riders come online.
+          </p>
+        </section>
+      ) : null}
 
       {activeJob ? (
         <Link
@@ -87,7 +131,9 @@ export default async function FleetOffersPage() {
         </div>
       ) : !partner.isOnline ? (
         <p className="px-4 py-10 text-center text-sm text-ink-muted">
-          You are offline. Go online to receive offers.
+          {busyRows.length > 0
+            ? 'You are offline. Go online to take these jobs.'
+            : 'You are offline. Go online to receive offers.'}
         </p>
       ) : activeJob ? (
         <p className="px-4 py-8 text-center text-sm text-ink-muted">

@@ -72,6 +72,14 @@ export interface NotificationContext {
    * would be a second place deciding what each status means.
    */
   verificationApproved?: boolean;
+  /** For a surge alert: the step's own name, and what it adds per job. */
+  surgeLabel?: string;
+  surgeCentavos?: number;
+  /** For a surge alert: the market, so a rider knows whether it is near them. */
+  surgeOrdersWaiting?: number;
+  surgeRidersAvailable?: number;
+  /** For a sustained-surge alert: how long it has been pinned there. */
+  surgeMinutes?: number;
 }
 
 export interface RenderedNotification {
@@ -485,6 +493,63 @@ export const NOTIFICATION_TEMPLATES: Readonly<Record<NotificationKind, Template>
       // the type asks for it, and a future decision to add the channel should
       // not have to invent the words under pressure.
       sms: `TARA: ${depth} payment(s) waiting to be confirmed.`,
+    };
+  },
+
+  /**
+   * To an offline rider: your city is short of riders and there is more money
+   * on every job right now.
+   *
+   * Written as an invitation with the numbers in it, not as an instruction.
+   * The amount is the whole point — "it is busy" tells a rider nothing they
+   * can decide on, and a message that asks somebody to go out in the rain owes
+   * them the figure it is worth. The queue depth is there because a rider
+   * knows their own city: three waiting is a rush, twelve is a night.
+   *
+   * There is no SMS form and there never should be. This is the one kind sent
+   * to a whole city's worth of riders at once, so a peso a message turns a busy
+   * Friday into the biggest line on the bill — and it is also the one kind
+   * nobody is waiting for, which is exactly the shape of message that teaches
+   * people to ignore texts from us.
+   */
+  [NotificationKind.SURGE_ACTIVE]: (context) => {
+    const extra = formatCentavos(context.surgeCentavos ?? 0);
+    const city = context.cityName ?? 'your area';
+    const waiting = context.surgeOrdersWaiting ?? 0;
+    return {
+      title: `${extra} extra per job in ${city}`,
+      body:
+        `${context.surgeLabel ?? 'Busy'} right now — ${waiting} ` +
+        `${waiting === 1 ? 'order' : 'orders'} waiting for a rider. ` +
+        `Go online and ${extra} is added to every job you take while it lasts.`,
+      // Never sent. Kept truthful rather than empty, because an SMS body is a
+      // stored column and a blank one would read as a bug to whoever finds it.
+      sms: `TARA: ${extra} extra per job in ${city} right now.`,
+    };
+  },
+
+  /**
+   * To an administrator: a market has been at its top step long enough that
+   * the price is no longer doing anything.
+   *
+   * Deliberately not phrased as an incident. Surge exists to pull riders out
+   * for a spike; a market pinned at the ceiling for an hour has been offered
+   * everything the ladder has and is still short, which is a recruitment
+   * problem rather than a pricing one. The message says that, so nobody spends
+   * the afternoon adding a higher step.
+   */
+  [NotificationKind.SURGE_SUSTAINED]: (context) => {
+    const city = context.cityName ?? 'a city';
+    const minutes = context.surgeMinutes ?? 0;
+    return {
+      title: `${city}: top surge step for ${minutes} minutes`,
+      body:
+        `${city} has been at ${formatCentavos(context.surgeCentavos ?? 0)} — ` +
+        `the highest step configured — for ${minutes} minutes, with ` +
+        `${context.surgeOrdersWaiting ?? 0} waiting and ` +
+        `${context.surgeRidersAvailable ?? 0} riders free. That is short ` +
+        'staffing rather than a spike, and a higher step will not fix it.',
+      sms: `TARA: ${city} has been at the top surge step for ${minutes} minutes.`,
     };
   },
 

@@ -35,6 +35,24 @@ export interface KindPolicy {
    * marketing message is unmutable, the switch means nothing.
    */
   unmutable?: boolean;
+  /**
+   * The message stops being TRUE, not merely late.
+   *
+   * Every other kind in this file describes something that happened: an order
+   * was cancelled, a rating arrived, a payment cleared. Held overnight those
+   * read no differently at 6am, which is why quiet hours DEFER them.
+   *
+   * A perishable kind describes a condition — "it is busy in Manila right now,
+   * ₱20 extra a job" — and deferring it produces a message that is not late
+   * but wrong: a rider who gets up for it finds an ordinary morning. So quiet
+   * hours DROP it instead, and the delivery pass drops one that went stale
+   * waiting in the queue.
+   *
+   * The bar for adding this is that a reader acting on the message an hour
+   * later would be misled. "You have been paid" is never perishable. "Come out
+   * now" always is.
+   */
+  perishable?: boolean;
 }
 
 /**
@@ -257,6 +275,52 @@ export const KIND_POLICY: Readonly<Record<NotificationKind, KindPolicy>> = {
     channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
   },
 
+  /**
+   * It is busy, come out.
+   *
+   * The only PERISHABLE kind, and the flag exists for it. Deferring this to
+   * 6am does not make it late, it makes it false — a rider who gets up for a
+   * surge that ended at midnight has been lied to by the app, and will read
+   * the next one as noise. So quiet hours DROP the push rather than hold it.
+   *
+   * INFORMATIONAL is the honest urgency even though the money is real. Nothing
+   * is waiting on this particular rider: the orders will be offered to whoever
+   * is online, and the surge is paid to them. Marking it OPERATIONAL would let
+   * it through quiet hours, which is precisely the wrong outcome — this is an
+   * invitation to work at 2am, and the app does not get to decide that for
+   * somebody who chose to be offline.
+   *
+   * Push and inbox, never SMS. It goes to every eligible rider in a city at
+   * once, so the volume is exactly the number that spikes on the worst night:
+   * a channel that can spend a peso a head on a busy Friday is one somebody
+   * switches off. The inbox keeps the record; push does the reach.
+   */
+  [NotificationKind.SURGE_ACTIVE]: {
+    urgency: NotificationUrgency.INFORMATIONAL,
+    channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
+    perishable: true,
+  },
+
+  /**
+   * A market has been at the top step long enough to be understaffed rather
+   * than busy.
+   *
+   * NOT perishable, and the contrast with the kind above is the whole point:
+   * "it is busy right now" expires, whereas "this city was short of riders for
+   * an hour last night" is a fact that reads the same over breakfast — and is
+   * arguably more useful then, since the answer is recruitment rather than
+   * anything doable at midnight. So quiet hours defer it, as they do every
+   * other informational message.
+   *
+   * Not SMS, on the same reasoning as the other administrator alerts: the rate
+   * is bounded by how bad the week is, which is when a monitoring channel must
+   * not start spending money.
+   */
+  [NotificationKind.SURGE_SUSTAINED]: {
+    urgency: NotificationUrgency.INFORMATIONAL,
+    channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
+  },
+
   // Somebody sent money and is watching the screen for it to be acknowledged.
   // Push, because the wait is the point; no SMS, because the app is already
   // open in front of them.
@@ -419,19 +483,48 @@ export function quietHoursEnd(at: Date): Date {
  * OPERATIONAL messages ignore quiet hours. Somebody is waiting on an action,
  * and a store that finds out at 6am about an order placed at 1am has already
  * lost it.
+ *
+ * **Null means never** — not "now", and not "later". Returned only for a
+ * `perishable` kind caught in quiet hours, where the deferral this function
+ * otherwise performs would deliver a message that has become untrue. The
+ * caller writes an EXPIRED row so the record still says what we chose not to
+ * send, and why.
+ *
+ * The inbox is unaffected: IN_APP is always-on, so the message is still there
+ * to be read by a rider who opens the app at 2am of their own accord. What is
+ * dropped is the interruption, which is the part that would have been a lie.
  */
 export function deliverableAt(input: {
   urgency: NotificationUrgency;
   channel: NotificationChannel;
   now: Date;
-}): Date {
+  perishable?: boolean | undefined;
+}): Date | null {
   if (ALWAYS_ON_CHANNELS.includes(input.channel)) {
     return input.now;
   }
   if (input.urgency === NotificationUrgency.OPERATIONAL) {
     return input.now;
   }
-  return isQuietHour(input.now) ? quietHoursEnd(input.now) : input.now;
+  if (!isQuietHour(input.now)) {
+    return input.now;
+  }
+  return input.perishable ? null : quietHoursEnd(input.now);
+}
+
+/**
+ * How long a perishable message may wait in the outbox, in seconds.
+ *
+ * The same five minutes the surge snapshot itself is trusted for, and for the
+ * same reason: past that the condition it describes is one nobody can still
+ * observe. This is what stops a sweep that was down for twenty minutes from
+ * coming back and telling two hundred riders about a rush that is over.
+ */
+export const PERISHABLE_MAX_AGE_SECONDS = 5 * 60;
+
+/** True when a perishable message has been waiting long enough to be wrong. */
+export function perishedBy(enqueuedAt: Date, now: Date): boolean {
+  return now.getTime() - enqueuedAt.getTime() > PERISHABLE_MAX_AGE_SECONDS * 1_000;
 }
 
 // --- Retries -----------------------------------------------------------------

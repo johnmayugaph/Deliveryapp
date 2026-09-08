@@ -4,7 +4,9 @@ import {
 } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import {
+  KIND_POLICY,
   MAX_DELIVERY_ATTEMPTS,
+  perishedBy,
   retryDelayMs,
 } from '@/lib/notifications/policy';
 import { resolveChannels } from '@/lib/notifications/channels';
@@ -73,6 +75,26 @@ export async function deliverPending(
       if (!result.unconfigured.includes(delivery.channel)) {
         result.unconfigured.push(delivery.channel);
       }
+      continue;
+    }
+
+    // A perishable message that waited too long is dropped rather than sent.
+    //
+    // Quiet hours are handled at enqueue time, but this is the other way one
+    // goes stale: the sweep stops for twenty minutes, comes back, and finds a
+    // queue of "it is busy right now" pushes for a rush that is over. Sending
+    // those is worse than sending nothing — a rider who comes out on the
+    // strength of one finds an ordinary afternoon, and learns to ignore the
+    // next.
+    if (
+      KIND_POLICY[delivery.notification.kind].perishable &&
+      perishedBy(delivery.notification.createdAt, now)
+    ) {
+      await prisma.notificationDelivery.update({
+        where: { id: delivery.id },
+        data: { status: NotificationDeliveryStatus.EXPIRED },
+      });
+      result.skipped += 1;
       continue;
     }
 

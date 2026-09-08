@@ -12,6 +12,7 @@ import {
 } from '@/lib/fleet/verification-policy';
 import { getAllServices } from '@/lib/services/registry';
 import { ApplyForServiceButton } from '@/components/fleet/ApplyForServiceButton';
+import { BusyAlertsToggle } from '@/components/fleet/BusyAlertsToggle';
 import { formatCentavos } from '@/lib/money';
 import { partnerReviews } from '@/lib/ratings/reviews';
 import { ReviewPanel } from '@/components/ui/ReviewPanel';
@@ -156,6 +157,8 @@ export default async function FleetProfilePage() {
           Contact support to change vehicles.
         </p>
       </section>
+
+      <BusyAlertsToggle enabled={partner.wantsBusyAlerts} />
 
       {/* Their own numbers, in full — the customer-facing threshold does not
           apply to somebody looking at their own record. */}

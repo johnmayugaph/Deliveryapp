@@ -15,6 +15,7 @@ import {
   recordSurgeSnapshots,
   type SnapshotPassResult,
 } from '@/lib/pricing/surge';
+import { sendSurgeAlerts, type AlertPassResult } from '@/lib/pricing/surge-alerts';
 import { heldForCustomerCentavos } from '@/lib/payments/events';
 import { resolvePaymentRail } from '@/lib/payments/rails';
 import { pruneSessions, pruneVerifications } from '@/lib/auth/prune';
@@ -754,6 +755,7 @@ export async function runMaintenance(): Promise<{
   dispatched: FanOutResult[];
   expired: ExpiredOrderResult[];
   surge: SnapshotPassResult;
+  surgeAlerts: AlertPassResult;
   subscriptions: RenewalOutcome[];
   launchAnnouncements: LaunchAnnouncementResult;
   errorAlerts: ErrorAlertResult;
@@ -778,6 +780,15 @@ export async function runMaintenance(): Promise<{
   // counting it would charge the next customer surge for pressure that has
   // already been released.
   const surge = await recordSurgeSnapshots();
+  // From the rows just written, not from a fresh measurement: the figure a
+  // rider is invited out by has to be the figure a customer is being charged.
+  // Enqueues only — the messages themselves go out in the delivery pass below,
+  // which is why this sits above it.
+  // `surge.at`, NOT a fresh `new Date()`. The two passes have to share one
+  // instant: `previousReadings` selects the newest row strictly before it, so
+  // an alert pass a few milliseconds later would include the row the sweep had
+  // just written and every market would look unchanged forever.
+  const surgeAlerts = await sendSurgeAlerts(surge.written, surge.at);
   // Subscriptions are swept after the order work: a lapsed subscription already
   // grants nothing (the pricing engine checks `renewsAt`), so this is
   // record-keeping and can wait behind anything a customer is watching.
@@ -819,6 +830,7 @@ export async function runMaintenance(): Promise<{
     dispatched,
     expired,
     surge,
+    surgeAlerts,
     subscriptions,
     launchAnnouncements,
     errorAlerts,
