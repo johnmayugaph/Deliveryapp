@@ -1555,6 +1555,11 @@ enum NotificationKind {
   /// said so. A DIGEST, deliberately — one message covering several ratings
   /// rather than a buzz per star. Carries the scores and never the words.
   RATINGS_RECEIVED
+  /// To a fleet partner: a decision was made about one of their applications.
+  /// Named per service, because that is the only useful version of the news —
+  /// "you are approved" without saying for what is not actionable. A refusal
+  /// carries the reason verbatim, since the point is that they can fix it.
+  FLEET_VERIFICATION_DECIDED
 }
 
 /// How a message reaches someone.
@@ -1767,6 +1772,14 @@ enum AdminAction {
   /// administrator. The console does this to bootstrap a NEW partner store,
   /// which has nobody at it who could invite the first owner.
   STORE_MEMBERSHIP_CHANGED
+  /// A fleet partner was approved for, or refused, ONE service. Per service on
+  /// purpose: approval to carry food is not approval to carry a passenger, and
+  /// the audit trail has to be able to say which decision was made.
+  FLEET_VERIFICATION_CHANGED
+  /// A fleet partner was suspended from all work, or reinstated. Separate from
+  /// the per-service decision because it is not a judgement about documents —
+  /// it stops everything at once, and it is reversible.
+  FLEET_SUSPENSION_CHANGED
 }
 
 /// One privileged action, and why.

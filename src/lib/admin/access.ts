@@ -168,4 +168,6 @@ export const ADMIN_ACTION_LABEL: Readonly<Record<AdminAction, string>> = {
   [AdminAction.ADMIN_ROLE_CHANGED]: 'Console access granted or revoked',
   [AdminAction.ERROR_REPORT_RESOLVED]: 'Error report marked fixed or reopened',
   [AdminAction.STORE_MEMBERSHIP_CHANGED]: "Store staff added, moved or removed",
+  [AdminAction.FLEET_VERIFICATION_CHANGED]: 'Fleet partner approved or refused for a service',
+  [AdminAction.FLEET_SUSPENSION_CHANGED]: 'Fleet partner suspended or reinstated',
 };

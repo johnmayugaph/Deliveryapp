@@ -237,6 +237,25 @@ export const KIND_POLICY: Readonly<Record<NotificationKind, KindPolicy>> = {
     urgency: NotificationUrgency.INFORMATIONAL,
     channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
   },
+
+  /**
+   * A decision on one of a partner's applications.
+   *
+   * The same shape as store access, and for the same reasons. INFORMATIONAL,
+   * so quiet hours DEFER it to 6am rather than dropping it — which is before
+   * any shift starts, and better than waking somebody at 2am to tell them
+   * their licence photo was rejected.
+   *
+   * Not SMS, and this one was arguable: the message unlocks a person's
+   * income, and a rider waiting on it is the most motivated reader in the
+   * system. What settles it is that they applied from inside this app, so
+   * they have it installed and the free channels reach them — and that the
+   * expensive channel should be reserved for what push CANNOT do.
+   */
+  [NotificationKind.FLEET_VERIFICATION_DECIDED]: {
+    urgency: NotificationUrgency.INFORMATIONAL,
+    channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
+  },
 };
 
 /**

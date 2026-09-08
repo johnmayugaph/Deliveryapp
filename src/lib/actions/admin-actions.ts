@@ -8,6 +8,7 @@ import {
   ServiceKey,
   SubscriptionStatus,
   StoreRole,
+  VerificationStatus,
 } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import {
@@ -43,6 +44,18 @@ import {
   LastOwnerError,
 } from '@/lib/merchant/staff-policy';
 import { uniqueStoreSlug } from '@/lib/admin/stores';
+import {
+  AlreadyInThatStateError,
+  DecisionNeedsReasonError,
+  NotAnApplicationError,
+  UndecidableStatusError,
+  decideVerification,
+  setPartnerSuspended,
+} from '@/lib/fleet/verification';
+import {
+  VERIFICATION_STATUS_LABEL,
+  isDecision,
+} from '@/lib/fleet/verification-policy';
 import {
   isFiniteCoordinate,
   isInPhilippines,
@@ -990,4 +1003,152 @@ export async function revokeStoreAccessAction(
     }
     throw error;
   }
+}
+
+// --- The fleet ---------------------------------------------------------------
+
+/**
+ * A decision on one fleet application.
+ *
+ * This is the action that ended the last SSH-only job in the application.
+ * `npm run fleet:approve` still works and still says the same things, but it
+ * cannot record who decided, cannot tell the rider, and needs somebody with a
+ * shell and the production database — for a job that is done daily, from a
+ * phone, while looking at a photograph of a licence.
+ *
+ * One service per submission, deliberately: the form posts a single
+ * `serviceType`, so nothing here can clear somebody for two verticals at once.
+ * The reason is required by the audit trail like everywhere else in this file,
+ * and on a refusal it is ALSO what the applicant is shown on their own screen —
+ * one field rather than two, because an administrator writing "see notes" in
+ * the box the rider reads is how a refusal becomes a dead end.
+ */
+export async function decideFleetApplicationAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const partnerId = String(formData.get('partnerId') ?? '').trim();
+    const serviceType = String(formData.get('serviceType') ?? '').trim();
+    const decision = String(formData.get('decision') ?? '').trim();
+    const reason = normaliseReason(formData.get('reason'));
+
+    if (!isDecision(decision)) {
+      return { ok: false, message: 'Approve, refuse or suspend — nothing else.' };
+    }
+    if (!(serviceType in ServiceKey)) {
+      return { ok: false, message: 'That is not a service.' };
+    }
+
+    const partner = await prisma.fleetPartner.findUnique({
+      where: { id: partnerId },
+      select: { id: true, user: { select: { fullName: true, phone: true } } },
+    });
+    if (!partner) return { ok: false, message: 'No such fleet partner.' };
+
+    try {
+      const outcome = await decideVerification({
+        fleetPartnerId: partner.id,
+        serviceType: serviceType as ServiceKey,
+        status: decision,
+        reason,
+        decidedByUserId: admin.id,
+      });
+
+      await recordAdminAction({
+        actorId: admin.id,
+        action: AdminAction.FLEET_VERIFICATION_CHANGED,
+        subjectType: 'FleetPartner',
+        subjectId: partner.id,
+        subjectLabel: partner.user.fullName ?? partner.user.phone,
+        reason,
+        detail: {
+          serviceType,
+          decision,
+          enabledServices: outcome.enabledServices,
+        },
+      });
+
+      revalidatePath('/admin/fleet');
+      revalidatePath(`/admin/fleet/${partner.id}`);
+      return {
+        ok: true,
+        message:
+          decision === VerificationStatus.APPROVED
+            ? `Approved for ${outcome.serviceName}. They have been told, and offers can reach them.`
+            : `${outcome.serviceName} set to ${VERIFICATION_STATUS_LABEL[decision].toLowerCase()}. They have been told, with the reason.`,
+      };
+    } catch (error) {
+      if (
+        error instanceof NotAnApplicationError ||
+        error instanceof UndecidableStatusError ||
+        error instanceof AlreadyInThatStateError ||
+        error instanceof DecisionNeedsReasonError
+      ) {
+        return { ok: false, message: error.message };
+      }
+      throw error;
+    }
+  });
+}
+
+/**
+ * Stops a partner working, or lets them start again.
+ *
+ * Not a judgement about documents — "not today, whatever the documents say" —
+ * so it leaves every per-service approval intact and reinstating somebody is
+ * one click rather than three decisions taken again. The audit row is what
+ * makes that reversible without argument.
+ */
+export async function setFleetSuspensionAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const partnerId = String(formData.get('partnerId') ?? '').trim();
+    const suspended = formData.get('suspended') === 'true';
+    const reason = normaliseReason(formData.get('reason'));
+
+    const partner = await prisma.fleetPartner.findUnique({
+      where: { id: partnerId },
+      select: {
+        id: true,
+        isSuspended: true,
+        user: { select: { fullName: true, phone: true } },
+      },
+    });
+    if (!partner) return { ok: false, message: 'No such fleet partner.' };
+    if (partner.isSuspended === suspended) {
+      return { ok: false, message: 'That partner is already in that state.' };
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await setPartnerSuspended({
+        fleetPartnerId: partner.id,
+        isSuspended: suspended,
+        client: tx,
+      });
+      await recordAdminAction(
+        {
+          actorId: admin.id,
+          action: AdminAction.FLEET_SUSPENSION_CHANGED,
+          subjectType: 'FleetPartner',
+          subjectId: partner.id,
+          subjectLabel: partner.user.fullName ?? partner.user.phone,
+          reason,
+          detail: { before: partner.isSuspended, after: suspended },
+        },
+        tx,
+      );
+    });
+
+    revalidatePath('/admin/fleet');
+    revalidatePath(`/admin/fleet/${partner.id}`);
+    return {
+      ok: true,
+      message: suspended
+        ? 'Suspended from all work, and taken offline.'
+        : 'Reinstated. Their existing approvals are unchanged.',
+    };
+  });
 }

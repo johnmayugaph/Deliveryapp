@@ -6,10 +6,17 @@
  *     npm run fleet:approve -- +639175550123 FOOD RIDE
  *     npm run fleet:approve -- 0917 555 0123 --reject FOOD "Expired licence"
  *
- * There is no admin UI yet, and approval must not be self-service: the whole
- * point of per-service verification is that approval for food is not approval
- * to carry a passenger. This script is the honest stand-in — a real console is
- * a later phase, and until then somebody has to run this deliberately.
+ * **Prefer the console: `/admin/fleet`.** It is the same decision with three
+ * things this cannot do — it records who decided, on the row and in the audit
+ * log; it tells the partner which service it was about; and it refuses to
+ * decide a service nobody applied for, where this script will happily create
+ * an approval out of nothing.
+ *
+ * This is kept for the case the console cannot serve: nobody has console
+ * access yet. That is a real state — a fresh deployment where the first
+ * administrator has not been granted — and it is the same reason
+ * `scripts/grant-admin.ts` exists. A shell has no identity to record, which is
+ * exactly why it is the second choice rather than the first.
  */
 import { PrismaClient, ServiceKey, VerificationStatus } from '@prisma/client';
 import { normalisePhilippineMobile } from '../src/lib/auth/phone';

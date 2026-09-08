@@ -487,9 +487,11 @@ knowing passengers exist.
 Applying creates the `FleetPartner` record and a PENDING
 `FleetPartnerServiceVerification` per service; `enabledServices` stays **empty**
 until somebody approves. That is the per-service model doing its job: approval
-to carry food is not approval to carry a passenger. There is no admin console
-yet, so `npm run fleet:approve -- <phone> FOOD` is the honest stand-in — a
-deliberate act by a person, not a button the applicant can press.
+to carry food is not approval to carry a passenger.
+
+Decided in the console, at `/admin/fleet` — see below. `npm run fleet:approve`
+still works and is kept for the one case the console cannot serve: a fresh
+deployment where nobody has console access yet.
 
 Going online requires a position, because dispatch ranks on distance and a
 partner with no location can never be a candidate. Appearing "online" while
@@ -1799,6 +1801,70 @@ broken by adding one more function that looks like the others.
 `getAdminUser()` also checks `isBlocked` separately from the role, because
 blocking an account that happens to be an admin should stop them using the
 console rather than only stop them ordering lunch.
+
+### Deciding who may take work
+
+`/admin/fleet` replaced the last job in this application that could only be done
+over SSH. Approving riders was `npm run fleet:approve`, run by whoever had the
+production database — for something done daily, from a phone, while looking at a
+photograph of a licence. Three things that script cannot do:
+
+- **Record who decided.** A shell has no identity, so
+  `FleetPartnerServiceVerification.decidedByUserId` stayed null and no audit row
+  was written. The console sets both.
+- **Tell the rider.** Somebody waiting to work learned nothing until they
+  guessed to check their profile.
+- **Refuse to decide an application nobody made.** The script upserts, so it
+  will happily create an approval for a vertical whose documents nobody
+  submitted — which is exactly the mistake the per-service table exists to
+  prevent. The console reads the row and throws `NotAnApplicationError` when
+  there is none.
+
+The queue is one row per APPLICATION, not per partner, oldest first: that is the
+unit of the decision, and a rider approved for food while waiting on passengers
+should appear once, for the thing still outstanding. Same ordering rule as the
+support queue, for the same reason — a list sorted newest-first is how somebody
+who applied on Monday is still waiting on Friday.
+
+**One decision per submission.** Each application renders its own controls, with
+the service in a hidden field; nothing in the console can approve two verticals
+at once. `enabledServices` is recalculated from the verification rows inside the
+same transaction — dispatch reads that array on every candidate query, so a
+value assigned from what the caller intended is a quiet misroute.
+
+**The refusal reason is the applicant's, not the log's.** It goes to
+`rejectionReason`, which the partner's own profile screen shows, and to the
+audit row — one field, because an administrator writing "see notes" in the box
+the rider reads is how a refusal becomes a dead end. The form says so where it
+is typed. An approval clears any previous reason, so nobody reads last month's
+rejection beside the word "Approved".
+
+**Suspension is a separate judgement** from the per-service decisions: not
+whether the documents are good but whether somebody should be working at all
+today. It leaves every approval intact — reinstating is one click rather than
+three decisions taken again — and it clears `isOnline`, because a partner left
+online while suspended is one dispatch keeps considering and skipping while
+their own screen says they are working.
+
+Each decided row says **"they were told"**, and only where a decider is
+recorded. That is the one thing an administrator cannot otherwise see, it is
+true by construction (the message is enqueued in the same transaction), and a
+row decided in a shell says so instead — claiming otherwise about somebody
+still waiting to hear would be a comfortable lie.
+
+### Every control refreshes the page it changed
+
+`ReasonForm` calls `router.refresh()` after a successful action, and that is not
+a nicety. The actions call `revalidatePath`, which invalidates the **server's**
+copy; the page the operator is looking at was rendered before the click, and a
+server action invoked from inside a client function is a plain call rather than
+a navigation. Without the refresh the console reads back the state it had
+before: an application approved a moment ago still says "Pending", so somebody
+clicks again and is told the decision was "already in that state".
+
+Found in a browser against a production build while verifying the fleet screen,
+and it applied to every control in the console, since they all come through
+this one component.
 
 ### The audit trail is append-only, in the database
 

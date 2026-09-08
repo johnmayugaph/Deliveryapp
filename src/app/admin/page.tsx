@@ -3,6 +3,7 @@ import { formatCentavos } from '@/lib/money';
 import { requireAdmin } from '@/lib/admin/access';
 import { deliveryHealth, platformSummary, serviceHealth } from '@/lib/admin/queries';
 import { supportSummary } from '@/lib/support/queries';
+import { countPendingApplications } from '@/lib/admin/fleet';
 import { adminReviewFeed, ratingSummary } from '@/lib/ratings/reviews';
 import { displayNameFor } from '@/lib/auth/session';
 import { describeWait } from '@/lib/support/policy';
@@ -37,8 +38,16 @@ export const dynamic = 'force-dynamic';
 export default async function AdminOverviewPage() {
   await requireAdmin();
 
-  const [summary, services, health, liveOrders, support, ratings, lowReviews] =
-    await Promise.all([
+  const [
+    summary,
+    services,
+    health,
+    liveOrders,
+    support,
+    ratings,
+    lowReviews,
+    ridersWaiting,
+  ] = await Promise.all([
     platformSummary(),
     serviceHealth(),
     deliveryHealth(),
@@ -46,6 +55,7 @@ export default async function AdminOverviewPage() {
     supportSummary(),
     ratingSummary(),
     adminReviewFeed(8),
+    countPendingApplications(),
   ]);
 
   const failedTotal = health.byChannel.reduce((sum, row) => sum + row.failed, 0);
@@ -71,10 +81,17 @@ export default async function AdminOverviewPage() {
           value={formatCentavos(summary.creditFloatCentavos)}
           note={`${formatCentavos(summary.creditsGrantedTodayCentavos)} granted today`}
         />
+        {/* The waiting count is always in the note, including as a zero — a
+            number that only appears when it is bad is one nobody learns to
+            read, and an unapproved rider cannot earn. */}
         <Stat
           label="Fleet online"
           value={`${summary.fleetOnline} / ${summary.fleetApproved}`}
-          note="online / approved"
+          note={
+            ridersWaiting === 0
+              ? 'online / approved · none waiting'
+              : `${ridersWaiting} waiting on approval`
+          }
         />
         <Stat
           label="Stores open"

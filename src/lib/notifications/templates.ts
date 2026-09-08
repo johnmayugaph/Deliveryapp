@@ -61,6 +61,12 @@ export interface NotificationContext {
    * believing the title.
    */
   ticketEvent?: 'NEW' | 'CUSTOMER_REPLIED' | 'STILL_WAITING';
+  /**
+   * For a fleet decision: whether it was a yes. A boolean rather than the
+   * status enum, because a template that switched on `VerificationStatus`
+   * would be a second place deciding what each status means.
+   */
+  verificationApproved?: boolean;
 }
 
 export interface RenderedNotification {
@@ -363,6 +369,33 @@ export const NOTIFICATION_TEMPLATES: Readonly<Record<NotificationKind, Template>
       context.ticketNumber ?? 'your message'
     }. Open the app to read it.`,
   }),
+
+  /**
+   * A decision on a fleet application.
+   *
+   * Names the service in the title, because "you have been approved" without
+   * saying for what is not something anybody can act on — and a partner may
+   * hold three applications at three different stages at once.
+   *
+   * A refusal carries the reason verbatim. That is the whole value of the
+   * message: the point of telling somebody their application failed is that
+   * they can fix the thing and come back.
+   */
+  [NotificationKind.FLEET_VERIFICATION_DECIDED]: (context) => {
+    const service = context.serviceName ?? 'a service';
+    const approved = context.verificationApproved === true;
+    return {
+      title: approved ? `Approved for ${service}` : `${service}: not approved`,
+      body:
+        (approved
+          ? `You can take ${service} jobs now — go online and offers will reach you.`
+          : `Your ${service} application was not approved.`) +
+        (context.reason ? ` Reason: ${context.reason}` : ''),
+      sms: approved
+        ? `TARA: you are approved for ${service}.`
+        : `TARA: your ${service} application was not approved. Open the app for details.`,
+    };
+  },
 };
 
 export function renderNotification(

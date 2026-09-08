@@ -1,5 +1,4 @@
 import { redirect } from 'next/navigation';
-import { VerificationStatus } from '@prisma/client';
 import {
   getFleetPartner,
   getOfferTallies,
@@ -7,6 +6,10 @@ import {
   listVerifications,
 } from '@/lib/fleet/partner';
 import { computeAcceptanceRate } from '@/lib/fleet/offer-policy';
+import {
+  VERIFICATION_STATUS_CLASSES,
+  VERIFICATION_STATUS_LABEL,
+} from '@/lib/fleet/verification-policy';
 import { getAllServices } from '@/lib/services/registry';
 import { ApplyForServiceButton } from '@/components/fleet/ApplyForServiceButton';
 import { formatCentavos } from '@/lib/money';
@@ -15,21 +18,10 @@ import { ReviewPanel } from '@/components/ui/ReviewPanel';
 
 export const dynamic = 'force-dynamic';
 
-const STATUS_LABELS: Record<VerificationStatus, string> = {
-  [VerificationStatus.NOT_SUBMITTED]: 'Not applied',
-  [VerificationStatus.PENDING]: 'Pending',
-  [VerificationStatus.APPROVED]: 'Approved',
-  [VerificationStatus.REJECTED]: 'Rejected',
-  [VerificationStatus.SUSPENDED]: 'Suspended',
-};
-
-const STATUS_CLASSES: Record<VerificationStatus, string> = {
-  [VerificationStatus.NOT_SUBMITTED]: 'bg-surface-sunken text-ink-faint',
-  [VerificationStatus.PENDING]: 'bg-amber-50 text-amber-800',
-  [VerificationStatus.APPROVED]: 'bg-emerald-50 text-emerald-800',
-  [VerificationStatus.REJECTED]: 'bg-rose-50 text-rose-800',
-  [VerificationStatus.SUSPENDED]: 'bg-rose-50 text-rose-800',
-};
+/* The labels and the pill colours live in `fleet/verification-policy.ts`
+ * rather than here, because the console shows the same rows: a rider reading
+ * "Pending" and an administrator deciding on it must be looking at the same
+ * word. */
 
 /**
  * The partner's own record.
@@ -89,9 +81,9 @@ export default async function FleetProfilePage() {
                 ) : null}
               </span>
               <span
-                className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${STATUS_CLASSES[row.status]}`}
+                className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${VERIFICATION_STATUS_CLASSES[row.status]}`}
               >
-                {STATUS_LABELS[row.status]}
+                {VERIFICATION_STATUS_LABEL[row.status]}
               </span>
             </li>
           ))}

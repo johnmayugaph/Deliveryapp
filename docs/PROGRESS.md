@@ -776,10 +776,11 @@ real file later is one line in `tailwind.config.ts`.
 - **Dispatch has no worker.** Offers are created by cron, so how fast a partner
   sees a job depends on how often it runs.
 - **The console does not cover everything the CLI does.** `/admin` handles
-  services, people, stores, support, credits, delivery health and the audit
-  log. Fleet approval (`npm run fleet:approve`), plan activation
-  (`npm run plan:activate`) and subscription grants (`npm run plan:comp`) are
-  still CLI scripts.
+  services, people, stores, the fleet, support, credits, delivery health and
+  the audit log. Plan activation (`npm run plan:activate`) and subscription
+  grants (`npm run plan:comp`) are still CLI scripts. Fleet approval moved to
+  the console in Phase 28; the script is kept for a deployment where nobody has
+  console access yet.
 - **Address search has never run against the real Nominatim.** The adapter is
   verified against a stub over a real socket — the exact query parameters, the
   User-Agent, the rate limit, every failure shape — and the environment has no
@@ -1883,3 +1884,88 @@ cannot be published yet, and its first dish with no section given lands under
 "Main".
 
 975 tests pass; build and lint clean.
+
+## Phase 28 — rider approval, in the console ✅
+
+The last job in the whole application that could only be done over SSH.
+Approving a rider was `npm run fleet:approve -- 0917… FOOD`, run by whoever had
+the production database, for something that happens daily, from a phone, while
+looking at a photograph of a licence.
+
+`/admin/fleet` is now that job. The queue is one row per APPLICATION rather
+than per partner, oldest first — that is the unit of the decision, and a rider
+approved for food while still waiting on passengers should appear once, for the
+thing outstanding.
+
+### Three things the script could not do, and this does
+
+- **Record who decided.** A shell has no identity, so `decidedByUserId` stayed
+  null and no audit row was written. Both are now set, and the row on screen
+  names the person.
+- **Tell the rider.** `FLEET_VERIFICATION_DECIDED` is enqueued in the same
+  transaction as the decision — named per service, because "you are approved"
+  without saying for what is not actionable, and carrying the refusal reason
+  verbatim, because the point of telling somebody their application failed is
+  that they can fix it. IN_APP and PUSH, never SMS: they applied from inside
+  this app, so the free channels reach them.
+- **Refuse to decide an application nobody made.** The script upserts, so it
+  will create an approval for a vertical whose documents nobody submitted —
+  which is the exact mistake per-service verification exists to prevent. The
+  console reads the row and refuses when there is none.
+
+### The decisions themselves
+
+**One per submission.** Each application renders its own controls with the
+service in a hidden field, so nothing here can clear somebody for two verticals
+at once. `enabledServices` is recalculated from the verification rows in the
+same transaction, never assigned — dispatch reads that array on every candidate
+query.
+
+**The refusal reason belongs to the applicant.** It is written to
+`rejectionReason`, which their own profile screen shows, and to the audit row —
+one field, not two, because an administrator writing "see notes" in the box the
+rider reads is how a refusal becomes a dead end. The form says so where it is
+typed. An approval clears any previous reason.
+
+**Suspension is a different judgement** and gets its own control and its own
+audit action: not whether the documents are good, but whether somebody should
+be working at all today. Approvals are left intact so reinstating is one click,
+and `isOnline` is cleared — a partner left online while suspended is one
+dispatch keeps considering and skipping while their own screen says they are
+working.
+
+### Two things found in the browser
+
+**The console was showing stale state after every decision.** The actions call
+`revalidatePath`, which invalidates the server's copy — but the page the
+operator is looking at was rendered before the click, and a server action called
+from inside a client function is a plain call, not a navigation. So an
+application approved a moment ago still said "Pending", and clicking again
+answered "already in that state". `ReasonForm` now calls `router.refresh()` on
+success, which fixes **every** control in the console, not just this screen.
+Verified: the refusal reason appears on the row without a reload.
+
+**A row claimed the partner had been told when nobody had.** The seeded and
+CLI-decided rows have no decider and sent no message, so "they were told" is
+now shown only where a decider is recorded; those rows say "in a shell, so
+nobody told them" instead. A comfortable lie about somebody still waiting to
+hear is worse than an awkward truth.
+
+### Verified against a production build, as two real people
+
+Not the demo accounts: demo users are refused a session in production, which is
+the protection working, so the run created a non-demo administrator and a
+non-demo rider with a real pending application. Twenty-seven checks in a real
+browser — the queue and its wait, the documents listed, an unapplied service
+offering nothing, the audit reason blocked in the browser before it reaches the
+server, a refusal landing live on the row with the reason and the decider, the
+rider's own screen and inbox showing it per service and with the reason, a
+reconsideration clearing the stale text, an approved row no longer offering
+approval, both approvals offering suspension, the blanket suspension and the
+reinstatement, and the approvals surviving both.
+
+Afterwards the scratch rider was deleted and the scratch administrator left
+inert — no roles, no sessions. It could not be deleted, and that is the audit
+trail doing its job: it refuses to lose the actor of a recorded decision.
+
+1021 tests pass; build and lint clean.

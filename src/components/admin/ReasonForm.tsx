@@ -1,6 +1,7 @@
 'use client';
 
-import { useActionState } from 'react';
+import { useActionState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import type { AdminActionResult } from '@/lib/admin/access';
 
 /**
@@ -12,9 +13,20 @@ import type { AdminActionResult } from '@/lib/admin/access';
  * cannot be added to the console without one.
  *
  * `useActionState` rather than an onClick handler, so the result comes back as
- * a sentence rendered next to the control that caused it — and so the form
- * still submits if the bundle has not arrived, in which case the server action
- * runs and the page re-renders with the change applied.
+ * a sentence rendered next to the control that caused it.
+ *
+ * **And a refresh on success, which is not optional.** The action calls
+ * `revalidatePath`, but that invalidates the SERVER's copy — the page the
+ * operator is looking at was rendered before the change and nothing tells it
+ * otherwise, because a server action invoked from inside a client function is
+ * a plain call and not a navigation. Without this, the console reads back the
+ * state it had before the click: a fleet application approved a moment ago
+ * still says "Pending", which is how somebody clicks the button twice and gets
+ * told the decision was "already in that state".
+ *
+ * Found in a browser, against the production build, on the fleet screen — and
+ * it applied to every control in the console, since they all come through
+ * here.
  */
 
 export interface ReasonFormProps {
@@ -39,10 +51,18 @@ export function ReasonForm({
   placeholder = 'Ticket number, or who asked and why',
   tone = 'default',
 }: ReasonFormProps) {
+  const router = useRouter();
   const [result, submit, pending] = useActionState<AdminActionResult | null, FormData>(
     async (_previous, formData) => action(formData),
     null,
   );
+
+  // Only on success: a refusal changed nothing, and re-rendering the page
+  // under a message that explains why would scroll it out from under whoever
+  // is reading it.
+  useEffect(() => {
+    if (result?.ok) router.refresh();
+  }, [result, router]);
 
   return (
     <form action={submit} className="space-y-2">
