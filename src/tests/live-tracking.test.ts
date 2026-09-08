@@ -91,7 +91,16 @@ describe('the pure modules stay usable from the browser', () => {
     // path from it to `next/headers` is a 500 on the tracking screen. It got
     // there through `fleet/partner.ts`, which reaches for the session — hence
     // `fleet/job-policy.ts`.
-    for (const file of ['src/lib/orders/tracking.ts', 'src/lib/fleet/job-policy.ts']) {
+    // `pricing/benefits.ts` joined the list when the checkout screen started
+    // importing `describeWithheld` from it to explain a benefit that did not
+    // apply. It is arithmetic and must stay that way: a path from it to the
+    // Prisma client or the session would be a 500 on the checkout screen,
+    // which is the fifth time this codebase has met this trap.
+    for (const file of [
+      'src/lib/orders/tracking.ts',
+      'src/lib/fleet/job-policy.ts',
+      'src/lib/pricing/benefits.ts',
+    ]) {
       const code = codeOnly(file);
       expect(code, file).not.toMatch(/next\/headers/);
       expect(code, file).not.toMatch(/from '@\/lib\/prisma'/);

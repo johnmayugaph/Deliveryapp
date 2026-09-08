@@ -58,6 +58,108 @@ export interface AppliedBenefitLine {
   creditBackCentavos: number;
 }
 
+/** Why a benefit the customer HAS did not apply to this bill. */
+export type WithheldReason =
+  /** FREE_DELIVERY: the order is below the minimum it needs. */
+  | 'UNDER_MINIMUM'
+  /** FREE_DELIVERY: this month's allowance is spent. */
+  | 'MONTHLY_CAP_SPENT'
+  /** Another benefit already waived the fee — one waiver per order. */
+  | 'ALREADY_COVERED'
+  /** CREDIT_BACK_PERCENT: this month's ceiling is reached. */
+  | 'MONTHLY_CEILING_REACHED'
+  /** Scoped to other services by its own `serviceKeys`. */
+  | 'NOT_FOR_THIS_SERVICE';
+
+/**
+ * A benefit that was in play and did not apply.
+ *
+ * The reason this exists: a screen that shows only what APPLIED cannot explain
+ * an absence, and an absence is what a customer notices. Somebody whose tier
+ * gives them free delivery four times a month, placing a fifth order, simply
+ * does not get it — and is told nothing, so the feature reads as broken.
+ *
+ * `shortfallCentavos` is the actionable one. "Add ₱40 more and delivery is
+ * free" is the single most useful sentence a checkout can show, and it can
+ * only be computed here, where the minimum and the subtotal are both in hand.
+ */
+export interface WithheldBenefitLine {
+  benefitId: string;
+  source: BenefitSource;
+  type: BenefitType;
+  displayLabel: string;
+  reason: WithheldReason;
+  /** UNDER_MINIMUM: how much more subtotal would trigger it. Else zero. */
+  shortfallCentavos: number;
+  /** MONTHLY_CAP_SPENT: the cap that is spent. Else zero. */
+  monthlyCap: number;
+}
+
+/**
+ * Which withheld reasons are worth SAYING to a customer, and how.
+ *
+ * Two of the five. `UNDER_MINIMUM` because it is actionable — the customer can
+ * add an item and get the thing — and `MONTHLY_CAP_SPENT` because a benefit
+ * that simply stops working is the one people ask support about.
+ *
+ * The other three are collected and not shown. `NOT_FOR_THIS_SERVICE` tells
+ * somebody about a benefit they never expected here; `MONTHLY_CEILING_REACHED`
+ * is about credits arriving later rather than about this bill; and
+ * `ALREADY_COVERED` is shown only to a SUBSCRIBER, because "your plan's free
+ * delivery was not needed" is reassurance for somebody paying every month and
+ * clutter for anybody else. `worthShowing` is what encodes that.
+ */
+export const WITHHELD_IS_WORTH_SHOWING: Readonly<Record<WithheldReason, boolean>> = {
+  UNDER_MINIMUM: true,
+  MONTHLY_CAP_SPENT: true,
+  ALREADY_COVERED: false,
+  MONTHLY_CEILING_REACHED: false,
+  NOT_FOR_THIS_SERVICE: false,
+};
+
+/**
+ * The sentence for one withheld benefit, or null when it is not worth saying.
+ *
+ * A `format` function is passed in rather than imported so this module stays
+ * arithmetic — the same reason `describeTierBenefit` takes one.
+ */
+export function describeWithheld(
+  line: WithheldBenefitLine,
+  format: (centavos: number) => string,
+  options: {
+    subscriberSeesCoveredNote?: boolean;
+    /**
+     * What to credit the benefit to — the tier's name, or the plan's. Named
+     * rather than taken from `displayLabel`, because that column is the
+     * operator's own words and the first version of this sentence appended it
+     * lowercased: "delivery is free — that is free delivery four times a
+     * month", which says the same thing twice. Seen in a browser.
+     */
+    sourceLabel?: string | null;
+  } = {},
+): string | null {
+  switch (line.reason) {
+    case 'UNDER_MINIMUM':
+      return options.sourceLabel
+        ? `Add ${format(line.shortfallCentavos)} more and delivery is free ` +
+            `with ${options.sourceLabel}.`
+        : `Add ${format(line.shortfallCentavos)} more and delivery is free.`;
+    case 'MONTHLY_CAP_SPENT':
+      return line.monthlyCap === 1
+        ? 'You have used your free delivery this month. It comes back next month.'
+        : `You have used all ${line.monthlyCap} of your free deliveries this ` +
+            'month. They come back next month.';
+    case 'ALREADY_COVERED':
+      return options.subscriberSeesCoveredNote
+        ? `Your plan's free delivery was not needed — ${line.displayLabel} ` +
+            'covered it, so your plan keeps this month\u2019s use.'
+        : null;
+    case 'MONTHLY_CEILING_REACHED':
+    case 'NOT_FOR_THIS_SERVICE':
+      return null;
+  }
+}
+
 export interface BenefitOutcome {
   /** Unchanged from the quoted fee; a waiver appears as a discount, not a zero. */
   deliveryFeeCentavos: number;
@@ -73,6 +175,15 @@ export interface BenefitOutcome {
   /** Credits to grant on completion. NOT deducted from the total. */
   creditBackCentavos: number;
   appliedBenefits: AppliedBenefitLine[];
+  /**
+   * What the customer has that this bill did not use, and why.
+   *
+   * Deliberately NOT filtered here. A misconfigured row is excluded — that is
+   * an operator's bug and no business of a customer's — but which of the rest
+   * is worth SAYING is a screen's decision, not the engine's, and the
+   * checkout shows two of the five.
+   */
+  withheldBenefits: WithheldBenefitLine[];
 }
 
 /** Empty `serviceKeys` means every active service; otherwise the key must be listed. */
@@ -143,11 +254,36 @@ export function applyBenefits(input: {
     [BenefitSource.LOYALTY_TIER]: 0,
   };
 
+  const withheldBenefits: WithheldBenefitLine[] = [];
+  const withhold = (
+    row: SourcedBenefit,
+    reason: WithheldReason,
+    extra: { shortfallCentavos?: number; monthlyCap?: number } = {},
+  ): void => {
+    withheldBenefits.push({
+      benefitId: row.benefit.id,
+      source: row.source,
+      type: row.benefit.type,
+      displayLabel: row.benefit.displayLabel,
+      reason,
+      shortfallCentavos: extra.shortfallCentavos ?? 0,
+      monthlyCap: extra.monthlyCap ?? 0,
+    });
+  };
+
   // Stable: `sort` on the caller's array order, so a tier row and a plan row
   // with the same sortOrder keep the order the caller chose.
-  const eligible = input.benefits
-    .filter((row) => benefitCoversService(row.benefit, input.serviceType))
-    .filter((row) => isBenefitUsable(row.benefit))
+  //
+  // A row scoped to other services is RECORDED as withheld; a misconfigured
+  // row is dropped silently, because that is an operator's mistake and
+  // telling a customer about it would be telling them nothing they can use.
+  const usable = input.benefits.filter((row) => isBenefitUsable(row.benefit));
+  const eligible = usable
+    .filter((row) => {
+      if (benefitCoversService(row.benefit, input.serviceType)) return true;
+      withhold(row, 'NOT_FOR_THIS_SERVICE');
+      return false;
+    })
     .sort((a, b) => a.benefit.sortOrder - b.benefit.sortOrder);
 
   // --- 1. FREE_DELIVERY ---------------------------------------------------
@@ -156,18 +292,40 @@ export function applyBenefits(input: {
   // "Delivery fee ₱49 / Plus benefits −₱49" — the customer sees what the tier
   // bought them, and we can measure what it costs us. Zeroing the fee AND
   // recording a discount would subtract it twice.
+  //
+  // `continue` rather than `break` once a waiver is taken, so the ones that
+  // came second are RECORDED as ALREADY_COVERED. The old `break` was correct
+  // about the money and lost the reason: a subscriber whose plan's free
+  // delivery went unused, because their tier's covered it, saw no line and no
+  // explanation.
   for (const row of eligible.filter(
     (r) => r.benefit.type === BenefitType.FREE_DELIVERY,
   )) {
     const benefit = row.benefit;
-    if (deliveryWaived || fees.deliveryFeeCentavos <= 0) break;
-    if (fees.subtotalCentavos < (benefit.minimumOrderCentavos ?? 0)) continue;
+
+    // Nothing to waive. The delivery line already reads "Libre" from the fee
+    // rule's own threshold, so a second sentence about it would be noise.
+    if (fees.deliveryFeeCentavos <= 0) continue;
+
+    if (deliveryWaived) {
+      withhold(row, 'ALREADY_COVERED');
+      continue;
+    }
+
+    const minimum = benefit.minimumOrderCentavos ?? 0;
+    if (fees.subtotalCentavos < minimum) {
+      withhold(row, 'UNDER_MINIMUM', {
+        shortfallCentavos: minimum - fees.subtotalCentavos,
+      });
+      continue;
+    }
 
     const usage = input.usageByBenefitId.get(benefit.id);
     if (
       benefit.monthlyUsageCap !== null &&
       (usage?.usageCount ?? 0) >= benefit.monthlyUsageCap
     ) {
+      withhold(row, 'MONTHLY_CAP_SPENT', { monthlyCap: benefit.monthlyUsageCap });
       continue;
     }
 
@@ -184,7 +342,6 @@ export function applyBenefits(input: {
     // One free-delivery benefit per order. A customer with both a plan and a
     // tier that waive delivery gets ONE waiver, and only one allowance is
     // spent — which is why the caller decides whose.
-    break;
   }
 
   // --- 2. DISCOUNT_PERCENT ------------------------------------------------
@@ -256,7 +413,12 @@ export function applyBenefits(input: {
         ? Math.max(0, benefit.monthlyCeilingCentavos - alreadyCredited)
         : Number.MAX_SAFE_INTEGER;
     const granted = Math.min(raw, remainingCeiling);
-    if (granted <= 0) continue;
+    if (granted <= 0) {
+      // Distinguish "the month is used up" from "this bill earns nothing" —
+      // the first is worth a sentence and the second is not.
+      if (remainingCeiling <= 0) withhold(row, 'MONTHLY_CEILING_REACHED');
+      continue;
+    }
 
     creditBackCentavos += granted;
     appliedBenefits.push({
@@ -278,5 +440,6 @@ export function applyBenefits(input: {
     payableCentavos,
     creditBackCentavos,
     appliedBenefits,
+    withheldBenefits,
   };
 }

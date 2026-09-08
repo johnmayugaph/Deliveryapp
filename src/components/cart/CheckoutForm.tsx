@@ -15,6 +15,7 @@ import { formatCentavos } from '@/lib/money';
 import { describeChoices } from '@/lib/merchant/option-policy';
 import { PromoField } from '@/components/cart/PromoField';
 import { promoDisplay } from '@/lib/promo/policy';
+import { describeWithheld } from '@/lib/pricing/benefits';
 
 export interface CheckoutAddressOption {
   id: string;
@@ -94,6 +95,38 @@ export function CheckoutForm({
   // showing the NEW total — a refusal that left the old price on screen would
   // just be a button that stopped working.
   const [requoteNonce, setRequoteNonce] = useState(0);
+
+  /**
+   * The sentences explaining a benefit the customer has that this bill did
+   * not use.
+   *
+   * `describeWithheld` decides which reasons are worth saying and what the
+   * words are; this only decides the tone. `UNDER_MINIMUM` is the actionable
+   * one — "add ₱40 more and delivery is free" — so it gets the accent colour
+   * a customer can act on, and the rest are muted.
+   *
+   * The ALREADY_COVERED note is shown only to a SUBSCRIBER, because "your
+   * plan's free delivery was not needed" is reassurance for somebody paying
+   * every month and clutter for anybody else.
+   */
+  const withheldNotes = (quote?.price.withheldBenefits ?? [])
+    .map((line) => {
+      const text = describeWithheld(line, formatCentavos, {
+        subscriberSeesCoveredNote: quote?.price.subscriptionId !== null,
+        sourceLabel:
+          line.source === 'LOYALTY_TIER'
+            ? quote?.price.loyaltyTierName ?? null
+            : 'TARA Plus',
+      });
+      return text === null
+        ? null
+        : {
+            key: `${line.benefitId}:${line.reason}`,
+            text,
+            actionable: line.reason === 'UNDER_MINIMUM',
+          };
+    })
+    .filter((note): note is NonNullable<typeof note> => note !== null);
 
   const formInput: CheckoutFormInput | null =
     cart.storeId && dropoffAddressId
@@ -508,12 +541,23 @@ export function CheckoutForm({
                 centavos={-quote.price.promoDiscountCentavos}
               />
             ) : null}
+            {/* Named by WHOSE benefit it is, not just by the label an
+                operator typed. Two things confer benefits now and they
+                rendered identically: a customer with a plan and a tier could
+                not tell which had applied, and somebody who has never paid
+                for Plus saw a bare label with no explanation of where their
+                discount came from. */}
             {quote.price.appliedBenefits
               .filter((benefit) => benefit.amountCentavos > 0)
               .map((benefit) => (
                 <Line
                   key={benefit.benefitId}
                   label={benefit.displayLabel}
+                  note={
+                    benefit.source === 'LOYALTY_TIER'
+                      ? quote.price.loyaltyTierName ?? 'Your tier'
+                      : 'TARA Plus'
+                  }
                   centavos={-benefit.amountCentavos}
                 />
               ))}
@@ -539,14 +583,39 @@ export function CheckoutForm({
 
             {quote.price.subscriptionBenefitsDropped ? (
               // The other half of the non-stacking rule. When the code wins,
-              // the plan's benefits are gone from this bill, and a subscriber
-              // whose free delivery silently vanished would reasonably think
-              // their plan had lapsed.
+              // the benefits are gone from this bill, and somebody whose free
+              // delivery silently vanished would reasonably think their plan
+              // had lapsed.
+              //
+              // It says "your benefits" rather than "your plan's", because
+              // this flag also fires for a customer who has a TIER and no
+              // plan — telling them their plan was set aside would be naming
+              // something they have never had.
               <p className="mt-1.5 text-[11px] text-ink-muted">
-                This code cannot be combined with your plan, and it saves you
-                more here — so your plan&apos;s benefits are set aside for this
-                order only.
+                This code cannot be combined with your benefits, and it saves
+                you more here — so they are set aside for this order only.
               </p>
+            ) : null}
+
+            {/* Why something the customer HAS is not on this bill. The
+                screen showed only what applied, so a tier's free delivery on
+                a fifth order of the month just was not there — and an absence
+                with no explanation is what people ask support about. */}
+            {withheldNotes.length > 0 ? (
+              <div className="mt-1.5 space-y-1">
+                {withheldNotes.map((note) => (
+                  <p
+                    key={note.key}
+                    className={
+                      note.actionable
+                        ? 'text-[11px] leading-relaxed text-brand-700'
+                        : 'text-[11px] leading-relaxed text-ink-muted'
+                    }
+                  >
+                    {note.text}
+                  </p>
+                ))}
+              </div>
             ) : null}
 
             {quote.price.creditBackCentavos > 0 ? (
@@ -587,14 +656,24 @@ function Line({
   label,
   centavos,
   free,
+  note,
 }: {
   label: string;
   centavos: number;
   free?: boolean;
+  /** Where this line came from — the tier's name, or the plan's. */
+  note?: string;
 }) {
   return (
     <div className="flex justify-between gap-3 text-xs">
-      <dt className="min-w-0 text-ink-muted">{label}</dt>
+      <dt className="min-w-0 text-ink-muted">
+        {label}
+        {note ? (
+          <span className="ml-1.5 rounded bg-surface-sunken px-1 py-0.5 text-[10px] font-medium text-ink-faint">
+            {note}
+          </span>
+        ) : null}
+      </dt>
       <dd className="shrink-0 tabular-nums">
         {free && centavos === 0 ? (
           <span className="text-emerald-700">Libre</span>

@@ -25,7 +25,14 @@ import {
   tierGiveback,
   type TierBenefitFacts,
 } from '@/lib/loyalty/tier-benefits';
-import { applyBenefits, type FeeInputs } from '@/lib/pricing/benefits';
+import {
+  WITHHELD_IS_WORTH_SHOWING,
+  applyBenefits,
+  describeWithheld,
+  type FeeInputs,
+  type WithheldBenefitLine,
+  type WithheldReason,
+} from '@/lib/pricing/benefits';
 import { sourcedBenefitsFor } from '@/lib/pricing/checkout';
 import { formatCentavos } from '@/lib/money';
 
@@ -620,6 +627,300 @@ describe('a tier benefit and a plan benefit through one engine', () => {
         outcome.subscriptionDiscountCentavos +
         outcome.loyaltyDiscountCentavos,
     ).toBe(1_000 + 4_900);
+  });
+});
+
+// --- Explaining an absence --------------------------------------------------
+
+describe('a benefit the customer has that this bill did not use', () => {
+  const fees = (over: Partial<FeeInputs> = {}): FeeInputs => ({
+    subtotalCentavos: 50_000,
+    deliveryFeeCentavos: 4_900,
+    serviceFeeCentavos: 1_000,
+    smallOrderFeeCentavos: 0,
+    surgeCentavos: 0,
+    tipCentavos: 0,
+    promoDiscountCentavos: 0,
+    ...over,
+  });
+
+  const waiver = (
+    id: string,
+    source: BenefitSource,
+    over: { minimumOrderCentavos?: number; monthlyUsageCap?: number | null } = {},
+  ) => ({
+    benefit: {
+      id,
+      type: BenefitType.FREE_DELIVERY,
+      serviceKeys: [] as ServiceKey[],
+      percentBasisPoints: null,
+      minimumOrderCentavos: over.minimumOrderCentavos ?? 30_000,
+      monthlyUsageCap: over.monthlyUsageCap === undefined ? 4 : over.monthlyUsageCap,
+      maxDiscountCentavos: null,
+      monthlyCeilingCentavos: null,
+      displayLabel: id,
+      sortOrder: 0,
+    },
+    source,
+  });
+
+  const withheldFor = (input: Parameters<typeof applyBenefits>[0]) =>
+    applyBenefits(input).withheldBenefits;
+
+  it('reports an order below the minimum, with the exact shortfall', () => {
+    // The actionable one. "Add ₱40 more and delivery is free" is the single
+    // most useful sentence a checkout can show, and it can only be computed
+    // where the minimum and the subtotal are both in hand.
+    const [line] = withheldFor({
+      serviceType: ServiceKey.FOOD,
+      fees: fees({ subtotalCentavos: 26_000 }),
+      benefits: [waiver('tier_free', BenefitSource.LOYALTY_TIER)],
+      usageByBenefitId: new Map(),
+    });
+    expect(line?.reason).toBe('UNDER_MINIMUM');
+    expect(line?.shortfallCentavos).toBe(4_000);
+    expect(line?.source).toBe(BenefitSource.LOYALTY_TIER);
+  });
+
+  it('gets the shortfall right at the boundary, and reports nothing on it', () => {
+    const oneShort = withheldFor({
+      serviceType: ServiceKey.FOOD,
+      fees: fees({ subtotalCentavos: 29_999 }),
+      benefits: [waiver('tier_free', BenefitSource.LOYALTY_TIER)],
+      usageByBenefitId: new Map(),
+    });
+    expect(oneShort[0]?.shortfallCentavos).toBe(1);
+
+    // Exactly at the minimum it APPLIES, so there is nothing to explain.
+    const exact = applyBenefits({
+      serviceType: ServiceKey.FOOD,
+      fees: fees({ subtotalCentavos: 30_000 }),
+      benefits: [waiver('tier_free', BenefitSource.LOYALTY_TIER)],
+      usageByBenefitId: new Map(),
+    });
+    expect(exact.withheldBenefits).toEqual([]);
+    expect(exact.loyaltyDiscountCentavos).toBe(4_900);
+  });
+
+  it('reports a spent monthly allowance, carrying the cap', () => {
+    const [line] = withheldFor({
+      serviceType: ServiceKey.FOOD,
+      fees: fees(),
+      benefits: [waiver('tier_free', BenefitSource.LOYALTY_TIER)],
+      usageByBenefitId: new Map([
+        ['tier_free', { usageCount: 4, creditedCentavos: 0 }],
+      ]),
+    });
+    expect(line?.reason).toBe('MONTHLY_CAP_SPENT');
+    expect(line?.monthlyCap).toBe(4);
+  });
+
+  it('reports the plan’s waiver as already covered when the tier took it', () => {
+    // This is what the old `break` lost. The money was right and the reason
+    // was gone: a subscriber whose plan's free delivery went unused saw no
+    // line and no explanation.
+    const outcome = applyBenefits({
+      serviceType: ServiceKey.FOOD,
+      fees: fees(),
+      benefits: [
+        waiver('tier_free', BenefitSource.LOYALTY_TIER),
+        waiver('plan_free', BenefitSource.SUBSCRIPTION),
+      ],
+      usageByBenefitId: new Map(),
+    });
+    expect(outcome.appliedBenefits).toHaveLength(1);
+    expect(outcome.withheldBenefits).toHaveLength(1);
+    expect(outcome.withheldBenefits[0]).toMatchObject({
+      benefitId: 'plan_free',
+      reason: 'ALREADY_COVERED',
+      source: BenefitSource.SUBSCRIPTION,
+    });
+  });
+
+  it('reports a benefit scoped to another service', () => {
+    const [line] = withheldFor({
+      serviceType: ServiceKey.FOOD,
+      fees: fees(),
+      benefits: [
+        {
+          ...waiver('mart_only', BenefitSource.LOYALTY_TIER),
+          benefit: {
+            ...waiver('mart_only', BenefitSource.LOYALTY_TIER).benefit,
+            serviceKeys: [ServiceKey.MART],
+          },
+        },
+      ],
+      usageByBenefitId: new Map(),
+    });
+    expect(line?.reason).toBe('NOT_FOR_THIS_SERVICE');
+  });
+
+  it('says NOTHING about a misconfigured row, because that is not the customer’s problem', () => {
+    const outcome = applyBenefits({
+      serviceType: ServiceKey.FOOD,
+      fees: fees(),
+      benefits: [
+        {
+          ...waiver('broken', BenefitSource.LOYALTY_TIER),
+          benefit: {
+            ...waiver('broken', BenefitSource.LOYALTY_TIER).benefit,
+            minimumOrderCentavos: null,
+          },
+        },
+      ],
+      usageByBenefitId: new Map(),
+    });
+    expect(outcome.withheldBenefits).toEqual([]);
+    expect(outcome.appliedBenefits).toEqual([]);
+  });
+
+  it('stays quiet when delivery is already free from the fee rule’s own threshold', () => {
+    // The delivery line already reads "Libre". A second sentence about a
+    // waiver that was not needed would be noise on top of good news.
+    const outcome = applyBenefits({
+      serviceType: ServiceKey.FOOD,
+      fees: fees({ deliveryFeeCentavos: 0 }),
+      benefits: [waiver('tier_free', BenefitSource.LOYALTY_TIER)],
+      usageByBenefitId: new Map(),
+    });
+    expect(outcome.withheldBenefits).toEqual([]);
+
+    // And no APPLIED line either, which is the half that shows. The first
+    // version of this test checked only the withheld list, and a mutation
+    // that removed the zero-fee guard passed it — because the benefit then
+    // "applied" for nothing and put "Free delivery −₱0.00" on the bill.
+    expect(outcome.appliedBenefits).toEqual([]);
+    expect(outcome.deliveryFeeWaived).toBe(false);
+    expect(outcome.loyaltyDiscountCentavos).toBe(0);
+  });
+
+  it('has a decision about every reason, and a sentence for the ones it shows', () => {
+    const all: WithheldReason[] = [
+      'UNDER_MINIMUM',
+      'MONTHLY_CAP_SPENT',
+      'ALREADY_COVERED',
+      'MONTHLY_CEILING_REACHED',
+      'NOT_FOR_THIS_SERVICE',
+    ];
+    expect(Object.keys(WITHHELD_IS_WORTH_SHOWING).sort()).toEqual([...all].sort());
+
+    const line = (reason: WithheldReason): WithheldBenefitLine => ({
+      benefitId: 'b',
+      source: BenefitSource.LOYALTY_TIER,
+      type: BenefitType.FREE_DELIVERY,
+      displayLabel: 'Free delivery',
+      reason,
+      shortfallCentavos: 4_000,
+      monthlyCap: 4,
+    });
+
+    for (const reason of all) {
+      const text = describeWithheld(line(reason), formatCentavos);
+      if (WITHHELD_IS_WORTH_SHOWING[reason]) {
+        expect(text, reason).not.toBeNull();
+        expect(text!.length, reason).toBeGreaterThan(20);
+        expect(text!.endsWith('.'), reason).toBe(true);
+        expect(text!, reason).not.toMatch(/undefined|NaN|null/);
+      } else {
+        // Collected, deliberately not shown — except the one case below.
+        expect(text, reason).toBeNull();
+      }
+    }
+  });
+
+  it('puts the shortfall in the sentence, as money', () => {
+    const line: WithheldBenefitLine = {
+      benefitId: 'b',
+      source: BenefitSource.LOYALTY_TIER,
+      type: BenefitType.FREE_DELIVERY,
+      displayLabel: 'Free delivery four times a month',
+      reason: 'UNDER_MINIMUM',
+      shortfallCentavos: 4_000,
+      monthlyCap: 4,
+    };
+    const text = describeWithheld(line, formatCentavos);
+    expect(text).toContain('₱40.00');
+    expect(text).toMatch(/add .* more and delivery is free/i);
+
+    // Credited to the TIER by name, not by echoing the operator's label. The
+    // first version appended `displayLabel` lowercased and read "delivery is
+    // free — that is free delivery four times a month", which says the same
+    // thing twice. Seen on the screen, in a browser.
+    const credited = describeWithheld(line, formatCentavos, {
+      sourceLabel: 'Tapat',
+    });
+    expect(credited).toBe('Add ₱40.00 more and delivery is free with Tapat.');
+    expect(credited).not.toMatch(/that is free delivery/i);
+  });
+
+  it('says "your free delivery" in the singular when the cap is one', () => {
+    const one = describeWithheld(
+      {
+        benefitId: 'b',
+        source: BenefitSource.LOYALTY_TIER,
+        type: BenefitType.FREE_DELIVERY,
+        displayLabel: 'Free delivery',
+        reason: 'MONTHLY_CAP_SPENT',
+        shortfallCentavos: 0,
+        monthlyCap: 1,
+      },
+      formatCentavos,
+    );
+    expect(one).toMatch(/used your free delivery this month/i);
+    expect(one).not.toMatch(/all 1 of/);
+  });
+
+  it('shows the already-covered note only to a subscriber', () => {
+    const line: WithheldBenefitLine = {
+      benefitId: 'plan_free',
+      source: BenefitSource.SUBSCRIPTION,
+      type: BenefitType.FREE_DELIVERY,
+      displayLabel: 'Your tier',
+      reason: 'ALREADY_COVERED',
+      shortfallCentavos: 0,
+      monthlyCap: 0,
+    };
+    expect(describeWithheld(line, formatCentavos)).toBeNull();
+    const forSubscriber = describeWithheld(line, formatCentavos, {
+      subscriberSeesCoveredNote: true,
+    });
+    expect(forSubscriber).toMatch(/plan's free delivery was not needed/i);
+    expect(forSubscriber).toMatch(/keeps this month/i);
+  });
+});
+
+describe('the checkout screen says whose benefit it is', () => {
+  const codeOnlyForm = (): string =>
+    source('src/components/cart/CheckoutForm.tsx')
+      .replace(/\/\*[\s\S]*?\*\//g, (match) => match.replace(/[^\n]/g, ' '))
+      .replace(/^\s*\/\/.*$/gm, ' ');
+
+  it('tags each applied line with the tier or the plan', () => {
+    // Two things confer benefits and they rendered identically — just the
+    // label an operator typed — so a customer could not tell which applied,
+    // and `loyaltyTierName` was read by nothing at all.
+    const code = codeOnlyForm();
+    expect(code).toMatch(/benefit\.source === 'LOYALTY_TIER'/);
+    expect(code).toMatch(/quote\.price\.loyaltyTierName/);
+    expect(code).toMatch(/'TARA Plus'/);
+  });
+
+  it('renders the withheld sentences, and marks the actionable one', () => {
+    const code = codeOnlyForm();
+    expect(code).toMatch(/describeWithheld/);
+    expect(code).toMatch(/withheldNotes/);
+    expect(code).toMatch(/reason === 'UNDER_MINIMUM'/);
+  });
+
+  it('no longer tells a customer with no plan that their plan was set aside', () => {
+    // `subscriptionBenefitsDropped` also fires for somebody who has a tier
+    // and no subscription. The old sentence named a thing they never had.
+    const rendered = source('src/components/cart/CheckoutForm.tsx');
+    const at = rendered.indexOf('cannot be combined');
+    expect(at).toBeGreaterThan(-1);
+    const sentence = rendered.slice(at, at + 200);
+    expect(sentence).toMatch(/your benefits/i);
+    expect(sentence).not.toMatch(/your plan's benefits|your plan&apos;s benefits/i);
   });
 });
 

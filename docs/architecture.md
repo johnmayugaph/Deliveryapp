@@ -1688,6 +1688,54 @@ their allowance would never have run out. Nobody would have noticed until the
 free deliveries never stopped. The compiler found it when `commitBenefitUsage`
 started requiring a customer id.
 
+### Explaining an absence, which is the harder half
+
+`applyBenefits` used to report only what APPLIED, and a screen built on that
+cannot explain a benefit that did not. Somebody whose tier gives them free
+delivery four times a month, placing a fifth order, simply did not get it and
+was told nothing — so the feature reads as broken rather than as bounded.
+
+So the outcome carries `withheldBenefits` too: every benefit that was in play
+and did not apply, with a reason from a closed set — under the minimum, the
+monthly cap spent, already covered by another waiver, the credit-back ceiling
+reached, or scoped to other services. A MISCONFIGURED row is excluded, because
+that is an operator's bug and no business of a customer's.
+
+Which of the five is worth SAYING is a screen's decision rather than the
+engine's, and `WITHHELD_IS_WORTH_SHOWING` records it. The checkout shows two.
+`UNDER_MINIMUM` because it is the one thing on the whole screen a customer can
+act on — *"Add ₱100.00 more and delivery is free with Tapat"*, computed where
+the minimum and the subtotal are both in hand — and `MONTHLY_CAP_SPENT`
+because a benefit that quietly stops working is what people ask support about.
+`ALREADY_COVERED` is shown only to a subscriber, where "your plan's free
+delivery was not needed" is reassurance; to anybody else it is clutter.
+
+Collecting `ALREADY_COVERED` at all needed the free-delivery loop to `continue`
+rather than `break` once a waiver is taken. The `break` was right about the
+money and lost the reason.
+
+### Whose benefit the checkout says it is
+
+A tier line and a plan line rendered identically — just the `displayLabel` an
+operator typed — so a customer with both could not tell which had applied, and
+somebody who had never paid for Plus saw a bare label with no account of where
+their discount came from. Each line now carries a chip naming the tier or the
+plan, which is also the first thing to read `loyaltyTierName`; before this it
+was returned by the quote and consumed by nothing.
+
+Two smaller corrections came with it. `loyaltyTierName` is now reported
+whenever the customer HAS a tier rather than only when one paid, because the
+sentence explaining why a benefit did not apply needs to name it too. And the
+non-stacking sentence said *"your plan's benefits are set aside"* — that flag
+also fires for a customer with a tier and no plan, so it named something they
+had never had; it says *"your benefits"* now.
+
+`pricing/benefits.ts` is imported by the checkout component as a result, which
+puts it in the client bundle and on the list the purity test guards. It is
+arithmetic and has to stay that way: a path from it to the Prisma client or the
+session would be a 500 on the checkout screen, which is the fifth time this
+codebase has met that trap.
+
 ### What the console has to show
 
 The headline is the most one customer at a tier can cost in a MONTH, computed

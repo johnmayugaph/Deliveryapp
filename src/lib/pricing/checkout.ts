@@ -10,6 +10,7 @@ import {
   type BenefitUsageSnapshot,
   type FeeInputs,
   type SourcedBenefit,
+  type WithheldBenefitLine,
 } from '@/lib/pricing/benefits';
 import { tierBenefitsForUser } from '@/lib/loyalty/programme';
 import { billBenefitsOf } from '@/lib/loyalty/tier-benefits';
@@ -76,6 +77,14 @@ export interface PriceQuote {
   /** Credits to grant once the order completes. Not deducted from the total. */
   creditBackCentavos: number;
   appliedBenefits: AppliedBenefitLine[];
+  /**
+   * Benefits the customer HAS that this bill did not use, with the reason.
+   *
+   * What makes the checkout able to explain an absence. Without it a tier's
+   * free delivery on a fifth order of the month simply does not appear, and
+   * the customer is told nothing.
+   */
+  withheldBenefits: WithheldBenefitLine[];
   /** Which subscription produced the benefits, for the receipt. */
   subscriptionId: string | null;
   /** The tier that produced any loyalty benefits, for the checkout screen. */
@@ -214,12 +223,13 @@ export async function quoteOrderPrice(input: PriceQuoteInput): Promise<PriceQuot
     totalCentavos: outcome.payableCentavos - walletCreditAppliedCentavos,
     creditBackCentavos: outcome.creditBackCentavos,
     appliedBenefits: outcome.appliedBenefits,
+    withheldBenefits: outcome.withheldBenefits,
     subscriptionId: subscription?.id ?? null,
-    loyaltyTierName: outcome.loyaltyDiscountCentavos > 0 || outcome.appliedBenefits.some(
-      (line) => line.source === BenefitSource.LOYALTY_TIER,
-    )
-      ? loyalty.tier?.name ?? null
-      : null,
+    // The tier the customer is AT, whether or not it paid for anything on
+    // this bill. It used to be reported only when a tier benefit applied,
+    // which left the screen unable to name the tier in the sentence
+    // explaining why one had not.
+    loyaltyTierName: loyalty.tier?.name ?? null,
     subscriptionBenefitsDropped,
     spendableCreditsCentavos,
   };

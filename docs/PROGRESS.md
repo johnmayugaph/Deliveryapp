@@ -4063,3 +4063,85 @@ and the customer's own screen naming their tier, describing the free delivery
 from its numbers rather than the label, and marking a perk as not a discount.
 
 1886 tests pass; typecheck, lint and build clean.
+
+## Phase 45 — The checkout screen, and explaining an absence
+
+The tier work of the previous phase went through `quoteOrderPrice`, so a
+tier's free delivery already showed on the checkout as a discount line. Three
+things were wrong with it, and the third is the one that mattered.
+
+### A line that did not say whose it was
+
+A tier benefit and a Plus benefit rendered identically — both just the
+`displayLabel` an operator typed. A customer with both could not tell which
+had applied; a customer who had never paid for Plus saw a bare label with no
+account of where their discount came from. And `loyaltyTierName` came back on
+every quote and was read by **nothing**.
+
+Each line now carries a chip: the tier's own name, or *TARA Plus*.
+
+### A sentence that named something the customer never had
+
+`subscriptionBenefitsDropped` says a non-stacking promo code beat the
+customer's benefits. The screen's sentence was *"your plan's benefits are set
+aside for this order"* — but that flag fires for a tier-only customer too, so
+it named a plan they had never had. I noted this in a code comment when
+building the tier work and did not fix it; this is the fix. It says *"your
+benefits"*.
+
+### The absence nobody was told about
+
+`applyBenefits` reported only what APPLIED. So a customer whose tier gives them
+free delivery four times a month, placing a fifth order, just did not get it —
+no line, no sentence, nothing. A bounded benefit that looks broken.
+
+The outcome now carries `withheldBenefits`: what was in play and did not apply,
+with a reason from a closed set. A misconfigured row is excluded, because that
+is an operator's bug and not a customer's business. Which reasons are worth
+SAYING is the screen's decision rather than the engine's, and the checkout
+shows two of five:
+
+- **under the minimum** — *"Add ₱100.00 more and delivery is free with
+  Tapat"*, in the accent colour, because it is the one thing on that screen a
+  customer can act on;
+- **monthly cap spent** — *"You have used all 4 of your free deliveries this
+  month. They come back next month."*
+
+`ALREADY_COVERED` is shown only to a subscriber, where "your plan's free
+delivery was not needed" is reassurance rather than clutter. Collecting it at
+all needed the free-delivery loop to `continue` rather than `break` once a
+waiver is taken: the `break` was right about the money and lost the reason.
+
+### Two things found by looking at the screen
+
+The shortfall sentence first read *"delivery is free — that is free delivery
+four times a month"*, because it appended the operator's label lowercased. It
+says the same thing twice. It credits the tier by name now, which is both
+shorter and more useful.
+
+And `pricing/benefits.ts` is imported by a client component as a result, so it
+went on the list the purity test guards — a path from it to the Prisma client
+or the session would be a 500 on the checkout screen, and this codebase has
+met that trap four times already.
+
+### Verified in three places
+
+**Fourteen new unit tests** (1900 total): a reason for every withheld branch,
+the shortfall exact at the boundary and nothing reported when the benefit
+applies, a misconfigured row never surfaced to a customer, silence when
+delivery is already free from the fee rule's own threshold, the already-covered
+note gated on being a subscriber, and a decision recorded for all five reasons.
+
+**Six seams were mutated, and one survived the first pass.** Removing the
+zero-fee guard passed a test that only checked the withheld list — because the
+benefit then "applied" for nothing and put *Free delivery −₱0.00* on the bill.
+The test now asserts the applied list too, which is the half that shows.
+
+**Nine in a real browser**, walking one screen through three states: below the
+minimum with the exact shortfall credited to the tier by name, over it with the
+waiver applied and the line naming the tier rather than Plus, and the allowance
+spent with the cap sentence and the fee back on the bill — each state also
+asserting the OTHER states' sentences are absent, so the screen never tells
+somebody to add more when the real reason is that their month is used up.
+
+1900 tests pass; typecheck, lint and build clean.
