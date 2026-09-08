@@ -158,7 +158,14 @@ merchants and the customer profile offers a link in:
 
 Tabs a member's role cannot open are not shown. Payouts is the only screen
 that refuses outright — Menu, Staff and Settings admit a staff member and
-degrade to read-only, which is why they are still listed for one.
+degrade to read-only, which is why they are still listed for one. Which role
+reaches which screen lives in `src/lib/merchant/roles.ts`, and the tab bar and
+the staff screen's role explanation both read from it, so what an owner is told
+a role grants cannot drift from the gate that runs.
+
+On the **Staff** tab, both places a role is chosen say what it means: what each
+rung adds over the one below, with the takings called out, and the money role
+marked on the dropdown option itself.
 
 On the **History** tab, a finished order that had a discount says so and says
 who paid for it — the benefit, the status that conferred it, and the amount,

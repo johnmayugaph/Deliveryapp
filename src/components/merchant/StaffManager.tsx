@@ -9,6 +9,8 @@ import {
   revokeStaffInviteAction,
   type StaffActionResult,
 } from '@/lib/actions/staff-actions';
+import { RoleGrantNote } from '@/components/merchant/RoleGrantNote';
+import { roleSeesTakings } from '@/lib/merchant/roles';
 import { STORE_ROLE_LABELS } from '@/lib/merchant/staff-policy';
 
 /**
@@ -63,6 +65,20 @@ function Outcome({ result }: { result: StaffActionResult | null }) {
 
 const SELECT =
   'rounded-lg border border-black/10 bg-surface px-2 py-1.5 text-[12px] font-semibold';
+
+/**
+ * The label inside a role dropdown.
+ *
+ * The suffix travels with the option because the full explanation sits under
+ * the invite form, and the second place a role is chosen is a row further down
+ * the same screen — somebody promoting an existing member may never scroll
+ * back to read it. Three words on the option itself cannot be missed.
+ */
+function roleOptionLabel(role: StoreRole): string {
+  return roleSeesTakings(role)
+    ? `${STORE_ROLE_LABELS[role]} — sees the money`
+    : STORE_ROLE_LABELS[role];
+}
 
 export function StaffManager({
   storeId,
@@ -132,7 +148,7 @@ export function StaffManager({
                 >
                   {grantable.map((role) => (
                     <option key={role} value={role}>
-                      {STORE_ROLE_LABELS[role]}
+                      {roleOptionLabel(role)}
                     </option>
                   ))}
                 </select>
@@ -144,6 +160,11 @@ export function StaffManager({
               >
                 {inviting ? 'Adding…' : 'Add'}
               </button>
+            </div>
+            {/* Directly under the control, not in help text nobody opens:
+                this is the moment the decision is made. */}
+            <div className="mt-2">
+              <RoleGrantNote grantable={grantable} />
             </div>
             <noscript>
               <p className="rounded-lg bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-900">
@@ -193,7 +214,7 @@ export function StaffManager({
                         <select name="role" defaultValue={member.role} className={SELECT}>
                           {grantable.map((role) => (
                             <option key={role} value={role}>
-                              {STORE_ROLE_LABELS[role]}
+                              {roleOptionLabel(role)}
                             </option>
                           ))}
                         </select>
@@ -234,10 +255,20 @@ export function StaffManager({
         <Outcome result={changed} />
         <Outcome result={removed} />
 
+        {/* This used to enumerate the roles here as well: "Staff: queue
+            lang. Manager: menu at settings din…". Two problems. It was wrong —
+            a staff member sees Menu, History, Regulars, Staff and Settings,
+            not the queue alone — and it never mentioned Payouts, which is the
+            most consequential thing a manager gets. A second, hand-written
+            answer to "what can each role do" is exactly what the derived note
+            above exists to replace.
+
+            What it did carry that the note does not is the last-owner rule, so
+            that survives. It is a single invariant rather than a list, so it
+            cannot rot the same way. */}
         <p className="mt-3 text-[11px] leading-relaxed text-ink-faint">
-          Staff: queue lang. Manager: menu at settings din, at makakadagdag ng
-          staff. May-ari: lahat, kasama ang pagpapalit ng may-ari. A store always
-          keeps at least one owner.
+          A shop always keeps at least one May-ari: the last one cannot be
+          removed or moved to another role.
         </p>
       </section>
 

@@ -6,6 +6,8 @@ import {
   MAX_TIER_PRIORITY_WEIGHT,
   type TierBenefitFacts,
 } from '@/lib/loyalty/tier-benefits';
+import { StoreRole } from '@prisma/client';
+import { tabsFor } from '@/lib/merchant/roles';
 import { splitOrderValue } from '@/lib/settlement/policy';
 import {
   MERCHANT_RELEVANCE,
@@ -375,11 +377,17 @@ describe('the back-office tabs and the role each screen needs', () => {
      * both admit a STAFF member and degrade to read-only via `canRevoke` and
      * `canEdit`. Hiding them would have removed screens that work.
      */
-    expect(tabs).toMatch(/'Payouts', needs: StoreRole\.MANAGER/);
-    expect(tabs).toMatch(/'Staff', needs: StoreRole\.STAFF/);
-    expect(tabs).toMatch(/'Settings', needs: StoreRole\.STAFF/);
-    expect(tabs).toMatch(/'Regulars', needs: StoreRole\.STAFF/);
-    expect(tabs).toMatch(/\.filter\(\(tab\) => roleSatisfies\(role, tab\.needs\)\)/);
+    // Asked of the map rather than of the component's source: the list moved
+    // to `merchant/roles.ts` so the staff screen could explain what a role
+    // grants without a second copy of the answer. `tabsFor` is the same
+    // function the tab bar calls.
+    const staffTabs = tabsFor(StoreRole.STAFF).map((tab) => tab.key);
+    const managerTabs = tabsFor(StoreRole.MANAGER).map((tab) => tab.key);
+    expect(staffTabs).not.toContain('payouts');
+    expect(managerTabs).toContain('payouts');
+    expect(staffTabs).toContain('staff');
+    expect(staffTabs).toContain('settings');
+    expect(staffTabs).toContain('regulars');
   });
 
   it('reads the ladder from the module that has no database in it', () => {

@@ -1,6 +1,7 @@
 import { globSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { tabsFor } from '@/lib/merchant/roles';
 import {
   NotificationChannel,
   NotificationKind,
@@ -541,8 +542,10 @@ describe('the wiring', () => {
   });
 
   it('shows the staff screen in the shop’s own tabs', () => {
-    expect(codeOnly(source('src/components/merchant/MerchantTabs.tsx'))).toMatch(
-      /\/staff`/,
-    );
+    // Asked of the map the tab bar renders from, rather than of a template
+    // literal inside the component — the list moved to `merchant/roles.ts` so
+    // one place decides which role reaches which screen, and this broke for no
+    // behavioural reason.
+    expect(tabsFor(StoreRole.STAFF).map((tab) => tab.path)).toContain('staff');
   });
 });

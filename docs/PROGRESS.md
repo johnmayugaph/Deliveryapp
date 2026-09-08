@@ -4592,3 +4592,97 @@ seventy-order window test above.
 **A browser**, in both rate states.
 
 1999 tests pass; lint, typecheck, tests and build all exit zero.
+
+---
+
+## Phase 51 — What a role actually grants, said where the role is chosen
+
+The staff screen was already the most complete in the back office: invites that
+wait for a number with no account, role changes judged against both roles,
+removal, `wouldStrandStore` so a shop cannot be left ownerless, invite windows,
+and every "can I" answered on the server and re-checked in the action.
+
+What it did not do was say what a role **means**. Both places a role is picked
+were a dropdown reading *May-ari / Manager / Staff*, and nothing anywhere in the
+codebase described what any of them could do. So the decision that governs who
+can see a shop's takings was made from three words — and it had become more
+consequential twice over: the tabs are hidden by role now, and the Payouts
+statement gained the commission on every order and the reference on every
+payout.
+
+### One map, because prose about a gate rots
+
+`BACK_OFFICE_AREAS` moved out of `MerchantTabs.tsx` into the pure roles module
+and grew two fields: what each area lets somebody do, and whether it is money.
+The tab bar renders from it and the explanation is derived from it, so the
+sentences an owner reads cannot promise access the gate does not give, and a new
+screen appears in both without anybody remembering to write about it.
+
+It models the abilities that are **not** tabs as well — editing the menu,
+changing settings, managing staff — because from the owner's side of the
+decision "can change prices" is as much a grant as "can open Payouts", and
+those are gated *inside* screens a staff member can open. A tabs-only list
+would have understated a manager badly.
+
+### Three things I got wrong, and how each surfaced
+
+**A sentence that was two-thirds false.** My first draft said a manager could
+"invite people, change what they can do, and remove them." `canRemove` is
+`isSelf || actor === OWNER`, and `canChangeRole` requires the actor to be able
+to grant the *current* role too — which caps a manager at moving a staff member
+to staff. Caught while reading the policy to write the owner's entry, and
+exactly the false promise this map exists to prevent.
+
+**The owner rung said nothing.** `areasAddedBy(OWNER)` was empty, so the note
+read *"May-ari — the same as the role below"* for the most consequential grant
+on the screen. Seen in a browser. It has a real entry now, and a line derived
+from the grant ceiling: appointing another owner is how a shop changes hands,
+and they can remove people, including you.
+
+**A second explanation already existed and I missed it.** Under the roster sat
+a hand-written summary: *"Staff: queue lang. Manager: menu at settings din, at
+makakadagdag ng staff."* Wrong — a staff member sees Menu, History, Regulars,
+Staff and Settings, not the queue alone — and it never mentioned Payouts, the
+money, which is the whole reason for this phase. I had grepped for identifier
+names and not for the prose. Two answers to one question, one omitting the
+takings, is worse than either, so it is gone; the last-owner rule it carried
+survives as its own sentence, because a single invariant cannot rot the way a
+list does.
+
+**A note on language.** The line removed was in Filipino and the derived
+sentences are in English, so this reduces Filipino coverage on that screen. It
+was the wrong copy to keep, but that is a real loss and is flagged rather than
+buried: the `grants` strings are a single list and are the obvious place to
+start if the back office is ever localised.
+
+### Verified in four places
+
+**Twenty-two new unit tests** (2021 total), the load-bearing ones being the
+agreement checks: the manager's sentence is asserted against `canRemove` and
+`canChangeRole` rather than read; every tab path is walked to a real
+`page.tsx`; `roleSeesTakings` is compared against the ladder rather than being
+a second list; and every area is covered by exactly one rung, so the note
+cannot silently omit one.
+
+**Seven mutations, all killed**, including letting a staff member reach the
+money, unmarking the takings as sensitive, pointing a tab at a screen that does
+not exist, dropping the non-tab abilities, putting the list back inline in the
+component, hand-writing the claim in the note, and marking the money role on
+only one of the two dropdowns.
+
+**Fourteen live-database checks**, including that a manager may grant only
+STAFF — my assertion there said MANAGER and was wrong, because
+`HIGHEST_GRANTABLE` deliberately stops a manager appointing peers — and its
+consequence: a manager never sees the takings warning at all, because they
+cannot grant a role that sees money.
+
+**A browser as an owner and as a staff member**: seven tabs against six, the
+full note against no note and no invite control at all.
+
+Two older tests broke on the extraction, both because they grepped
+`MerchantTabs.tsx` for the inline list rather than asking what it rendered.
+Re-anchored on `tabsFor`. That is the second time in three phases; the habit
+worth keeping is that a test which reads source is pinning a location, and a
+location is not behaviour.
+
+2021 tests pass; lint, typecheck, tests and build all exit zero.
