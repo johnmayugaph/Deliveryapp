@@ -61,7 +61,7 @@ export default async function MerchantStoreLayout({
           </div>
         </div>
 
-        <MerchantTabs storeId={access.store.id} />
+        <MerchantTabs storeId={access.store.id} role={access.role} />
       </header>
 
       {children}

@@ -1,5 +1,6 @@
 import { requireStoreAccess } from '@/lib/merchant/access';
 import { loadMerchantQueue, loadMerchantSummary } from '@/lib/merchant/queue';
+import { tierNamesForCustomers } from '@/lib/merchant/tier-customers';
 import { readFoodDetails } from '@/lib/orders/details';
 import { prisma } from '@/lib/prisma';
 import { formatCentavos } from '@/lib/money';
@@ -42,6 +43,20 @@ export default async function MerchantQueuePage({
     : [];
   const areaByOrderId = new Map(
     dropoffs.map((row) => [row.orderId, row.barangay ?? row.cityName]),
+  );
+
+  /* Which of the people waiting are regulars. One lookup for the page — and it
+     short-circuits to an empty map when no programme is running, which is
+     every deployment until somebody creates one. */
+  const liveOrders = queue.stages.flatMap((entry) => entry.orders);
+  const tierByCustomer = await tierNamesForCustomers(
+    liveOrders.map((entry) => entry.order.customerId),
+  );
+  const tierByOrderId = new Map(
+    liveOrders.map((entry) => [
+      entry.order.id,
+      tierByCustomer.get(entry.order.customerId) ?? null,
+    ]),
   );
 
   return (
@@ -88,7 +103,11 @@ export default async function MerchantQueuePage({
                     <OrderCard
                       key={entry.order.id}
                       isUrgent={stage.isUrgent}
-                      order={toCardOrder(entry, areaByOrderId.get(entry.order.id) ?? null)}
+                      order={toCardOrder(
+                        entry,
+                        areaByOrderId.get(entry.order.id) ?? null,
+                        tierByOrderId.get(entry.order.id) ?? null,
+                      )}
                     />
                   ))}
                 </ul>
@@ -119,6 +138,7 @@ function Stat({ label, value }: { label: string; value: string }) {
 function toCardOrder(
   entry: Awaited<ReturnType<typeof loadMerchantQueue>>['stages'][number]['orders'][number],
   dropoffArea: string | null,
+  customerTierName: string | null,
 ): QueueCardOrder {
   const { order } = entry;
 
@@ -146,5 +166,6 @@ function toCardOrder(
     merchantNotes,
     includeCutlery,
     dropoffArea,
+    customerTierName,
   };
 }

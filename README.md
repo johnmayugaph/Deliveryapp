@@ -153,8 +153,20 @@ merchants and the customer profile offers a link in:
 | --- | --- | --- |
 | `0917 000 1111` | Nena Bautista | Owner of Aling Nena Carinderia |
 | `0917 000 2222` | Ben Ocampo | Owner of two stores — exercises the picker |
-| `0917 000 3333` | Rosa Lim | Staff at Nena's: queue only, no prices |
+| `0917 000 3333` | Rosa Lim | Staff at Nena's: everything but Payouts |
 | `0917 000 9999` | Ops Admin | Grants subscriptions and ledger adjustments |
+
+Tabs a member's role cannot open are not shown. Payouts is the only screen
+that refuses outright — Menu, Staff and Settings admit a staff member and
+degrade to read-only, which is why they are still listed for one.
+
+The **Regulars** tab answers the two questions a shop has about TARA's loyalty
+statuses: how much of its business comes from customers who have earned one,
+and what those benefits cost the shop — which is nothing, because the shop is
+paid its full food subtotal less its usual commission whatever discounts the
+customer had. The one exception is dispatch priority, which really does reorder
+the rider queue, and the screen says so plainly rather than only listing what
+a status gives.
 
 ### If somebody loses their phone
 

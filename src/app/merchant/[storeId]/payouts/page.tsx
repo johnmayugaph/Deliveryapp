@@ -1,3 +1,4 @@
+import { notFound } from 'next/navigation';
 import { SettlementParty, StoreRole } from '@prisma/client';
 import { requireStoreAccess } from '@/lib/merchant/access';
 import { positionOf, statementFor } from '@/lib/settlement/ledger';
@@ -22,7 +23,26 @@ export default async function MerchantPayoutsPage({
   params: Promise<{ storeId: string }>;
 }) {
   const { storeId } = await params;
-  const access = await requireStoreAccess(storeId, StoreRole.MANAGER);
+
+  /**
+   * Caught, not left to throw. `requireStoreAccess` raises
+   * `InsufficientStoreRoleError`, and an uncaught throw here was a **500** —
+   * a STAFF member who tapped the Payouts tab got "Something on our side
+   * broke, not anything you did". And because that error is a deliberate
+   * expected refusal, nothing was ever written to the error page about it, so
+   * it could have stayed that way indefinitely.
+   *
+   * `notFound()` matches what the layout already does one level up, and is the
+   * same reasoning: the same answer whether the screen is missing or simply
+   * not theirs. The tab is hidden from them too, so reaching this needs a
+   * typed URL or a bookmark from when they were a manager.
+   */
+  let access;
+  try {
+    access = await requireStoreAccess(storeId, StoreRole.MANAGER);
+  } catch {
+    notFound();
+  }
 
   const ref = { party: 'STORE' as const, storeId: access.store.id };
   const [position, entries, referrals] = await Promise.all([

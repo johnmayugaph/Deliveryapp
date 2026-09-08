@@ -28,6 +28,16 @@ export interface QueueCardOrder {
   merchantNotes: string | null;
   includeCutlery: boolean;
   dropoffArea: string | null;
+  /**
+   * The customer's TARA status, when they have one. Just the name — a shop has
+   * no use for their points or their benefits, and those are not its business.
+   *
+   * It is here rather than only on the Regulars tab because this is the card
+   * somebody is looking at when it matters: recognising a suki is the thing a
+   * carinderia has always done from behind the counter, and the app took that
+   * away by putting a stranger's order number in front of them.
+   */
+  customerTierName: string | null;
 }
 
 /** "3m" / "1h 12m" — a kitchen reads elapsed time, not a timestamp. */
@@ -92,9 +102,19 @@ export function OrderCard({
         </span>
       </div>
 
-      <p className="mt-0.5 text-[11px] text-ink-muted">
-        {statusPresentation(order.status).label}
-        {order.dropoffArea ? ` · ${order.dropoffArea}` : ''}
+      <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-ink-muted">
+        <span>
+          {statusPresentation(order.status).label}
+          {order.dropoffArea ? ` · ${order.dropoffArea}` : ''}
+        </span>
+        {order.customerTierName ? (
+          /* Quiet on purpose. It is context for whoever reads it, not an
+             instruction to treat this order differently — the kitchen order is
+             still whatever came in first. */
+          <span className="rounded-md bg-brand-50 px-1.5 py-0.5 text-[10px] font-semibold text-brand-700 ring-1 ring-brand-200">
+            {order.customerTierName}
+          </span>
+        ) : null}
       </p>
 
       <ul className="mt-2 space-y-0.5">

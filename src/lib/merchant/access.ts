@@ -2,6 +2,7 @@ import { cache } from 'react';
 import { StoreRole, type Store, type StoreMember, type User } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { requireCurrentUser } from '@/lib/auth/session';
+import { roleSatisfies } from '@/lib/merchant/roles';
 
 /**
  * Store access.
@@ -30,17 +31,13 @@ export class InsufficientStoreRoleError extends Error {
   }
 }
 
-/** Most-privileged first, so "at least this role" is a simple index comparison. */
-const ROLE_RANK: Readonly<Record<StoreRole, number>> = {
-  [StoreRole.OWNER]: 3,
-  [StoreRole.MANAGER]: 2,
-  [StoreRole.STAFF]: 1,
-};
-
-/** Whether `actual` meets or exceeds `required`. */
-export function roleSatisfies(actual: StoreRole, required: StoreRole): boolean {
-  return ROLE_RANK[actual] >= ROLE_RANK[required];
-}
+/**
+ * The ladder lives in `./roles.ts`, which imports nothing but the enum, and is
+ * re-exported here so every existing caller is unaffected. The split exists
+ * because the tab bar is a client component and this module is not safe to
+ * import from one.
+ */
+export { roleSatisfies };
 
 export interface StoreAccess {
   user: User;

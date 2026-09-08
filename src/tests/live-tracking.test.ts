@@ -96,10 +96,16 @@ describe('the pure modules stay usable from the browser', () => {
     // apply. It is arithmetic and must stay that way: a path from it to the
     // Prisma client or the session would be a 500 on the checkout screen,
     // which is the fifth time this codebase has met this trap.
+    // `merchant/roles.ts` joined it when the back-office tab bar started
+    // hiding tabs a member's role cannot open. The ladder used to live in
+    // `merchant/access.ts`, which reaches Prisma AND the session — importing
+    // that from a `'use client'` component would be the sixth time.
     for (const file of [
       'src/lib/orders/tracking.ts',
       'src/lib/fleet/job-policy.ts',
       'src/lib/pricing/benefits.ts',
+      'src/lib/merchant/roles.ts',
+      'src/lib/merchant/tier-view.ts',
     ]) {
       const code = codeOnly(file);
       expect(code, file).not.toMatch(/next\/headers/);
@@ -113,6 +119,7 @@ describe('the pure modules stay usable from the browser', () => {
     // Re-exported from where it used to live, so nothing that already
     // imported it had to change.
     expect(source('src/lib/fleet/partner.ts')).toMatch(/export \{ ACTIVE_JOB_STATUSES \}/);
+    expect(source('src/lib/merchant/access.ts')).toMatch(/export \{ roleSatisfies \}/);
   });
 });
 

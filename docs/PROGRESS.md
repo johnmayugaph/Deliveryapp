@@ -4304,3 +4304,114 @@ shell. Nothing checked that before: CI builds both images, so a broken loop
 would pass green and fail at 02:00 in a container nobody is tailing.
 
 1928 tests pass; typecheck, lint and build clean.
+
+---
+
+## Phase 48 — What a loyalty tier means to the shop cooking the food
+
+The tiers were built for the customer and the console. The shop had never been
+told anything, and a shop has exactly two questions about them:
+
+**Does this come out of my money?** No, and the shop cannot verify that from
+anywhere in the app: the queue card shows a subtotal and no discount at all, so
+the reasonable assumption is that the platform's generosity is funded out of
+the shop's margin. `/merchant/[storeId]/regulars` now says it plainly, with the
+figure TARA actually absorbed on that shop's own orders next to it.
+
+**Does it change what happens in my kitchen?** For exactly one benefit, yes.
+`DISPATCH_PRIORITY` reorders the rider fan-out and that queue is global, so a
+suki's order can be offered a rider ahead of an equally old one — another
+shop's, or this shop's own next order. That paragraph is shown only when some
+tier really confers it; on a ladder of bill benefits alone it would be
+inventing a worry.
+
+So `MERCHANT_RELEVANCE` splits the six benefit types into `PLATFORM_PAYS`,
+`AFFECTS_THE_KITCHEN` and `NOT_THE_SHOPS_CONCERN`, compile enforced over the
+enum. Support priority and never-expiring points are between TARA and the
+customer; two lines a shop can do nothing with is how a screen read between
+orders stops being read. A tier conferring only those is dropped from the
+ladder rather than listed empty.
+
+The head start is printed through `dispatchPriorityFor`, the dispatcher's own
+function, so the ceiling is included. Printing the raw `priorityWeight` column
+would have promised a queue that does not exist.
+
+### The badge, and what does not cross the counter
+
+The queue card carries the customer's tier name. Recognising a suki is what a
+carinderia has always done from behind the counter, and the app took it away by
+putting a stranger's order number there instead. Only the NAME crosses:
+`tierNamesForCustomers` returns `Map<string, string>` and a test asserts no
+points balance, no benefit rows and no distance-to-next go with it. It
+short-circuits before touching the database when no programme is running, which
+is every deployment until somebody creates one — and this runs on the busiest
+screen in the app.
+
+### Two things the browser corrected
+
+A screenshot showed **"67%"** against three orders. Arithmetically right, and it
+reads as a finding about the business while one more order either way moves it
+by thirty points. Below `MIN_ORDERS_FOR_A_SHARE` the fraction is shown instead,
+and the floor is set where one order cannot swing the figure by more than five
+points. The same screenshot showed the **palest text on the screen** carrying
+the fact most likely to make a shop think the numbers are wrong — that an order
+from three months ago counts against whoever that customer is today. Lifted out
+of `text-ink-faint`.
+
+### A 500 found by checking my own access decision
+
+This screen is STAFF, deliberately unlike Payouts: nothing on it is a takings
+figure, and whoever is at the counter is the person who benefits from knowing
+the next order is a regular's. Verifying that in a browser with a real STAFF
+session turned up something else — **Payouts answered 500.** The page calls
+`requireStoreAccess(…, MANAGER)` and nothing caught the throw, so a staff
+member tapping a visible tab got "Something on our side broke, not anything you
+did". And `InsufficientStoreRoleError` is a deliberate expected refusal, so the
+error page recorded nothing: it could have stayed that way indefinitely.
+
+Fixed in both halves — the page refuses with `notFound()` the way the layout
+one level up already does, and the tab bar hides tabs the member cannot open.
+The first version of that list marked Staff and Settings MANAGER too and was
+wrong for both: they admit a STAFF member and degrade to read-only via
+`canRevoke` and `canEdit`, so hiding them would have removed screens that work.
+
+Hiding tabs by role meant a client component needed the role ladder, and
+`merchant/access.ts` reaches Prisma AND the session — importing it from
+`'use client'` is a 500 on render, the trap this codebase has walked into five
+times. `roleSatisfies` moved to a pure `merchant/roles.ts`, re-exported from
+where it was, and both new pure modules joined the purity test's list.
+
+### Verified in four places
+
+**Twenty-five new unit tests** (1953 total). The claim the whole screen exists
+to make is tested as **arithmetic**, not as a regex: `splitOrderValue` is given
+the same order with and without a discount and the store's share must be
+identical, including for a discount large enough to drive the platform's net
+negative.
+
+That replaced a test that could not fail. The first version read `accrual.ts`
+and asserted it contained `amountCentavos: split.storeCentavos` — which passed
+against a mutant writing `split.storeCentavos - order.loyaltyDiscountCentavos`,
+because that string contains the one being matched. A regex over source cannot
+express "and nothing else".
+
+**Thirteen mutations, all killed**, including the raw priority column printed
+instead of the clamped one, a perk leaked to the shop, tiers listed empty, the
+share floor removed, the payouts 500 restored, Staff hidden from staff, and the
+ladder imported from the module with a database in it.
+
+**Twenty-four live-database checks** across every branch: no programme, a
+programme with no tiers, a programme with tiers, tiers whose benefits a shop
+hears nothing about, and the programme switched off afterwards — where the
+money already absorbed is still reported, because zeroing it would make the
+screen lie about the past. Two fixture bugs of mine were caught by the
+assertions rather than by the code: `OrderStatus.REJECTED` does not exist, so
+my "rejected" order silently became COMPLETED and the count check said 4 where
+it wanted 3; and a raw `REDEEMED` insert was refused by the guard until it went
+through `redeemPoints` and produced the credits transaction it must name.
+
+**A real browser** on a real database, for the badge (present for the tier
+customer, absent for the stranger in the same queue), every screen state, and
+the seven-tab/six-tab difference between an owner and a staff member.
+
+1953 tests pass; typecheck, lint and build clean.
