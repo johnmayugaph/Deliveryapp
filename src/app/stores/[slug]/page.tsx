@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { prisma } from '@/lib/prisma';
 import { getAllServices } from '@/lib/services/registry';
+import { groupByCategory } from '@/lib/merchant/menu-policy';
 import { formatCentavos } from '@/lib/money';
 import { AddToCartControls } from '@/components/cart/AddToCartControls';
 import { RatingBadge } from '@/components/ui/RatingBadge';
@@ -29,7 +30,11 @@ export default async function StorePage({
         city: true,
         menuItems: {
           where: { isAvailable: true },
-          orderBy: [{ category: 'asc' }, { sortOrder: 'asc' }],
+          // The shop's own order — `sortOrder` is a position in one list and a
+          // section is a contiguous run in it (see `merchant/menu-policy.ts`).
+          // Ordering by category first is what used to put "Add-ons" above
+          // "Rice meals" on every menu.
+          orderBy: [{ sortOrder: 'asc' }, { category: 'asc' }, { name: 'asc' }],
         },
       },
     }),
@@ -48,16 +53,9 @@ export default async function StorePage({
   // a cart nobody can check out with is a worse experience than no cart.
   const canOrder = store.isOpen && liveServices.length > 0;
 
-  // Group the menu by its own category strings — data, not a fixed list.
-  const byCategory = new Map<string, typeof store.menuItems>();
-  for (const item of store.menuItems) {
-    const existing = byCategory.get(item.category);
-    if (existing) {
-      existing.push(item);
-    } else {
-      byCategory.set(item.category, [item]);
-    }
-  }
+  // Grouped by the same rule the merchant screen uses, so what a shop arranges
+  // is what a customer sees.
+  const groups = groupByCategory(store.menuItems);
 
   return (
     <main>
@@ -98,16 +96,20 @@ export default async function StorePage({
         ) : null}
       </header>
 
-      {Array.from(byCategory.entries()).map(([category, items]) => (
-        <section key={category} aria-labelledby={`cat-${category}`} className="mt-4">
+      {groups.map((group) => (
+        <section
+          key={group.category}
+          aria-labelledby={`cat-${group.category}`}
+          className="mt-4"
+        >
           <h2
-            id={`cat-${category}`}
+            id={`cat-${group.category}`}
             className="px-4 text-[13px] font-semibold uppercase tracking-wide text-ink-muted"
           >
-            {category}
+            {group.category}
           </h2>
           <ul className="mt-2 divide-y divide-black/5">
-            {items.map((item) => (
+            {group.items.map((item) => (
               <li
                 key={item.id}
                 id={`item-${item.id}`}

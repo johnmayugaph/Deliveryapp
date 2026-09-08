@@ -598,6 +598,72 @@ Price editing is safe to expose because every order snapshots what it charged:
 raising a price today cannot rewrite last month's receipt. Verified against the
 database.
 
+### The menu is the shop's own document
+
+Until late on, **nothing in the application could create a menu item**. The
+screen could reprice a dish and mark one out of stock; the dishes themselves
+came from `prisma/seed.ts`, so a real shop's menu meant somebody with database
+access writing INSERTs. The console even refused to make a store visible until
+it had a menu, advising the owner to "add items first" — advice its owner could
+not act on. That made the launch step "replace the demo stores with real ones"
+impossible without SQL, which is the same shape as the earlier discovery that
+no store could be created at all outside the seed.
+
+A manager or the owner now adds, edits, recategorises, reorders and removes
+dishes at `/merchant/<store>/menu`. `merchant/menu-policy.ts` is pure and holds
+every rule; `merchant/menu.ts` does the reads and writes; `menu-actions.ts` is
+the authorisation boundary.
+
+**The role split is the interesting decision.** Marking the pork out of stock
+stays at STAFF, because the rice runs out at 8pm and whoever is on the counter
+has to be able to say so. Everything else needs MANAGER: adding, renaming,
+repricing and deleting change what the business sells, not what is left today.
+The screen hides what a viewer may not use and every action re-checks the role,
+because a hidden button is not an authorisation check.
+
+**Ordering: one list, sections as runs.** `sortOrder` is a position in the
+store's whole menu, dense from zero, and a category is a contiguous run inside
+it; the sections appear in the order their first item does. Every mutation ends
+by resequencing the list inside the same transaction, so the invariant is true
+after each edit rather than maintained by each caller remembering to.
+
+The two alternatives were both worse. Sorting sections alphabetically — which
+is what both menu screens did before — puts "Add-ons" above "Rice meals" on
+every carinderia menu in the country, and no shop wants their extra rice listed
+first. A `MenuCategory` table with its own rank is the textbook answer, but it
+turns a rename into a migration of live rows and leaves two places that can
+disagree about what a section is called. The cost of the run model is that a
+reorder rewrites the store's positions rather than one row; a menu is tens of
+items edited by hand, so that is a rounding error.
+
+Consequences worth naming:
+
+- **A dish moves within its own section only.** "Down" from the bottom of a run
+  would silently recategorise it, which is not what anybody looking at a
+  grouped list means by it — so it is a reported no-op instead.
+- **A section name is snapped to the spelling already on the menu.** Typing
+  "add-ons" under a menu that says "Add-ons" joins that section rather than
+  starting a second one beside it, which could otherwise only be undone row by
+  row.
+- **The same dish name is refused inside one section and allowed across two.**
+  "Extra Rice" as an add-on and as a rice meal are two sellable things; twice in
+  one run is a double-tap the kitchen printout could not tell apart.
+- **Renaming onto an existing section merges the two**, unless the merge would
+  leave two identically named dishes in one run, which is refused by name.
+- **Deleting is a real delete.** Nothing holds a foreign key to `MenuItem` and
+  every order snapshots the name and price it charged, so removing yesterday's
+  dish cannot rewrite yesterday's receipt. The screen still asks first, and the
+  request carries the name the merchant was looking at — a phone left open in a
+  kitchen is a stale view, and the destructive control on it is this one.
+- **A price is read from what a person typed** — `120`, `120.50`, `₱1,250` —
+  via centavo-integer arithmetic rather than `Number(x) * 100`, which turns
+  19.99 into 1998.9999999999998. A third decimal place is refused rather than
+  rounded: silently charging ₱12.35 for `12.345` is how a support thread
+  starts.
+
+The customer's store page groups with the same function and orders by the same
+column, so what a shop arranges is what a customer sees.
+
 Its own layout, with its own tabs — the customer's bottom navigation would offer
 Credits and Orders to somebody running a kitchen. That nav is now hidden on the
 merchant area and on the auth screens, where it was offering signed-in

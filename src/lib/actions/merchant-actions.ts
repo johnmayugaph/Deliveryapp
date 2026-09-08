@@ -288,39 +288,12 @@ export async function setItemAvailabilityAction(
   }
 }
 
-/**
- * Change an item's price.
- *
- * Safe to allow because every order snapshots what it charged: raising a price
- * today cannot rewrite last month's receipt. MANAGER and above, since it is the
- * one edit here with money attached.
- */
-export async function setItemPriceAction(
-  storeId: string,
-  menuItemId: string,
-  priceCentavos: number,
-): Promise<StoreSettingsResult> {
-  const price = Math.floor(priceCentavos);
-  if (!Number.isInteger(price) || price < 100 || price > 10_000_00) {
-    return { ok: false, message: 'Between ₱1 and ₱10,000.' };
-  }
-
-  try {
-    const access = await requireStoreAccess(storeId, StoreRole.MANAGER);
-    const { count } = await prisma.menuItem.updateMany({
-      where: { id: menuItemId, storeId: access.store.id },
-      data: { priceCentavos: price },
-    });
-    if (count === 0) {
-      return { ok: false, message: 'That item is not on your menu.' };
-    }
-    revalidatePath(`/merchant/${storeId}/menu`);
-    revalidatePath(`/stores/${access.store.slug}`);
-    return { ok: true };
-  } catch (error) {
-    return { ok: false, message: toMerchantMessage(error) };
-  }
-}
+/* An item's price used to be editable here, on its own. It moved to
+ * `menu-actions.ts` with the rest of the menu: a shop editing a dish changes
+ * its name, its section, its description and its price in one form, and
+ * having two places that could write `priceCentavos` meant two places that
+ * had to agree on what a price may be. The bounds now live in
+ * `merchant/menu-policy.ts`, which is also where the form reads them. */
 
 /**
  * Turns a domain error into something a merchant can act on.

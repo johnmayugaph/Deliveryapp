@@ -787,9 +787,9 @@ real file later is one line in `tailwind.config.ts`.
   whether the results for a Philippine barangay are any good in practice.
 - **A store's own details cannot be edited after it is created.** The console
   can create one and set whether customers see it; the shop can set its prep
-  time and open/closed. Changing a name, an address or which services a shop is
-  for still needs a database edit. Rare enough to have been left, common enough
-  to be worth naming.
+  time, open/closed and — since Phase 27 — its whole menu. Changing a name, an
+  address or which services a shop is for still needs a database edit. Rare
+  enough to have been left, common enough to be worth naming.
 - **No subscription payment rail.** A tier exists and can be granted, but not
   sold. See Phase 9.
 - **No live location on the tracking screen.** The customer sees statuses, not a
@@ -848,12 +848,17 @@ real file later is one line in `tailwind.config.ts`.
   requests, which is thin if someone brings many source addresses.
 - **No realtime.** Tracking polls every 15 seconds. Push now reaches a closed
   tab, but the open tab still polls — a live pin would need a socket or SSE.
-- **Menu categories sort alphabetically**, so "Add-ons" leads the menu ahead of
-  "Rice meals". Needs a sort field on the category, or categories as rows.
 - **Icons are emoji.** `serviceGlyph()` is a lookup, so swapping in a real icon
   set touches one map.
-- **Item options are modelled but not offered.** `FoodItemSnapshot.options`
-  carries priced add-ons and placement stores them; no UI collects them yet.
+- **Item options are modelled on the ORDER side only.**
+  `FoodItemSnapshot.options` carries priced add-ons and placement stores them
+  correctly — but there is no menu-side model at all, so a shop has no way to
+  declare "extra rice +₱15" in the first place. Offering them needs a table and
+  a screen, not just a screen; earlier notes here understated it.
+- **A dish has no photo.** `MenuItem.imageUrl` exists and nothing sets or
+  renders it: the menu editor takes a name, a price, a section and a
+  description. For food ordering that is a real commercial gap, and it needs
+  somewhere to put the file before it needs a form field.
 - **Surge is a column, not a calculation.** `Order.surgeCentavos` exists and
   pricing passes it through; nothing sets it.
 - **ETA is an estimate from a straight line.** `estimateEta()` uses prep time
@@ -1794,3 +1799,87 @@ connection both come back `recorded: false` with a reason, a `TypeError`
 through the same call writes its row.
 
 930 tests pass; build and lint clean.
+
+## Phase 27 — a menu the shop can write ✅
+
+Found while answering "what is next on the list": the merchant menu screen
+edited a menu that nothing in the application could produce. `prisma.menuItem`
+appeared exactly twice outside the seed, both `updateMany` — availability and
+price on rows that already existed. No create, no rename, no delete.
+
+So the launch step "replace the demo stores and menus with real ones" was not
+doable: you could create a shop at `/admin/stores`, invite its owner, and then
+publishing it was refused with
+
+> That shop has no menu yet. A customer would find it, open it and see nothing
+> — have the owner add items first.
+
+which the owner could not do. The same shape as the store-creation gap in Phase
+21: the back office had quietly assumed the seed file had already been there.
+
+### One ordered list, sections as runs
+
+`sortOrder` is a position in the store's entire menu, dense from zero, and a
+section is a contiguous run inside it — the sections appear in the order their
+first dish does. Every mutation resequences the list in the same transaction,
+so the invariant holds after each edit instead of depending on each caller.
+
+This also closes the "Add-ons leads the menu" gap that has been sitting under
+Known gaps for weeks. It was listed as needing "a sort field on the category,
+or categories as rows"; it needed neither. A `MenuCategory` table would turn a
+rename into a migration of live rows and leave two places that can disagree
+about what a section is called. The price of the run model is that a reorder
+rewrites positions rather than one row, which for tens of hand-edited rows is
+nothing.
+
+Four decisions inside that are worth more than the mechanism:
+
+- **A dish moves within its own section only.** Moving it past the edge of a
+  run would silently recategorise it, so that is a reported no-op — "already at
+  the end of its section" — rather than a surprise.
+- **A section name snaps to the spelling already on the menu.** "add-ons" joins
+  "Add-ons" instead of starting a second section beside it, because that mess
+  can only be undone row by row.
+- **The same name is refused inside one section, allowed across two.** Extra
+  Rice as an add-on and as a rice meal are two sellable things; twice in one run
+  is a double-tap the kitchen printout cannot tell apart.
+- **Deleting really deletes**, and is safe for one specific reason: nothing
+  holds a foreign key to `MenuItem` and every order snapshots the name and price
+  it charged. The screen asks first, and the request carries the name the
+  merchant was looking at — a phone left open in a kitchen is a stale view, and
+  the destructive control on it is this one. A mismatch is refused with "this
+  screen is out of date".
+
+### Who may
+
+Marking the pork out of stock stays at STAFF: the rice runs out at 8pm and
+whoever is on the counter has to be able to say so. Adding, editing, renaming,
+reordering and deleting need MANAGER, because they change what the business
+sells rather than what is left today. The screen hides what a viewer cannot
+use; every action re-checks, because a hidden button is not an authorisation
+check.
+
+Prices moved here too. `setItemPriceAction` was a second place that could write
+`priceCentavos`, so it is gone and one module now decides what a price may be —
+₱1 to ₱10,000, read from what a person actually types.
+
+### Verified twice, because the ordering is the risky part
+
+Against the real database, on a scratch store: eighteen checks covering every
+operation, both refusals, the two no-ops, cross-store isolation (another shop's
+item id matches nothing) and the merge that would collide. Then in a real
+browser at 390px as three different people — fourteen checks, each polling the
+rendered page rather than sleeping, so nothing was read mid-refresh.
+
+The browser pass is the one that matters: Aling Nena's menu now renders **Rice
+meals, Party trays, Add-ons** — the order the seed author wrote — where it used
+to render Add-ons first. A dish added to a new section, a duplicate refused
+however it was capitalised, `12.345` refused, a section moved up, a dish moved
+down, a section renamed, a dish recategorised and repriced, the customer's page
+showing the same arrangement, then deleted through its confirmation step. As
+STAFF: no Edit, no Rename, no Remove, no add form, and the stock toggle still
+working. A brand new shop with no menu shows the amber note explaining why it
+cannot be published yet, and its first dish with no section given lands under
+"Main".
+
+975 tests pass; build and lint clean.

@@ -45,3 +45,21 @@ export function assertNonNegativeInteger(value: number, label: string): void {
     throw new RangeError(`${label} must be a non-negative integer number of centavos, got ${value}`);
   }
 }
+
+/**
+ * Reads a price a person typed into centavos, or null if it is not one.
+ *
+ * Accepts what a phone keyboard and a shop owner actually produce: `120`,
+ * `120.5`, `₱120.00`, `1,250` — and refuses anything else rather than
+ * guessing. More than two decimal places is a refusal, not a rounding: a
+ * merchant who typed `12.345` should be told, because silently charging
+ * ₱12.35 for it is the kind of surprise that ends in a support thread.
+ */
+export function centavosFromPesoInput(input: string): number | null {
+  const cleaned = input.trim().replace(/^₱\s*/, '').replace(/,/g, '');
+  if (!/^\d+(\.\d{1,2})?$/.test(cleaned)) return null;
+  // Via a string of centavos rather than `Number(cleaned) * 100`, because
+  // 19.99 * 100 is 1998.9999999999998 in binary floating point.
+  const [whole, fraction = ''] = cleaned.split('.');
+  return Number(whole) * 100 + Number(fraction.padEnd(2, '0'));
+}
