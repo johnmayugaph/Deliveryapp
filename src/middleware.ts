@@ -71,7 +71,15 @@ const PUBLIC_PATHS: readonly string[] = [
  * `/checkout`, which redirects there itself — and for anything about a person
  * rather than a product.
  */
-const PUBLIC_SUBTREES: readonly string[] = ['/services', '/stores', '/_next'];
+const PUBLIC_SUBTREES: readonly string[] = [
+  '/services',
+  '/stores',
+  // Photographs of dishes. On a page a stranger can already open, so putting
+  // them behind the wall would render the storefront as a grid of broken
+  // images — and each one is a picture of food and nothing else.
+  '/menu-images',
+  '/_next',
+];
 
 /** Whether a path is reachable without a session cookie. */
 export function isPublicPath(pathname: string): boolean {

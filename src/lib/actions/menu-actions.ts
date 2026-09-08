@@ -29,6 +29,17 @@ import {
   type Direction,
 } from '@/lib/merchant/menu-policy';
 import { centavosFromPesoInput } from '@/lib/money';
+import {
+  MenuItemNotInStoreError,
+  putMenuItemImage,
+  removeMenuItemImage,
+} from '@/lib/media/menu-images';
+import {
+  ImageTooLargeError,
+  ImageWrongShapeError,
+  MAX_IMAGE_BYTES,
+  NotAnImageError,
+} from '@/lib/media/image-bytes';
 
 /**
  * A shop editing its own menu.
@@ -73,6 +84,14 @@ function explain(error: unknown): MenuActionResult {
     error instanceof MenuItemNotFoundError ||
     error instanceof MenuItemChangedError ||
     error instanceof CategoryNotFoundError
+  ) {
+    return { ok: false, message: error.message };
+  }
+  if (
+    error instanceof NotAnImageError ||
+    error instanceof ImageTooLargeError ||
+    error instanceof ImageWrongShapeError ||
+    error instanceof MenuItemNotInStoreError
   ) {
     return { ok: false, message: error.message };
   }
@@ -224,6 +243,76 @@ export async function renameCategoryAction(
       ok: true,
       message: `${outcome.items} item${outcome.items === 1 ? '' : 's'} now under ${outcome.category}.`,
     };
+  } catch (error) {
+    return explain(error);
+  }
+}
+
+/**
+ * Puts a photograph on a dish.
+ *
+ * The file arrives already resized: the browser draws it into a canvas at
+ * 1200px and re-encodes it, so what reaches here is around 150 KB instead of
+ * the four megabytes a phone camera produces. That is a convenience, not a
+ * defence — `putMenuItemImage` reads the real type and size out of the bytes
+ * and refuses anything outside the limits, because a form field is not a
+ * promise about what was sent.
+ *
+ * No reason field and no audit row, unlike the console's actions: this is a
+ * shop editing its own shopfront, and the same is true of every other control
+ * on this screen.
+ */
+export async function uploadMenuItemImageAction(
+  _previous: MenuActionResult | null,
+  formData: FormData,
+): Promise<MenuActionResult> {
+  try {
+    const access = await requireStoreAccess(field(formData, 'storeId'), StoreRole.MANAGER);
+    const file = formData.get('photo');
+    if (!(file instanceof File) || file.size === 0) {
+      return { ok: false, message: 'Pick a photo first.' };
+    }
+    // Checked before reading the whole thing into memory. The real limit is
+    // enforced on the bytes; this is the cheap one.
+    if (file.size > MAX_IMAGE_BYTES * 2) {
+      return { ok: false, message: 'That photo is too big to send. Try taking it again.' };
+    }
+
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const stored = await putMenuItemImage({
+      storeId: access.store.id,
+      menuItemId: field(formData, 'itemId'),
+      bytes,
+      uploadedByUserId: access.user.id,
+    });
+
+    refresh(access.store.id, access.store.slug);
+    return {
+      ok: true,
+      message: `Photo saved — ${stored.width}×${stored.height}, ${Math.round(
+        stored.byteSize / 1024,
+      )} KB.`,
+    };
+  } catch (error) {
+    return explain(error);
+  }
+}
+
+/** Takes the photograph off a dish, leaving the dish. */
+export async function removeMenuItemImageAction(
+  _previous: MenuActionResult | null,
+  formData: FormData,
+): Promise<MenuActionResult> {
+  try {
+    const access = await requireStoreAccess(field(formData, 'storeId'), StoreRole.MANAGER);
+    const outcome = await removeMenuItemImage({
+      storeId: access.store.id,
+      menuItemId: field(formData, 'itemId'),
+    });
+    refresh(access.store.id, access.store.slug);
+    return outcome.removed
+      ? { ok: true, message: 'Photo removed.' }
+      : { ok: true, message: 'That dish had no photo.' };
   } catch (error) {
     return explain(error);
   }

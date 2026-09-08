@@ -84,6 +84,7 @@ export default async function MerchantMenuPage({
                 isAvailable: item.isAvailable,
                 isFirstInSection: position === 0,
                 isLastInSection: position === group.items.length - 1,
+                imageId: item.image?.id ?? null,
               }}
             />
           ))}

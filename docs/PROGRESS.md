@@ -851,15 +851,17 @@ real file later is one line in `tailwind.config.ts`.
   tab, but the open tab still polls — a live pin would need a socket or SSE.
 - **Icons are emoji.** `serviceGlyph()` is a lookup, so swapping in a real icon
   set touches one map.
+- **A photograph is one size, and stored in the database.** 800px on the long
+  edge, which is right for a phone and thin for a tablet or a future web
+  storefront; and the bytes are in Postgres, so the backup grows with the
+  menus. Both are deliberate (see Phase 29) and both are the first things to
+  revisit if photos become the reason a page is slow or a dump is large. The
+  seam is one route handler wide, so object storage is an adapter.
 - **Item options are modelled on the ORDER side only.**
   `FoodItemSnapshot.options` carries priced add-ons and placement stores them
   correctly — but there is no menu-side model at all, so a shop has no way to
   declare "extra rice +₱15" in the first place. Offering them needs a table and
   a screen, not just a screen; earlier notes here understated it.
-- **A dish has no photo.** `MenuItem.imageUrl` exists and nothing sets or
-  renders it: the menu editor takes a name, a price, a section and a
-  description. For food ordering that is a real commercial gap, and it needs
-  somewhere to put the file before it needs a form field.
 - **Surge is a column, not a calculation.** `Order.surgeCentavos` exists and
   pricing passes it through; nothing sets it.
 - **ETA is an estimate from a straight line.** `estimateEta()` uses prep time
@@ -1969,3 +1971,83 @@ inert — no roles, no sessions. It could not be deleted, and that is the audit
 trail doing its job: it refuses to lose the actor of a recorded decision.
 
 1021 tests pass; build and lint clean.
+
+## Phase 29 — photographs on dishes ✅
+
+`MenuItem.imageUrl` was in the very first schema and nothing ever wrote to it.
+That is the honest reason it is now gone: a URL column is a promise that
+something somewhere is hosting the file, and nothing was. The gap was never the
+form field — it was that there was nowhere to put a photograph.
+
+### Where the bytes go
+
+**Into Postgres**, as a `MenuItemImage` row, for the same reasons the error
+monitor is not Sentry: it works on the first deploy, with no bucket to create,
+no credentials to rotate and nothing handed to a third party. The cost is that
+the database dump grows with the menus, so `/admin/health` now shows the photo
+count and their megabytes beside the backup size — "why did the dump get big"
+should be answerable before it is a surprise.
+
+The seam is one route handler wide: everything above it knows a photo by its id
+and asks for `/menu-images/<id>`. Object storage later is an adapter, not a
+migration.
+
+### Nothing the browser says about the file is believed
+
+`lib/media/image-bytes.ts` reads the type from the magic bytes and the size from
+the header — a PNG's IHDR at a fixed offset, a JPEG's start-of-frame after
+walking past the EXIF and ICC segments a phone puts in front of it. A declared
+`image/jpeg` on an executable is a sentence anybody can write. The stored
+`contentType` is therefore one this application decided, and the route serves it
+with `nosniff` so the browser cannot decide otherwise either.
+
+No image library, deliberately: reading two numbers out of a header is thirty
+lines, and the alternative is a dependency that decodes attacker-supplied files
+in the request path, which is the shape of every image-library CVE. **SVG is
+refused** — it is a document that can carry script, and served from our own
+origin it would be a stored cross-site script.
+
+### Resized in the browser, and the reason is data cost
+
+800px on the long edge. The first reason is mechanical: a camera photo is three
+to six megabytes and a server action's body limit is one, so the upload would
+fail before any of our code ran. The second is the one that matters: 800px is
+twice the width of the phones this is for and lands at 15–90 KB, where storing
+the original and letting an optimizer resize it would cost a shop's customers
+about 150 KB a dish on a connection they pay for by the megabyte — for a
+photograph rendered 72 pixels wide.
+
+The resize is a convenience, not a check. The limits are enforced on the bytes
+that arrive, because anything running in a browser is something its owner can
+change.
+
+### Two decisions worth keeping
+
+**A replacement is a new row with a new id.** The obvious version — upsert,
+keep the id — would leave every browser holding the OLD photograph under a URL
+marked immutable for a year. Deleting and re-creating changes the URL, which is
+what makes that cache header safe.
+
+**Plain `<img>`, not `next/image`.** The file is already sized and served
+immutable, so the optimizer would re-encode it into a cache directory this
+container does not have, by fetching our own route from our own server while it
+is answering a request — and it would make the storefront's photographs depend
+on `sharp`, which is here as a transitive dependency of Next rather than one
+this project declares.
+
+And nothing is rendered where there is no photo: most menus start with none, and
+a column of grey placeholders makes a text-only menu look broken rather than
+plain.
+
+### Verified with a real 3.5 MB file, in a real browser
+
+Twenty checks, first attempt: a hand-written 1600×1200 PNG — larger than the
+action body limit — resized in the browser and saved as **800×600, 15 KB**;
+served from the route as `image/jpeg` whatever was uploaded, immutable, with
+`nosniff`, and decoding in the page at 72px; readable with no session, because
+the storefront is public; a text file refused with a sentence a shop can act on;
+staff seeing the photo and none of the controls; a replacement producing a new
+URL while the old one 404s; and removal taking it out of the row and the
+database.
+
+1052 tests pass; build and lint clean.

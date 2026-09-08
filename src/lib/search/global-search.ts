@@ -1,5 +1,6 @@
 import type { ServiceKey } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { menuImageHref } from '@/lib/media/image-bytes';
 import { getActiveServices, getMerchantBackedServiceKeys } from '@/lib/services/registry';
 
 /**
@@ -79,7 +80,13 @@ export async function globalSearch(options: GlobalSearchOptions): Promise<Search
         },
       },
       take: limit,
-      include: { store: { select: { name: true, slug: true, serviceKeys: true } } },
+      include: {
+        store: { select: { name: true, slug: true, serviceKeys: true } },
+        // The id and nothing else — never `image: true`, which would read
+        // every photograph's bytes out of the database to render a list of
+        // search results.
+        image: { select: { id: true } },
+      },
     }),
   ]);
 
@@ -109,7 +116,7 @@ export async function globalSearch(options: GlobalSearchOptions): Promise<Search
       title: item.name,
       subtitle: item.store.name,
       href: `/stores/${item.store.slug}#item-${item.id}`,
-      imageUrl: item.imageUrl,
+      imageUrl: item.image ? menuImageHref(item.image.id) : null,
     });
   }
 

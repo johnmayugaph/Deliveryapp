@@ -398,6 +398,7 @@ model User {
   storeInvitesAccepted    StoreInvite[]                     @relation("StoreInvitesAccepted")
   reviewsWritten          OrderReview[]
   fleetDecisions          FleetPartnerServiceVerification[] @relation("FleetVerificationDecider")
+  menuImagesUploaded      MenuItemImage[]                   @relation("MenuImageUploader")
   grantedSubscriptions    UserSubscription[]                @relation("SubscriptionGrants")
   notifications           Notification[]
   notificationPreferences NotificationPreference[]
@@ -635,14 +636,57 @@ model MenuItem {
   description   String?
   category      String  @default("Main")
   priceCentavos Int
-  imageUrl      String?
   isAvailable   Boolean @default(true)
   sortOrder     Int     @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  /// The photo, if the shop has taken one. A row rather than a URL column:
+  /// see `MenuItemImage`.
+  image MenuItemImage?
+
   @@index([storeId, isAvailable, sortOrder])
+}
+
+/// One photograph of one dish.
+///
+/// The bytes live HERE, in the same database as everything else, and that is
+/// the same trade the error monitor makes against Sentry: it works on the
+/// first deploy, with no bucket to create, no credentials to leak and no
+/// third-party processor. What is given up is a CDN, which for a menu of tens
+/// of images served with a long cache header is not yet a problem.
+///
+/// A `MenuItem.imageUrl` column existed and was never written to by anything —
+/// which is the honest reason it is gone: a URL column is a promise that
+/// somewhere is hosting the file, and nowhere was. `menu-images/<id>` is now
+/// that promise, and the seam is one route handler wide, so putting the bytes
+/// in object storage later is another adapter rather than a migration.
+///
+/// **Never `include: { image: true }`.** Prisma would select `bytes` with it,
+/// so a list of forty dishes becomes forty photographs read into memory to
+/// render a page that shows none of them. Every query here selects the id and
+/// the dimensions and nothing else; the route handler is the only reader of
+/// the bytes.
+model MenuItemImage {
+  id         String   @id @default(cuid())
+  menuItemId String   @unique
+  menuItem   MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+
+  /// Validated from the bytes themselves, never from what the client claimed.
+  contentType String
+  bytes       Bytes
+  byteSize    Int
+  width       Int
+  height      Int
+
+  /// Who uploaded it. Kept when they leave: the photo is the shop's, and a
+  /// null author is better than losing the row.
+  uploadedByUserId String?
+  uploadedBy       User?   @relation("MenuImageUploader", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // -----------------------------------------------------------------------------

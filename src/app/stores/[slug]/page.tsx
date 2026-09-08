@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { prisma } from '@/lib/prisma';
 import { getAllServices } from '@/lib/services/registry';
 import { groupByCategory } from '@/lib/merchant/menu-policy';
+import { menuImageHref } from '@/lib/media/image-bytes';
 import { formatCentavos } from '@/lib/money';
 import { AddToCartControls } from '@/components/cart/AddToCartControls';
 import { RatingBadge } from '@/components/ui/RatingBadge';
@@ -30,6 +31,9 @@ export default async function StorePage({
         city: true,
         menuItems: {
           where: { isAvailable: true },
+          // The photo's id and shape only. `image: true` would read every
+          // photograph's bytes to render a menu — see `MenuItemImage`.
+          include: { image: { select: { id: true, width: true, height: true } } },
           // The shop's own order — `sortOrder` is a position in one list and a
           // section is a contiguous run in it (see `merchant/menu-policy.ts`).
           // Ordering by category first is what used to put "Add-ons" above
@@ -115,6 +119,32 @@ export default async function StorePage({
                 id={`item-${item.id}`}
                 className="flex items-start justify-between gap-3 bg-surface px-4 py-3"
               >
+                {/* Only where there is one. A menu with no photographs should
+                    read as a plain list, not as a column of empty boxes.
+                    
+                    A plain `<img>` and not `next/image`, deliberately. The
+                    file was already sized for this use when it was uploaded
+                    (800px, ~80 KB) and is served with a year-long immutable
+                    cache, so an optimizer would re-encode it into a cache
+                    directory this container does not have, by fetching our own
+                    route from our own server while it is answering a request.
+                    It would also make the storefront's photographs depend on
+                    `sharp`, which is here as a transitive dependency of Next
+                    rather than one this project declares. */}
+                {item.image ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={menuImageHref(item.image.id)}
+                    alt={item.name}
+                    width={72}
+                    height={72}
+                    loading="lazy"
+                    decoding="async"
+                    className="h-18 w-18 shrink-0 rounded-xl object-cover ring-1 ring-black/5"
+                    style={{ height: '4.5rem', width: '4.5rem' }}
+                  />
+                ) : null}
+
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-medium">{item.name}</span>
                   {item.description ? (

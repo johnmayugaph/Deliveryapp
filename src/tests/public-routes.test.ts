@@ -48,6 +48,13 @@ describe('the public storefront', () => {
     }
   });
 
+  it('lets a stranger see a dish’s photograph', () => {
+    // The storefront is public, so the photos on it have to be — behind the
+    // wall, a store page renders as a grid of broken images.
+    expect(isPublicPath('/menu-images/cm123abc')).toBe(true);
+    expect(redirectFor('/menu-images/cm123abc')).toBeNull();
+  });
+
   it('lets a stranger read the FAQ', () => {
     // Somebody with a question should not have to sign up to read the answer.
     expect(redirectFor('/help')).toBeNull();
@@ -152,5 +159,6 @@ describe('the exact-versus-boundary split', () => {
     expect(isPublicPath('/helpdesk')).toBe(false);
     expect(isPublicPath('/logins')).toBe(false);
     expect(isPublicPath('/searching')).toBe(false);
+    expect(isPublicPath('/menu-images-admin')).toBe(false);
   });
 });

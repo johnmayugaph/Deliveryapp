@@ -1,5 +1,6 @@
 import type { MenuItem } from '@prisma/client';
 import { prisma, type PrismaTransactionClient } from '@/lib/prisma';
+import { IMAGE_SUMMARY_SELECT, type MenuImageSummary } from '@/lib/media/menu-images';
 import {
   CategoryNotFoundError,
   DEFAULT_CATEGORY,
@@ -47,6 +48,9 @@ import {
  * Removing yesterday's dish cannot rewrite yesterday's receipt.
  */
 
+/** A dish with what a page needs to render its photograph. */
+export type MenuItemWithImage = MenuItem & { image: MenuImageSummary | null };
+
 /** Just the columns the ordering rules need. */
 type OrderingRow = MenuRowLike & { sortOrder: number };
 
@@ -61,17 +65,22 @@ const ORDERING_SELECT = { id: true, name: true, category: true, sortOrder: true 
  * order — so without it the same menu could render in a different order on
  * each request. The first edit resequences the store for good.
  */
-export function storeMenu(storeId: string): Promise<MenuItem[]> {
+export function storeMenu(storeId: string): Promise<MenuItemWithImage[]> {
   return prisma.menuItem.findMany({
     where: { storeId },
+    // The photo's id and shape, never its bytes — see the note on
+    // `MenuItemImage`. `include: { image: true }` here would read every
+    // photograph on the menu out of the database to render a list.
+    include: { image: { select: IMAGE_SUMMARY_SELECT } },
     orderBy: [{ sortOrder: 'asc' }, { category: 'asc' }, { name: 'asc' }],
   });
 }
 
 /** The same order, for the customer's store page, available items only. */
-export function visibleStoreMenu(storeId: string): Promise<MenuItem[]> {
+export function visibleStoreMenu(storeId: string): Promise<MenuItemWithImage[]> {
   return prisma.menuItem.findMany({
     where: { storeId, isAvailable: true },
+    include: { image: { select: IMAGE_SUMMARY_SELECT } },
     orderBy: [{ sortOrder: 'asc' }, { category: 'asc' }, { name: 'asc' }],
   });
 }

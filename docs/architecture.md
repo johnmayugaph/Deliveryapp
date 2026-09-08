@@ -666,6 +666,69 @@ Consequences worth naming:
 The customer's store page groups with the same function and orders by the same
 column, so what a shop arranges is what a customer sees.
 
+### Photographs of dishes, and where the bytes go
+
+`MenuItem.imageUrl` existed from the first schema and nothing ever wrote to it.
+That is the honest reason it is gone: a URL column is a promise that something
+somewhere is hosting the file, and nothing was. The gap was never the form
+field — it was that there was nowhere to put a photograph.
+
+**The bytes live in Postgres**, in a `MenuItemImage` row, and that is the same
+trade as choosing not to send error reports to Sentry: it works on the first
+deploy, with no bucket to create, no credentials to rotate and nothing handed
+to a third party. What is given up is a CDN edge, which for tens of images
+served with a year-long immutable cache is not yet a cost. What IS a cost is
+that the database backup gets bigger, so `/admin/health` shows the count and
+the megabytes next to the backup size — "why did the dump grow" should be
+answerable before it is a surprise.
+
+The seam is one route handler wide. Everything above it knows a photo by its id
+and asks for it at `/menu-images/<id>`; only `lib/media/menu-images.ts` and
+that route know where the bytes are, so object storage later is an adapter
+rather than a migration.
+
+**Nothing the browser said about the file is believed.** `lib/media/image-bytes.ts`
+reads the type from the magic bytes and the dimensions from the header — a
+PNG's IHDR at a fixed offset, a JPEG's start-of-frame after walking past the
+EXIF and ICC segments a phone puts in front of it. A declared `image/jpeg` on
+an executable is a sentence anybody can write; the `contentType` stored is one
+this application decided, and the route serves that with `nosniff` so the
+browser cannot decide otherwise either. SVG is refused: it is a document that
+can carry script, and served from our own origin it would be a stored
+cross-site script.
+
+**Resized in the browser before it is sent**, to 800px on the long edge. Two
+reasons, and the second is the real one:
+
+- A camera photo is three to six megabytes and a server action's body limit is
+  one, so the upload would fail before any of our code ran.
+- 800px is twice the width of the phone screens this is for, and it lands
+  around 15–90 KB. Storing the original and letting an image optimizer produce
+  sizes would cost a shop's customers about 150 KB per dish on a connection
+  they pay for by the megabyte — to render a photograph that is 72 pixels wide
+  on the menu.
+
+That resize is a convenience, not a check: the limits are enforced on the bytes
+that arrive, because anything running in a browser is something its owner can
+change.
+
+**A replacement is a new row with a new id**, deliberately. The obvious version
+— upsert, keep the id — would leave every browser holding the OLD photograph
+under a URL marked immutable for a year. Deleting and re-creating means the URL
+changes, which is what makes that cache header safe; the old URL 404s, and a
+test in a real browser checks exactly that.
+
+**Plain `<img>`, not `next/image`.** The file was already sized for its use and
+is served immutable, so the optimizer would re-encode it into a cache directory
+this container does not have, by fetching our own route from our own server
+while it is answering a request — and it would make the storefront's
+photographs depend on `sharp`, which is present here as a transitive
+dependency of Next rather than one this project declares.
+
+**Nothing is rendered where there is no photo.** Most menus start with none, and
+a column of grey placeholders makes a text-only menu look broken rather than
+plain.
+
 Its own layout, with its own tabs — the customer's bottom navigation would offer
 Credits and Orders to somebody running a kitchen. That nav is now hidden on the
 merchant area and on the auth screens, where it was offering signed-in

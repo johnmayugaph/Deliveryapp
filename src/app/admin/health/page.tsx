@@ -6,6 +6,7 @@ import { resolveChannels } from '@/lib/notifications/channels';
 import { isPushConfigured } from '@/lib/notifications/push/vapid';
 import { captchaIsHalfConfigured, isCaptchaConfigured } from '@/lib/auth/captcha';
 import { backupState } from '@/lib/backup/queries';
+import { menuImageFootprint } from '@/lib/media/menu-images';
 import { supportSummary } from '@/lib/support/queries';
 import { contactDetails, describeContactPosture } from '@/lib/support/contact';
 import {
@@ -43,11 +44,12 @@ export const dynamic = 'force-dynamic';
 export default async function AdminHealthPage() {
   await requireAdmin();
 
-  const [health, demo, backups, support] = await Promise.all([
+  const [health, demo, backups, support, photos] = await Promise.all([
     deliveryHealth(),
     demoDataPresence(),
     backupState(),
     supportSummary(),
+    menuImageFootprint(),
   ]);
 
   const contact = contactDetails();
@@ -269,6 +271,18 @@ export default async function AdminHealthPage() {
               label="Failed since"
               value={String(backups.failuresSinceSuccess)}
               note="attempts since the last success"
+            />
+            {/* Menu photographs are bytes in this database, so they are bytes
+                in every dump of it. Shown next to the backup size because
+                that is where "why did the backup get big" gets asked. */}
+            <Stat
+              label="Menu photos"
+              value={String(photos.count)}
+              note={
+                photos.count === 0
+                  ? 'none uploaded yet'
+                  : `${(photos.bytes / 1_048_576).toFixed(1)} MB of this database`
+              }
             />
           </div>
 

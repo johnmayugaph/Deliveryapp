@@ -14,6 +14,8 @@ import {
   MAX_DESCRIPTION_LENGTH,
   MAX_ITEM_NAME_LENGTH,
 } from '@/lib/merchant/menu-policy';
+import { menuImageHref } from '@/lib/media/image-bytes';
+import { MenuPhotoControls } from '@/components/merchant/MenuPhotoControls';
 
 export interface MenuRowItem {
   id: string;
@@ -24,6 +26,8 @@ export interface MenuRowItem {
   isAvailable: boolean;
   isFirstInSection: boolean;
   isLastInSection: boolean;
+  /** The id of its photograph, if it has one. Never the bytes. */
+  imageId: string | null;
 }
 
 /**
@@ -98,6 +102,24 @@ export function MenuRow({
   return (
     <li className="bg-surface px-4 py-3">
       <div className="flex items-start justify-between gap-3">
+        {/* No placeholder box where there is no photo. Most menus start with
+            none, and a column of grey squares makes a text-only menu look
+            broken rather than plain. */}
+        {item.imageId ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={menuImageHref(item.imageId)}
+            alt=""
+            width={48}
+            height={48}
+            loading="lazy"
+            decoding="async"
+            className={`h-12 w-12 shrink-0 rounded-lg object-cover ring-1 ring-black/5 ${
+              item.isAvailable ? '' : 'opacity-50'
+            }`}
+          />
+        ) : null}
+
         <span className={`min-w-0 flex-1 ${item.isAvailable ? '' : 'opacity-50'}`}>
           <span className="block text-sm font-medium">{item.name}</span>
           {item.description ? (
@@ -182,6 +204,15 @@ export function MenuRow({
             Remove
           </button>
         </div>
+      ) : null}
+
+      {canEdit && mode === 'READ' ? (
+        <MenuPhotoControls
+          storeId={storeId}
+          itemId={item.id}
+          itemName={item.name}
+          hasPhoto={item.imageId !== null}
+        />
       ) : null}
 
       {canEdit && mode === 'CONFIRM_DELETE' ? (
