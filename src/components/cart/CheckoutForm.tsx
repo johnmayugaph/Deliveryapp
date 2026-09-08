@@ -12,6 +12,7 @@ import {
 } from '@/lib/actions/checkout-actions';
 import type { CheckoutQuote } from '@/lib/orders/place-order';
 import { formatCentavos } from '@/lib/money';
+import { describeChoices } from '@/lib/merchant/option-policy';
 
 export interface CheckoutAddressOption {
   id: string;
@@ -73,6 +74,7 @@ export function CheckoutForm({
           lines: cart.lines.map((line) => ({
             menuItemId: line.menuItemId,
             quantity: line.quantity,
+            optionIds: line.optionIds,
             ...(line.notes ? { notes: line.notes } : {}),
           })),
           dropoffAddressId,
@@ -90,7 +92,9 @@ export function CheckoutForm({
   // affect price, and re-quoting on every keystroke would be wasteful.
   const quoteKey = JSON.stringify({
     storeId: cart.storeId,
-    lines: cart.lines.map((line) => [line.menuItemId, line.quantity]),
+    // The line id already carries the dish and its choices, so a customer
+    // switching Regular for Large re-quotes.
+    lines: cart.lines.map((line) => [line.lineId, line.quantity]),
     dropoffAddressId,
     paymentMethod,
     useCredits,
@@ -183,11 +187,21 @@ export function CheckoutForm({
         </div>
 
         <ul className="mt-2 space-y-1.5">
-          {(quote?.items ?? []).map((item) => (
-            <li key={item.menuItemId} className="flex justify-between gap-3 text-xs">
+          {(quote?.items ?? []).map((item, index) => (
+            // Keyed by position: the same dish can appear twice with
+            // different choices, so its id is not unique in this list.
+            <li key={`${item.menuItemId}:${index}`} className="flex justify-between gap-3 text-xs">
               <span className="min-w-0">
                 <span className="font-medium tabular-nums">{item.quantity}×</span>{' '}
                 <span className="text-ink-muted">{item.name}</span>
+                {/* The choices, by name. What each one added is already in the
+                    line total; repeating the arithmetic here is how a receipt
+                    becomes homework. */}
+                {item.options.length > 0 ? (
+                  <span className="mt-0.5 block text-[11px] text-ink-faint">
+                    {describeChoices(item.options)}
+                  </span>
+                ) : null}
               </span>
               <span className="shrink-0 tabular-nums">
                 {formatCentavos(item.lineTotalCentavos)}
@@ -196,7 +210,7 @@ export function CheckoutForm({
           ))}
           {!quote
             ? cart.lines.map((line) => (
-                <li key={line.menuItemId} className="text-xs text-ink-faint">
+                <li key={line.lineId} className="text-xs text-ink-faint">
                   {line.quantity}× …
                 </li>
               ))

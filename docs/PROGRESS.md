@@ -857,11 +857,6 @@ real file later is one line in `tailwind.config.ts`.
   menus. Both are deliberate (see Phase 29) and both are the first things to
   revisit if photos become the reason a page is slow or a dump is large. The
   seam is one route handler wide, so object storage is an adapter.
-- **Item options are modelled on the ORDER side only.**
-  `FoodItemSnapshot.options` carries priced add-ons and placement stores them
-  correctly — but there is no menu-side model at all, so a shop has no way to
-  declare "extra rice +₱15" in the first place. Offering them needs a table and
-  a screen, not just a screen; earlier notes here understated it.
 - **Surge is a column, not a calculation.** `Order.surgeCentavos` exists and
   pricing passes it through; nothing sets it.
 - **ETA is an estimate from a straight line.** `estimateEta()` uses prep time
@@ -2051,3 +2046,82 @@ URL while the old one 404s; and removal taking it out of the row and the
 database.
 
 1052 tests pass; build and lint clean.
+
+## Phase 30 — add-ons ✅
+
+`FoodItemSnapshot.options` — a chosen option's name and what it added — has
+been in the schema since the first version, and placement has always written
+it. What never existed was a way for a shop to say what the choices ARE, so
+the field could only ever be empty. Two rounds of notes in this file called it
+"modelled but no UI", which understated it: it needed a table before it needed
+a screen.
+
+### Two numbers are the whole grammar
+
+A group is a question with `minChoices`/`maxChoices`; an option is an answer
+with a price delta. **(1,1)** is "pick a size" and cannot be skipped, so an
+order never reaches a kitchen without saying which one. **(0,n)** is "any
+add-ons you like". (2,3) is legal, because "choose two sides" is real. What is
+refused is a group nobody can satisfy — and a required group whose answers have
+all run out is announced on the shop's own screen as "nobody can order this
+right now", because it is the one mistake here that a customer meets as a dead
+end.
+
+**A delta is zero or positive.** Selling something cheaper without the rice is
+a different dish at a different price, and the honest way to do it is a second
+menu item — three taps, now that the menu editor exists. One-directional money
+means a line total cannot be argued down by a choice.
+
+### Where the price is decided, and where it is only displayed
+
+`resolveChoices(groups, ids)` takes ids and returns prices, never the reverse.
+The store page runs it to show a running total; `quoteCheckout` runs it again
+over rows read **through the menu item**, so an option id from another dish —
+or another shop — is not in the result and is refused rather than priced. Four
+refusals, four messages, because each has a different fix: not on this dish,
+run out, too few, too many.
+
+The cart still carries no prices. A line is `cartLineId(menuItemId, ids)`,
+sorted so the same choices in a different order are one line, and the type is
+**branded**: both a line id and a dish id are strings, so
+`setQuantity(menuItemId, 2)` — what every one of these controls did before
+dishes had choices — compiled perfectly and moved the wrong line. The brand
+turned that into a compile error and caught it inside this change.
+
+A dish that asks nothing keeps one-tap Add and its stepper. That is most of a
+carinderia menu and it should not get slower because another dish has sizes.
+
+### Two bugs the tests found in my own code
+
+**The helpful refusal was unreachable.** A shop typing `-10` got "write the
+price in pesos, like 15 or 0" — the generic parser rejects a minus sign before
+the range check ever runs — so the message explaining to sell it as its own
+dish could never appear. The minus is now caught first.
+
+**A validation that could not fail.** `normaliseChoiceBounds` floored the
+numbers and then asked whether they were integers, which is always true after
+flooring: "at least 1.5" silently became 1. It now checks before rounding.
+
+### Verified twice, and the money path first
+
+Thirteen checks against the real database through `quoteCheckout`: the unit
+price including the choices, the line total multiplying all of it, the snapshot
+in the shop's order, the subtotal, and every tamper case — a missing required
+size, two sizes, an option from another dish, one that ran out, a made-up id,
+and more add-ons than allowed. Then twenty-two in a real browser at 390px: the
+shop declaring a question and its answers, the negative price refused with the
+useful sentence, a customer's panel with radios for one and checkboxes for
+several, the out-of-stock answer disabled, Add refused until the size is
+answered, ₱150 → ₱180 → ₱195 as the choices land, the same dish added twice
+with different choices becoming two lines, checkout naming them and pricing
+them, and a real order placed.
+
+The placed order's snapshot, read out of Postgres afterwards: two lines of one
+dish — Large with extra rice at ₱195, Regular at ₱150 — subtotal ₱345, each
+choice carrying its name and the delta it added.
+
+The demo carinderia's sinigang now seeds with a Size question and an Add-ons
+question, so the first thing a shop owner opening the menu screen sees is what
+the feature is rather than a note saying it exists.
+
+1097 tests pass; build and lint clean.

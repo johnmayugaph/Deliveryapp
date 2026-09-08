@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   editMenuItemAction,
@@ -28,6 +29,8 @@ export interface MenuRowItem {
   isLastInSection: boolean;
   /** The id of its photograph, if it has one. Never the bytes. */
   imageId: string | null;
+  /** How many questions this dish asks a customer. */
+  optionGroupCount: number;
 }
 
 /**
@@ -196,6 +199,14 @@ export function MenuRow({
           >
             ↓ Down
           </button>
+          <Link
+            href={`/merchant/${storeId}/menu/${item.id}/options`}
+            className="text-[11px] font-semibold text-brand-700"
+          >
+            {item.optionGroupCount === 0
+              ? 'Choices'
+              : `Choices (${item.optionGroupCount})`}
+          </Link>
           <button
             type="button"
             onClick={() => setMode('CONFIRM_DELETE')}

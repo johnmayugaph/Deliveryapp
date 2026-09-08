@@ -1,6 +1,7 @@
 import { StoreRole } from '@prisma/client';
 import { requireStoreAccess, roleSatisfies } from '@/lib/merchant/access';
 import { storeMenu } from '@/lib/merchant/menu';
+import { optionCountsByItem } from '@/lib/merchant/options';
 import { categoriesOf, describeMenu, groupByCategory } from '@/lib/merchant/menu-policy';
 import { MenuItemForm } from '@/components/merchant/MenuItemForm';
 import { MenuRow } from '@/components/merchant/MenuRow';
@@ -28,7 +29,10 @@ export default async function MerchantMenuPage({
 }) {
   const { storeId } = await params;
   const access = await requireStoreAccess(storeId);
-  const items = await storeMenu(access.store.id);
+  const [items, optionCounts] = await Promise.all([
+    storeMenu(access.store.id),
+    optionCountsByItem(access.store.id),
+  ]);
 
   const canEdit = roleSatisfies(access.role, StoreRole.MANAGER);
   const groups = groupByCategory(items);
@@ -85,6 +89,7 @@ export default async function MerchantMenuPage({
                 isFirstInSection: position === 0,
                 isLastInSection: position === group.items.length - 1,
                 imageId: item.image?.id ?? null,
+                optionGroupCount: optionCounts.get(item.id) ?? 0,
               }}
             />
           ))}

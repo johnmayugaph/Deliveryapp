@@ -17,6 +17,7 @@ import { quoteDeliveryFee, type DeliveryQuote } from '@/lib/pricing/delivery-fee
 import { spendOnOrder } from '@/lib/wallet/ledger';
 import { bumpAddressUsage } from '@/lib/addresses/usage';
 import { generateOrderNumber } from '@/lib/reference-numbers';
+import { resolveChoices, unitPriceWithChoices } from '@/lib/merchant/option-policy';
 
 /**
  * Order placement for the FOOD vertical.
@@ -74,6 +75,12 @@ export class InsufficientCreditsForPaymentError extends Error {
 export interface CartLineInput {
   menuItemId: string;
   quantity: number;
+  /**
+   * Chosen `MenuItemOption` ids. Ids, not prices: what each one adds is read
+   * from the database here, so a customer who edits their own cart changes
+   * what they see and not what they pay.
+   */
+  optionIds?: readonly string[];
   /** "No onions". Passed to the kitchen verbatim. */
   notes?: string;
 }
@@ -158,6 +165,15 @@ export async function quoteCheckout(input: CheckoutInput): Promise<CheckoutQuote
   const requestedIds = Array.from(new Set(input.lines.map((line) => line.menuItemId)));
   const menuItems = await prisma.menuItem.findMany({
     where: { id: { in: requestedIds }, storeId: store.id },
+    // The choices come with the dish, and only through the dish: an option id
+    // that belongs to another item — or another shop — is not in this result,
+    // so `resolveChoices` refuses it rather than pricing it.
+    include: {
+      optionGroups: {
+        orderBy: { sortOrder: 'asc' },
+        include: { options: { orderBy: { sortOrder: 'asc' } } },
+      },
+    },
   });
   const menuById = new Map(menuItems.map((item) => [item.id, item]));
 
@@ -177,14 +193,25 @@ export async function quoteCheckout(input: CheckoutInput): Promise<CheckoutQuote
         `Quantity for "${item.name}" must be a whole number between 1 and ${MAX_QUANTITY_PER_LINE}`,
       );
     }
+    // Every delta is read from the row, and the group rules are checked
+    // again: a required size still has to have been chosen, an answer that
+    // ran out while the cart sat open is refused by name, and an id from
+    // somewhere else is not on this dish. This is the only place any of that
+    // is authoritative — the store page's arithmetic is for reading.
+    const choices = resolveChoices(item.optionGroups, line.optionIds ?? []);
+    const unitPriceCentavos = unitPriceWithChoices(item.priceCentavos, choices);
+
     return {
       menuItemId: item.id,
       name: item.name,
-      unitPriceCentavos: item.priceCentavos,
+      unitPriceCentavos,
       quantity,
-      options: [],
+      options: choices.map((choice) => ({
+        name: choice.name,
+        priceDeltaCentavos: choice.priceDeltaCentavos,
+      })),
       ...(line.notes?.trim() ? { notes: line.notes.trim().slice(0, 500) } : {}),
-      lineTotalCentavos: item.priceCentavos * quantity,
+      lineTotalCentavos: unitPriceCentavos * quantity,
     };
   });
 

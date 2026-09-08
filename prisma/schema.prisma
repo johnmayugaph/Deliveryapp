@@ -646,7 +646,72 @@ model MenuItem {
   /// see `MenuItemImage`.
   image MenuItemImage?
 
+  /// What a customer chooses when they order this: size, sawsawan, extra
+  /// rice. Empty for most dishes, and a dish with no groups keeps its
+  /// one-tap Add.
+  optionGroups MenuItemOptionGroup[]
+
   @@index([storeId, isAvailable, sortOrder])
+}
+
+/// One question asked about a dish, and how many answers it takes.
+///
+/// The order side of this has existed since the first schema:
+/// `FoodItemSnapshot.options` stores a chosen option's NAME and its price at
+/// order time, and placement writes it. What did not exist was any way for a
+/// shop to say what the choices ARE — so the field could only ever be empty,
+/// which is the gap this closes.
+///
+/// `minChoices`/`maxChoices` is the whole grammar, and two settings cover
+/// every real menu: (1,1) is "pick a size", (0,n) is "any add-ons you like".
+/// A group with min 1 cannot be skipped, which is what stops an order arriving
+/// at a kitchen without saying which size was wanted.
+model MenuItemOptionGroup {
+  id         String   @id @default(cuid())
+  menuItemId String
+  menuItem   MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+
+  /// "Size", "Sawsawan", "Add-ons". The question, in the shop's own words.
+  name String
+
+  /// How many of this group's options an order must and may carry.
+  minChoices Int @default(0)
+  maxChoices Int @default(1)
+
+  sortOrder Int @default(0)
+
+  options MenuItemOption[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([menuItemId, sortOrder])
+}
+
+/// One answer, and what it adds to the price.
+///
+/// `priceDeltaCentavos` is zero or positive, deliberately. A negative delta —
+/// "without rice, ten pesos less" — is a different dish at a different price,
+/// and the honest way to sell it is a second menu item, which a shop can now
+/// create in three taps. Keeping the money one-directional means a line total
+/// can never be argued down by a choice, and there is no floor to defend.
+model MenuItemOption {
+  id      String              @id @default(cuid())
+  groupId String
+  group   MenuItemOptionGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  name               String
+  priceDeltaCentavos Int     @default(0)
+  /// Out of stock today, without deleting it. Same reason the dish itself has
+  /// the flag: the pork runs out at lunch and comes back tomorrow.
+  isAvailable        Boolean @default(true)
+
+  sortOrder Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([groupId, sortOrder])
 }
 
 /// One photograph of one dish.

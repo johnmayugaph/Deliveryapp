@@ -453,6 +453,8 @@ async function seedStores() {
       create: demoStore,
       update: demoStore,
     });
+    // Deleting the items cascades their photos and their choices, so a
+    // re-seed is a clean menu rather than an accumulation.
     await prisma.menuItem.deleteMany({ where: { storeId: saved.id } });
     await prisma.menuItem.createMany({
       data: menu.map((item, index) => ({
@@ -463,6 +465,49 @@ async function seedStores() {
         sortOrder: index,
       })),
     });
+
+    // One dish with choices on it, because a shop owner opening the menu
+    // screen for the first time should be able to SEE what the feature is
+    // rather than read that it exists. Sizes and add-ons on the sinigang is
+    // the most ordinary example there is.
+    if (store.slug === 'aling-nena-carinderia') {
+      const sinigang = await prisma.menuItem.findFirst({
+        where: { storeId: saved.id, name: { startsWith: 'Sinigang' } },
+        select: { id: true },
+      });
+      if (sinigang) {
+        await prisma.menuItemOptionGroup.create({
+          data: {
+            menuItemId: sinigang.id,
+            name: 'Size',
+            minChoices: 1,
+            maxChoices: 1,
+            sortOrder: 0,
+            options: {
+              create: [
+                { name: 'Regular', priceDeltaCentavos: 0, sortOrder: 0 },
+                { name: 'Large', priceDeltaCentavos: 3_000, sortOrder: 1 },
+              ],
+            },
+          },
+        });
+        await prisma.menuItemOptionGroup.create({
+          data: {
+            menuItemId: sinigang.id,
+            name: 'Add-ons',
+            minChoices: 0,
+            maxChoices: 2,
+            sortOrder: 1,
+            options: {
+              create: [
+                { name: 'Extra rice', priceDeltaCentavos: 1_500, sortOrder: 0 },
+                { name: 'Extra egg', priceDeltaCentavos: 2_000, sortOrder: 1 },
+              ],
+            },
+          },
+        });
+      }
+    }
   }
   console.log(`  stores: ${stores.length}`);
 }

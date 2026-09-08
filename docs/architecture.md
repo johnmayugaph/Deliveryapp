@@ -729,6 +729,59 @@ dependency of Next rather than one this project declares.
 a column of grey placeholders makes a text-only menu look broken rather than
 plain.
 
+### Add-ons: a menu-side model, and prices the browser cannot argue with
+
+`FoodItemSnapshot.options` — a chosen option's name and what it added, written
+onto the order — has been in the schema since the first version, and placement
+has always stored it. What did not exist was any way for a shop to say what the
+choices ARE, so the field could only ever be empty. Notes here said "modelled
+but no UI"; that was wrong, and it needed a table before it needed a screen.
+
+**The grammar is two numbers.** A `MenuItemOptionGroup` is a question with
+`minChoices`/`maxChoices`, and a `MenuItemOption` is an answer with a price
+delta. Two settings cover every real menu: **(1,1)** is "pick a size" — which
+cannot be skipped, so an order never reaches a kitchen without saying which one
+— and **(0,n)** is "any add-ons you like". (2,3) is legal because "choose two
+sides" is a real thing; what is refused is a group nobody can satisfy, which is
+the one mistake here a customer would meet as a dead end.
+
+**A delta is zero or positive.** "Without rice, ten pesos less" is a different
+dish at a different price, and the honest way to sell it is a second menu item,
+which a shop can now create in three taps. Keeping the money one-directional
+means a line total can never be argued down by a choice and there is no floor
+to defend. The form says exactly that when somebody types a negative number —
+and the parser catches the minus sign itself, because the generic number
+parser would otherwise answer "write it like 15 or 0" to a shop that wrote
+precisely that with a minus in front.
+
+**Where the price is decided.** `resolveChoices(groups, ids)` takes ids and
+returns priced choices, never the other way round. The store page runs it to
+show a running total; `quoteCheckout` runs it again against rows read through
+the menu item — so an option id belonging to another dish, or another shop, is
+simply not in the result and is refused rather than priced. Four refusals, each
+with its own message because each has a different fix: not on this dish (a
+stale page), run out (choose something else), too few (answer the question),
+too many (pick one). Choices come back in the order the shop arranged them, so
+two customers who picked the same things get identical snapshots and a kitchen
+printout reads the same way every time.
+
+**The cart line is the dish plus its choices.** `cartLineId(menuItemId, ids)`
+is sorted, so the same choices made in a different order are the same line —
+and Large is never merged into Regular by a stepper. The id is **branded** at
+the type level (`CartLineId`), because both it and a dish id are strings:
+`setQuantity(menuItemId, 2)`, which is what every one of these controls did
+before dishes had choices, compiles perfectly and moves the wrong line. The
+brand turned that into a compile error, and it caught the mistake in this very
+change.
+
+A cart still carries no prices — not for the dish and not for the choices. It
+carries ids, and that is the whole reason a customer editing their own
+localStorage changes what they see and not what they pay.
+
+**A dish that asks nothing is untouched.** One-tap Add and a stepper, exactly
+as before: that is most of a carinderia menu, and it should not get slower
+because some other dish has sizes.
+
 Its own layout, with its own tabs — the customer's bottom navigation would offer
 Credits and Orders to somebody running a kitchen. That nav is now hidden on the
 merchant area and on the auth screens, where it was offering signed-in

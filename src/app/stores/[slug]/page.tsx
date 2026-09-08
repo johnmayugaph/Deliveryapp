@@ -33,7 +33,16 @@ export default async function StorePage({
           where: { isAvailable: true },
           // The photo's id and shape only. `image: true` would read every
           // photograph's bytes to render a menu — see `MenuItemImage`.
-          include: { image: { select: { id: true, width: true, height: true } } },
+          include: {
+            image: { select: { id: true, width: true, height: true } },
+            // The choices, in the shop's own order. Unavailable answers are
+            // included rather than filtered: a customer should see that Large
+            // exists and has run out, not wonder where it went.
+            optionGroups: {
+              orderBy: { sortOrder: 'asc' },
+              include: { options: { orderBy: { sortOrder: 'asc' } } },
+            },
+          },
           // The shop's own order — `sortOrder` is a position in one list and a
           // section is a contiguous run in it (see `merchant/menu-policy.ts`).
           // Ordering by category first is what used to put "Add-ons" above
@@ -114,11 +123,8 @@ export default async function StorePage({
           </h2>
           <ul className="mt-2 divide-y divide-black/5">
             {group.items.map((item) => (
-              <li
-                key={item.id}
-                id={`item-${item.id}`}
-                className="flex items-start justify-between gap-3 bg-surface px-4 py-3"
-              >
+              <li key={item.id} id={`item-${item.id}`} className="bg-surface px-4 py-3">
+                <div className="flex items-start justify-between gap-3">
                 {/* Only where there is one. A menu with no photographs should
                     read as a plain list, not as a column of empty boxes.
                     
@@ -157,14 +163,45 @@ export default async function StorePage({
                   <span className="text-sm font-semibold tabular-nums">
                     {formatCentavos(item.priceCentavos)}
                   </span>
-                  {canOrder ? (
+                  {/* A dish that asks nothing keeps its control here, beside
+                      the price, where it has always been. A dish with choices
+                      puts it in the full-width row below: a chooser squeezed
+                      into the price column leaves the dish name wrapping to
+                      three lines on a 360px phone. */}
+                  {canOrder && item.optionGroups.length === 0 ? (
                     <AddToCartControls
                       store={{ id: store.id, name: store.name, slug: store.slug }}
                       menuItemId={item.id}
                       itemName={item.name}
+                      basePriceCentavos={item.priceCentavos}
+                      groups={[]}
                     />
                   ) : null}
                 </span>
+                </div>
+
+                {canOrder && item.optionGroups.length > 0 ? (
+                  <div className="mt-2">
+                    <AddToCartControls
+                      store={{ id: store.id, name: store.name, slug: store.slug }}
+                      menuItemId={item.id}
+                      itemName={item.name}
+                      basePriceCentavos={item.priceCentavos}
+                      groups={item.optionGroups.map((group) => ({
+                        id: group.id,
+                        name: group.name,
+                        minChoices: group.minChoices,
+                        maxChoices: group.maxChoices,
+                        options: group.options.map((option) => ({
+                          id: option.id,
+                          name: option.name,
+                          priceDeltaCentavos: option.priceDeltaCentavos,
+                          isAvailable: option.isAvailable,
+                        })),
+                      }))}
+                    />
+                  </div>
+                ) : null}
               </li>
             ))}
           </ul>

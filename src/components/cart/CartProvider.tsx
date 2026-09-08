@@ -8,7 +8,13 @@ import {
   useMemo,
   useState,
 } from 'react';
-import { EMPTY_CART, type Cart, type CartLine } from '@/lib/cart/types';
+import {
+  EMPTY_CART,
+  cartLineId,
+  type Cart,
+  type CartLine,
+  type CartLineId,
+} from '@/lib/cart/types';
 
 /**
  * The cart lives in the browser, persisted to localStorage.
@@ -30,10 +36,14 @@ interface CartContextValue {
   addItem: (input: {
     store: { id: string; name: string; slug: string };
     menuItemId: string;
+    /** Chosen `MenuItemOption` ids. Ids only: a cart never carries a price. */
+    optionIds?: readonly string[];
     quantity?: number;
   }) => { replacedStore: string | null };
-  setQuantity: (menuItemId: string, quantity: number) => void;
-  setNotes: (menuItemId: string, notes: string) => void;
+  /** Keyed by LINE, not by dish: the same dish with different choices is two
+   *  lines, and a stepper must move the one that was tapped. */
+  setQuantity: (lineId: CartLineId, quantity: number) => void;
+  setNotes: (lineId: CartLineId, notes: string) => void;
   clear: () => void;
 }
 
@@ -50,11 +60,29 @@ function readStoredCart(): Cart {
       storeId: typeof parsed.storeId === 'string' ? parsed.storeId : null,
       storeName: typeof parsed.storeName === 'string' ? parsed.storeName : null,
       storeSlug: typeof parsed.storeSlug === 'string' ? parsed.storeSlug : null,
-      lines: parsed.lines.flatMap((line): CartLine[] =>
-        typeof line?.menuItemId === 'string' && Number.isFinite(line?.quantity) && line.quantity > 0
-          ? [{ menuItemId: line.menuItemId, quantity: Math.floor(line.quantity), notes: line.notes }]
-          : [],
-      ),
+      lines: parsed.lines.flatMap((line): CartLine[] => {
+        if (typeof line?.menuItemId !== 'string') return [];
+        if (!Number.isFinite(line?.quantity) || line.quantity <= 0) return [];
+        // A cart stored before dishes had choices has neither field. Given
+        // the default — no choices — rather than dropped: silently emptying
+        // somebody's basket to ship a schema change is not a trade worth
+        // making, and "no options" is exactly what those lines meant.
+        const optionIds = Array.isArray(line.optionIds)
+          ? line.optionIds.filter((id): id is string => typeof id === 'string')
+          : [];
+        return [
+          {
+            lineId:
+              typeof line.lineId === 'string' && line.lineId.length > 0
+                ? (line.lineId as CartLineId)
+                : cartLineId(line.menuItemId, optionIds),
+            menuItemId: line.menuItemId,
+            optionIds,
+            quantity: Math.floor(line.quantity),
+            notes: line.notes,
+          },
+        ];
+      }),
     };
   } catch {
     // Private mode, cleared site data, quota — a missing cart is recoverable.
@@ -83,8 +111,11 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   }, [cart, isLoaded]);
 
   const addItem = useCallback<CartContextValue['addItem']>(
-    ({ store, menuItemId, quantity = 1 }) => {
+    ({ store, menuItemId, optionIds = [], quantity = 1 }) => {
       let replacedStore: string | null = null;
+      const chosen = [...optionIds];
+      const lineId = cartLineId(menuItemId, chosen);
+      const fresh: CartLine = { lineId, menuItemId, optionIds: chosen, quantity };
 
       setCart((current) => {
         if (current.storeId && current.storeId !== store.id) {
@@ -93,22 +124,22 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
             storeId: store.id,
             storeName: store.name,
             storeSlug: store.slug,
-            lines: [{ menuItemId, quantity }],
+            lines: [fresh],
           };
         }
 
-        const existing = current.lines.find((line) => line.menuItemId === menuItemId);
+        const existing = current.lines.find((line) => line.lineId === lineId);
         return {
           storeId: store.id,
           storeName: store.name,
           storeSlug: store.slug,
           lines: existing
             ? current.lines.map((line) =>
-                line.menuItemId === menuItemId
+                line.lineId === lineId
                   ? { ...line, quantity: line.quantity + quantity }
                   : line,
               )
-            : [...current.lines, { menuItemId, quantity }],
+            : [...current.lines, fresh],
         };
       });
 
@@ -117,24 +148,24 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     [],
   );
 
-  const setQuantity = useCallback<CartContextValue['setQuantity']>((menuItemId, quantity) => {
+  const setQuantity = useCallback<CartContextValue['setQuantity']>((lineId, quantity) => {
     setCart((current) => {
       const lines =
         quantity <= 0
-          ? current.lines.filter((line) => line.menuItemId !== menuItemId)
+          ? current.lines.filter((line) => line.lineId !== lineId)
           : current.lines.map((line) =>
-              line.menuItemId === menuItemId ? { ...line, quantity } : line,
+              line.lineId === lineId ? { ...line, quantity } : line,
             );
       // Dropping the last item releases the store, so the next add is clean.
       return lines.length === 0 ? EMPTY_CART : { ...current, lines };
     });
   }, []);
 
-  const setNotes = useCallback<CartContextValue['setNotes']>((menuItemId, notes) => {
+  const setNotes = useCallback<CartContextValue['setNotes']>((lineId, notes) => {
     setCart((current) => ({
       ...current,
       lines: current.lines.map((line) =>
-        line.menuItemId === menuItemId ? { ...line, notes } : line,
+        line.lineId === lineId ? { ...line, notes } : line,
       ),
     }));
   }, []);
