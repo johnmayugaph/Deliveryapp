@@ -71,8 +71,15 @@ npm run dev
 ```
 
 `npm run db:setup` runs migrate/guards/seed together against an existing
-database — use it on a deploy, where the guards **must** be reapplied after
-every `migrate deploy`.
+database, and it is what a deploy should run: the guards **must** be reapplied
+after every `migrate deploy`, and the seed is the only thing in this
+repository that creates cities, services and delivery fee rules — migrations
+alone leave a database the app answers `200` from while telling every customer
+"No service is available in your area yet".
+
+**Deploying for real: [`docs/DEPLOY.md`](docs/DEPLOY.md).** Every command in it
+was run against a real database and a real production build, and it says what
+that found.
 
 ### Signing in
 
@@ -90,7 +97,10 @@ output.
 
 Any other Philippine mobile number works too and creates a fresh account.
 In production, configure `SEMAPHORE_API_KEY` — with no gateway set, a
-production build refuses to start a login rather than pretend to send a code.
+production build refuses to issue a code rather than pretend to send one. It
+refuses before writing anything, tells the person asking that waiting will not
+help, logs which variable to set, and says so on the login screen itself,
+which is the only screen still reachable when nobody can sign in.
 
 ### Cron
 

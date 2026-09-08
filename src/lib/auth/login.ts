@@ -1,7 +1,11 @@
 import { prisma } from '@/lib/prisma';
 import { InvalidPhoneNumberError, normalisePhilippineMobile } from '@/lib/auth/phone';
 import { requestLoginCode, verifyLoginCode } from '@/lib/auth/otp';
-import { THROTTLE_MESSAGES, VERIFY_FAILURE_MESSAGES } from '@/lib/auth/otp-policy';
+import {
+  SMS_NOT_CONFIGURED_MESSAGE,
+  THROTTLE_MESSAGES,
+  VERIFY_FAILURE_MESSAGES,
+} from '@/lib/auth/otp-policy';
 import { ensureWallet } from '@/lib/wallet/ledger';
 import { SIGN_IN_REFUSED_MESSAGE, signInIsPermitted } from '@/lib/demo/policy';
 import { verifyLoginChallenge, type CaptchaVerifier } from '@/lib/auth/captcha';
@@ -72,6 +76,13 @@ export async function sendLoginCode(input: {
         ? { retryAfterSeconds: outcome.throttled.retryAfterSeconds }
         : {}),
     };
+  }
+
+  // A misconfigured deployment and a gateway that dropped one message are both
+  // "the code did not go out", and telling them apart is the difference
+  // between a person waiting a minute and a person waiting forever.
+  if ('notConfigured' in outcome) {
+    return { ok: false, message: SMS_NOT_CONFIGURED_MESSAGE };
   }
 
   if (!outcome.ok) {

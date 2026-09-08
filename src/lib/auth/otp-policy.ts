@@ -148,6 +148,20 @@ export const VERIFY_FAILURE_MESSAGES: Readonly<Record<VerifyFailure, string>> = 
   ALREADY_USED: 'That code has already been used. Ask for a new one.',
 };
 
+/**
+ * What the login screen says when this deployment has no SMS gateway.
+ *
+ * It has to be honest that waiting will not help — "try again in a moment" is
+ * a lie when the answer will be identical in an hour — without naming a
+ * variable at a stranger, and without implying the person did something
+ * wrong. Whoever reads it on a real deployment is almost certainly the
+ * operator, because in this state nobody else can have got in.
+ */
+export const SMS_NOT_CONFIGURED_MESSAGE =
+  'Sign-in by text message is not switched on for this deployment yet. ' +
+  'Nothing you can do from here will fix it — whoever runs this site has to ' +
+  'connect an SMS gateway.';
+
 export const THROTTLE_MESSAGES: Readonly<Record<ThrottleReason, string>> = {
   COOLDOWN: 'Wait for the code we already sent.',
   PHONE_LIMIT: 'Too many codes requested. Try again later.',

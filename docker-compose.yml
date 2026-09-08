@@ -5,10 +5,23 @@
 # to run this in the Philippines and the one that does not need a platform
 # account. It brings up four things, and the fourth is the one people forget.
 #
+#     mkdir -p ./backups && sudo chown 1000:1000 ./backups
 #     docker compose up -d --build
-#     docker compose run --rm ops npx prisma migrate deploy
-#     docker compose run --rm ops npm run prisma:guards
+#     docker compose run --rm ops npm run db:setup
+#     docker compose run --rm ops npm run db:purge-demo -- --confirm
 #     docker compose logs -f web
+#
+# `db:setup`, not `migrate deploy` — and not because it is shorter. Migrations
+# and the guards leave a schema with NO cities, NO services and NO fee rules,
+# and the home page then answers a customer "No service is available in your
+# area yet" with a 200 and nothing anywhere saying a step was missed. This was
+# measured. The seed is where the operating data comes from; `db:purge-demo`
+# exists to take the demo ACCOUNTS and SHOPS back out afterwards and keeps
+# exactly that operating data. See docs/DEPLOY.md.
+#
+# The first line is not optional and is not cosmetic: the ops image runs as
+# uid 1000, Docker would create that directory as root, and the backup service
+# refuses to start rather than pretending. See the note on `backup` below.
 #
 # On a managed platform (Fly, Railway, Render, a Kubernetes cluster) ignore
 # this file and use the `web` and `ops` images directly; the commands above are
@@ -134,6 +147,16 @@ services:
   #
   # This is the SECOND line of defence. The first is point-in-time recovery on
   # a managed database — see the note on `db` above.
+  #
+  # BEFORE THE FIRST `up`: mkdir -p ./backups && sudo chown 1000:1000 ./backups
+  #
+  # Docker creates a missing bind-mount source as root:root 0755, and the ops
+  # image runs as uid 1000 — so without that step the very first backup dies
+  # with `EACCES: permission denied, mkdir '/backups'`. This was measured, not
+  # guessed. The loop below refuses to start rather than swallowing it, because
+  # the failure mode it replaces was the worst available: a container reporting
+  # healthy, a stack trace once a minute in a log nobody tails, and no backups
+  # at all.
   backup:
     build:
       context: .
@@ -150,12 +173,41 @@ services:
     volumes:
       - ./backups:/backups
     command: >
-      sh -c 'while true; do
-        now=$$(date -u +%H%M);
-        if [ "$$now" = "1800" ]; then npm run --silent db:backup -- --dir /backups --keep 14 || true; fi;
-        if [ "$$now" = "1830" ]; then npm run --silent db:restore-check -- --dir /backups || true; fi;
+      sh -c 'if ! touch /backups/.writable 2>/dev/null; then
+        echo "FATAL: /backups is not writable by uid $$(id -u)." >&2;
+        echo "  Run on the host, then bring this back up:" >&2;
+        echo "    mkdir -p ./backups && sudo chown 1000:1000 ./backups" >&2;
+        exit 1;
+      fi;
+      rm -f /backups/.writable;
+      last_backup=""; last_check="";
+      while true; do
+        day=$$(date -u +%F); mins=$$(date -u +%H%M);
+        if [ "$$last_backup" != "$$day" ] && [ "$$mins" -ge 1800 ]; then
+          last_backup=$$day;
+          npm run --silent db:backup -- --dir /backups --keep 14 || true;
+        fi;
+        if [ "$$last_check" != "$$day" ] && [ "$$mins" -ge 1830 ]; then
+          last_check=$$day;
+          npm run --silent db:restore-check -- --dir /backups || true;
+        fi;
         sleep 60;
       done'
+    # WHY A ONCE-PER-DAY LATCH RATHER THAN `if [ "$$now" = "1800" ]`.
+    #
+    # That test only sees the minute the loop happens to sample, and the loop
+    # samples nothing while a job is running. A dump that takes longer than
+    # thirty minutes — which is what a real database eventually takes — finishes
+    # after 18:30 has already gone by, so the restore check is never reached.
+    # Silently, and starting on the day the database gets big enough for the
+    # drill to be worth having.
+    #
+    # `-ge` plus a latch is immune to that and to sampling drift, and it has a
+    # second property worth having: a deployment first brought up at 20:00 takes
+    # a backup immediately instead of going unprotected until tomorrow. The
+    # latch is set BEFORE the job runs, so a job that fails loses that day
+    # rather than retrying every minute; the failure is in the log and the next
+    # day's attempt is unaffected.
 
   # ---------------------------------------------------------------------------
   # One-off jobs: migrations, the guards, the demo purge, granting an admin.
@@ -163,6 +215,7 @@ services:
   # Under a profile, so `docker compose up` does not start it — it exists to be
   # invoked:
   #
+  #     docker compose run --rm ops npm run db:setup
   #     docker compose run --rm ops npx prisma migrate deploy
   #     docker compose run --rm ops npm run prisma:guards
   #     docker compose run --rm ops npm run db:purge-demo -- --confirm

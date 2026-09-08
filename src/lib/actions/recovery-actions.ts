@@ -17,7 +17,11 @@ import {
   normalisePhilippineMobile,
 } from '@/lib/auth/phone';
 import { requestLoginCode, verifyLoginCode } from '@/lib/auth/otp';
-import { THROTTLE_MESSAGES, VERIFY_FAILURE_MESSAGES } from '@/lib/auth/otp-policy';
+import {
+  SMS_NOT_CONFIGURED_MESSAGE,
+  THROTTLE_MESSAGES,
+  VERIFY_FAILURE_MESSAGES,
+} from '@/lib/auth/otp-policy';
 import {
   completeRecovery,
   PhoneAlreadyInUseError,
@@ -266,13 +270,16 @@ export async function proveNewPhoneAction(formData: FormData): Promise<
   });
   if (!sent.ok) {
     // The login flow's own outcome shape, mapped to a sentence here rather
-    // than restated: 'throttled' carries which limit and when to retry.
+    // than restated: 'throttled' carries which limit and when to retry, and
+    // 'notConfigured' means no amount of retrying will ever work.
     return {
       ok: false,
       message:
         'throttled' in sent
           ? THROTTLE_MESSAGES[sent.throttled.reason!]
-          : 'We could not send that code. Try again in a moment.',
+          : 'notConfigured' in sent
+            ? SMS_NOT_CONFIGURED_MESSAGE
+            : 'We could not send that code. Try again in a moment.',
     };
   }
 

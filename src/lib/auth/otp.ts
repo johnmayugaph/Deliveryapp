@@ -17,7 +17,7 @@ import {
   type ThrottleDecision,
   type VerifyFailure,
 } from '@/lib/auth/otp-policy';
-import { resolveSmsSender, type SmsSender } from '@/lib/auth/sms';
+import { NoSmsSenderError, resolveSmsSender, type SmsSender } from '@/lib/auth/sms';
 
 /**
  * Login codes: requesting, and verifying.
@@ -35,6 +35,13 @@ import { resolveSmsSender, type SmsSender } from '@/lib/auth/sms';
 export type RequestCodeOutcome =
   | { ok: true; phone: string; expiresAt: Date }
   | { ok: false; throttled: ThrottleDecision }
+  /**
+   * This deployment has no SMS gateway at all, so no code can be sent to
+   * anybody. Kept apart from `deliveryFailed` because the two need opposite
+   * words: a delivery failure is worth retrying in a moment, and this is not
+   * worth retrying until somebody changes the configuration.
+   */
+  | { ok: false; notConfigured: true }
   | { ok: false; deliveryFailed: true };
 
 export interface RequestCodeInput {
@@ -66,6 +73,37 @@ export async function requestLoginCode(
   const phone = normalisePhilippineMobile(input.rawPhone);
   const now = input.now ?? new Date();
   const ipHash = input.clientIp ? hashClientIp(input.clientIp) : null;
+
+  /**
+   * The gateway is resolved FIRST — before the throttle is read, before
+   * anything is written, and inside a `try` — because on a deployment with no
+   * gateway configured `resolveSmsSender` throws rather than returning.
+   *
+   * It used to be resolved on the line above the send, after the
+   * `PhoneVerification` row had been created and outside the `catch` below.
+   * A production deployment whose operator had not yet set `SEMAPHORE_API_KEY`
+   * therefore answered the very first thing anybody does on it — ask for a
+   * login code — with a 500 and "something on our side broke, not anything
+   * you did", and left an unconsumed row behind that could start a cooldown
+   * against the honest retry. The message on `NoSmsSenderError` says exactly
+   * what to set, and reached nobody.
+   *
+   * Refusing here consults nothing about the number, so it costs no row, no
+   * query and no peso, and it still tells a bot nothing about the number it
+   * tried.
+   */
+  let sender: SmsSender;
+  try {
+    sender = input.sender ?? resolveSmsSender();
+  } catch (error) {
+    if (error instanceof NoSmsSenderError) {
+      // The operator-facing sentence, in the one place an operator can read
+      // it: this deployment's log. The customer gets different words.
+      console.error(`requestLoginCode: no code was issued. ${error.message}`);
+      return { ok: false, notConfigured: true };
+    }
+    throw error;
+  }
 
   const [recentForPhone, recentForIpCount] = await Promise.all([
     prisma.phoneVerification.findMany({
@@ -112,7 +150,6 @@ export async function requestLoginCode(
     });
   });
 
-  const sender = input.sender ?? resolveSmsSender();
   try {
     await sender.send({ to: phone, body: messageBody(code) });
   } catch (error) {

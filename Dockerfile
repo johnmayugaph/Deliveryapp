@@ -145,7 +145,8 @@ USER node
 # No default command on purpose. This image is invoked with the job you want,
 # and naming them here would suggest one of them is the normal case:
 #
-#   docker run --rm tara:ops npx prisma migrate deploy
+#   docker run --rm tara:ops npm run db:setup          # migrate + guards + seed
+#   docker run --rm tara:ops npx prisma migrate deploy # migrations alone
 #   docker run --rm tara:ops npm run prisma:guards
 #   docker run --rm tara:ops npm run jobs:orders
 #   docker run --rm -v /srv/backups:/backups tara:ops \

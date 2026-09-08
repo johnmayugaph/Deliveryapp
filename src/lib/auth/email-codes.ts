@@ -16,7 +16,11 @@ import {
   type VerifyFailure,
 } from '@/lib/auth/otp-policy';
 import { normaliseEmail } from '@/lib/auth/email/address';
-import { resolveEmailSender } from '@/lib/auth/email';
+import {
+  NoEmailSenderError,
+  resolveEmailSender,
+  type EmailSender,
+} from '@/lib/auth/email';
 import { EmailDeliveryError } from '@/lib/auth/email/types';
 
 /**
@@ -71,12 +75,46 @@ const COPY: Readonly<Record<EmailCodePurpose, { subject: string; line: string }>
  * an endpoint that answers differently for a known address is an endpoint that
  * enumerates customers.
  */
+/**
+ * The sentence for an address on a deployment with no email provider.
+ *
+ * Different words from the SMS one because a different door is shut: recovery
+ * by email is one route among several, and support is still there, so this can
+ * point somewhere useful instead of stopping dead.
+ */
+export const EMAIL_NOT_CONFIGURED_MESSAGE =
+  'Email is not set up on this deployment, so no code can be sent. ' +
+  'Recovery through support still works.';
+
 export async function sendEmailCode(
   input: SendEmailCodeInput,
 ): Promise<EmailCodeOutcome> {
   const now = input.now ?? new Date();
   const email = normaliseEmail(input.email);
   const ipHash = input.requestIp ? hashClientIp(input.requestIp) : undefined;
+
+  /**
+   * The sender is resolved here, before anything else, because
+   * `resolveEmailSender` THROWS in production when nothing is configured.
+   *
+   * Both callers check `isEmailConfigured()` first, so today that throw is
+   * unreachable through them — which is exactly the state the SMS path was in
+   * before it was not. There the resolution sat on the line above the send and
+   * outside the catch, and the day a caller stopped guarding it, a
+   * misconfigured deployment answered the first thing anybody did with a 500.
+   * Handling it here means no future caller has to remember the gate to get a
+   * sentence instead of a stack trace.
+   */
+  let sender: EmailSender;
+  try {
+    sender = resolveEmailSender();
+  } catch (error) {
+    if (error instanceof NoEmailSenderError) {
+      console.error(`sendEmailCode: no code was issued. ${error.message}`);
+      return { ok: false, message: EMAIL_NOT_CONFIGURED_MESSAGE };
+    }
+    throw error;
+  }
 
   const [recent, recentForIpCount] = await Promise.all([
     prisma.emailVerification.findMany({
@@ -129,7 +167,7 @@ export async function sendEmailCode(
 
   const copy = COPY[input.purpose];
   try {
-    await resolveEmailSender().send({
+    await sender.send({
       to: email,
       subject: copy.subject,
       body: [

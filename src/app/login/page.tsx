@@ -1,10 +1,13 @@
 import Link from 'next/link';
+import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth/session';
 import { safeNextPath } from '@/lib/auth/login';
 import { isCaptchaConfigured } from '@/lib/auth/captcha';
 import { Wordmark } from '@/components/brand/Wordmark';
 import { LoginFlow } from '@/components/auth/LoginFlow';
+import { SignInBlockedNotice } from '@/components/auth/SignInBlockedNotice';
+import { signInBlockers } from '@/lib/deploy/sign-in-readiness';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,11 +23,23 @@ export default async function LoginPage({
 }: {
   searchParams: Promise<{ next?: string }>;
 }) {
-  const [{ next }, user] = await Promise.all([searchParams, getCurrentUser()]);
+  const [{ next }, user, headerList] = await Promise.all([
+    searchParams,
+    getCurrentUser(),
+    headers(),
+  ]);
 
   if (user) {
     redirect(user.onboardedAt === null ? '/welcome' : safeNextPath(next));
   }
+
+  /* Whether this deployment can sign anybody in — checked here because this is
+     the only screen still reachable when the answer is no. Empty on every
+     correctly configured deployment, and on every development one. */
+  const blockers = signInBlockers({
+    forwardedProto: headerList.get('x-forwarded-proto') ?? undefined,
+    host: headerList.get('host') ?? undefined,
+  });
 
   const captchaSiteKey = isCaptchaConfigured()
     ? process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY
@@ -39,6 +54,8 @@ export default async function LoginPage({
           Just your number. No password.
         </p>
       </header>
+
+      <SignInBlockedNotice blockers={blockers} />
 
       <div className="mt-6 rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5">
         <LoginFlow

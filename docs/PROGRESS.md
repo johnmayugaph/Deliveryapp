@@ -4145,3 +4145,162 @@ asserting the OTHER states' sentences are absent, so the screen never tells
 somebody to add more when the real reason is that their month is used up.
 
 1900 tests pass; typecheck, lint and build clean.
+
+---
+
+## Phase 47 — A deployment dry run
+
+The code was not the thing left to test. This phase rehearsed what an operator
+actually does — provision a database, build for production, boot it, sign in —
+and wrote down what broke. `docs/DEPLOY.md` is the runbook that came out of it,
+and every command in it was run.
+
+Four things broke. Three of them were invisible.
+
+### The first thing anybody does on a fresh deployment returned a 500
+
+Ask for a login code on a production build with no SMS gateway and the answer
+was:
+
+```
+🛠️
+This screen did not load
+Something on our side broke, not anything you did. We have been told about it.
+```
+
+`resolveSmsSender()` sat on the line above the send — after the
+`PhoneVerification` row had been written and outside the `catch` — so
+`NoSmsSenderError` escaped as an unhandled 500. The error carries an excellent
+operator-facing sentence naming the variable to set, and it reached nobody. It
+also left an unconsumed verification row behind, which can start a cooldown
+against the honest retry: measured at one row and two `ErrorReport` rows per
+attempt.
+
+The gateway is now resolved **first**, before the throttle is read and before
+anything is written, inside a `try`. Nothing about the number is consulted at
+that point, so the refusal costs no row, no query and no peso and still tells a
+bot nothing. `RequestCodeOutcome` gained a `notConfigured` arm kept apart from
+`deliveryFailed`, because the two need opposite words — one is worth retrying
+in a moment and one will be identical in an hour. Measured after: zero rows,
+zero error reports, and a sentence on the form.
+
+The same shape existed in `sendEmailCode`, where both callers happen to check
+`isEmailConfigured()` first — which is exactly the state the SMS path was in
+before it was not. It handles the throw itself now, so no future caller has to
+remember the gate.
+
+### The failure that cannot be found by testing locally
+
+The session cookie is `Secure` in production. Browsers make an exception for
+loopback. Measured with three real browser runs:
+
+```
+over http · localhost, Secure        (how you will test)   -> stored
+over http · a real domain, Secure    (how you will deploy)  -> DROPPED
+over http · a real domain, no Secure (development mode)     -> stored
+```
+
+An injected cookie authenticates fine over http, so the failure is purely
+storage: the code sends, the code is correct, the login succeeds, and the next
+page is signed out. Nothing throws and nothing is logged.
+
+Both of these now report on `/login` at request time — that screen and no
+other, because if nobody can sign in then nobody can reach `/admin/health`
+where every other misconfiguration is reported. It is empty on every correct
+deployment and every development one. The standalone server was measured
+setting `x-forwarded-proto: http` itself on a direct connection, so an operator
+who exposes the app with no proxy is told too.
+
+### The documented deploy sequence produced an empty app
+
+`docker-compose.yml` and the README both said `prisma migrate deploy` then
+`prisma:guards`. That leaves **no cities, no services and no delivery fee
+rules**, and `prisma/seed.ts` is the only thing in the repository that creates
+any of them — there is no screen and no script. Booted against such a database
+the home page answers **200** with *"No service is available in your area yet.
+We will come back to you."*: the app politely telling every customer the
+business does not operate, on a deployment where nothing looks broken.
+
+The sequence is `db:setup` then `db:purge-demo -- --confirm` — the purge exists
+to remove the demo accounts and shops and keeps exactly that operating data.
+
+And because three features were sitting at zero on a database provisioned
+exactly as documented, `/admin/health` gained a panel that names them: no
+points programme (so no tiers, so no tier benefits, however many are
+configured), no surge bands, no active service. Not called
+"misconfigured" — every one can be a deliberate launch choice, and the screen
+cannot tell a choice from an oversight. What it can do is stop the choice being
+invisible. Two of the six have no console screen, so they carry a command
+instead of a link; the first draft pointed at `/admin/cities` and `/admin/fees`,
+neither of which exists, and there is now a test that walks every link to a
+real `page.tsx`.
+
+### Backups that would have silently never run
+
+Two findings in the compose `backup` service, both measured rather than
+reasoned about.
+
+Docker creates a missing bind-mount source as `root:root 0755` and the ops
+image runs as uid 1000, so the first backup died with `EACCES: permission
+denied, mkdir '/backups'` — swallowed by the loop's `|| true`, retried once a
+minute forever, container reporting healthy. It checks writability once at start
+and exits now, so it crash-loops visibly instead.
+
+And the schedule tested `[ "$now" = "1800" ]`, which only sees the minute the
+loop happens to sample — and the loop samples nothing while a job is running.
+Driven under a compressed clock with a four-hour dump, against both loops:
+
+```
+old:  [1800] ran db:backup          ← and the 18:30 restore check never ran
+new:  [1800] ran db:backup
+      [2200] ran db:restore-check   ← as soon as the dump returned
+```
+
+That arrives on the day the database grows past a thirty-minute dump, which is
+the same day the drill starts being worth having. It is a once-per-UTC-day
+latch with `-ge` now, immune to that and to sampling drift, and it takes a
+backup immediately on a deployment first brought up mid-afternoon rather than
+leaving it unprotected until tomorrow.
+
+### What the rehearsal confirmed rather than broke
+
+The production standalone server boots and serves — never once exercised in 46
+phases. `✓ Ready in 72ms`, `/api/health` 200. `db:setup` on an empty database
+applies 56 migrations, 20 guard files and the seed, giving 64 tables, 90 CHECK
+constraints and 21 triggers. `db:purge-demo` refuses to run without
+`--confirm`, warns that it leaves no administrator, and keeps the operating
+data. `admin:grant` refuses a number that has never signed in and exits 1 —
+which means the SMS gateway has to work before you can have an administrator,
+and there is no way around that on purpose. `jobs:orders` runs on
+`DATABASE_URL` alone; `DIRECT_URL` is a migration-time variable only. The
+backup script warns, in the right words, that an unencrypted dump is every
+customer's phone number and home address in plaintext.
+
+### Verified in three places
+
+**Twenty-eight new tests** (1928 total). The readiness table pairs every
+environment against the sender it describes, so the screen and the sender
+cannot disagree — a screen promising a code the sender then refuses is the bug
+this replaces. Five cases pin the loopback exception, which is the thing that
+made the transport failure unreproducible. The ordering test mocks Prisma so
+that touching the database at all fails it, which is the invariant rather than
+the outcome.
+
+**Eleven mutations, all killed**, including the original bug reintroduced
+verbatim, the loopback exception removed, the proto chain read from the wrong
+end, the predicate drifted from its sender, "try again in a moment" restored
+for a misconfiguration, the minute-equality schedule restored, the writability
+guard removed, and a gap panel pointed at a route that does not exist.
+
+**Two browsers and a real database.** The login screen walked with no gateway
+over a real hostname, showing both notices and the customer's sentence; the
+console's gap panel rendered against a seedless database (five gaps) and a
+correctly provisioned one (two), with every branch of the query exercised live
+— programme absent, programme without tiers, both present, and nothing
+missing.
+
+`docker compose` also gained a test that every inline `command:` is valid
+shell. Nothing checked that before: CI builds both images, so a broken loop
+would pass green and fail at 02:00 in a container nobody is tailing.
+
+1928 tests pass; typecheck, lint and build clean.

@@ -43,6 +43,26 @@ export interface SmsEnv {
   [key: string]: string | undefined;
 }
 
+/**
+ * Would `resolveSmsSender` refuse, for this environment?
+ *
+ * The same condition, asked without building anything and without throwing,
+ * so a screen can say so before a customer discovers it by pressing a button.
+ * `resolveSmsSender` is written in terms of this function rather than
+ * repeating the test, because the two drifting apart is exactly how a screen
+ * comes to promise something the sender then refuses.
+ *
+ * This is the whole of the condition: no API key, and a production runtime.
+ * It cannot see a gateway that is configured but broken — a wrong key, an
+ * empty Semaphore balance — and nothing here should pretend otherwise. That
+ * failure looks like a send that throws, which is a different outcome with a
+ * different message.
+ */
+export function smsSendingIsRefused(env: SmsEnv = process.env): boolean {
+  if (env.SEMAPHORE_API_KEY) return false;
+  return env.NODE_ENV === 'production';
+}
+
 export function resolveSmsSender(env: SmsEnv = process.env): SmsSender {
   const apiKey = env.SEMAPHORE_API_KEY;
   if (apiKey) {
@@ -53,7 +73,7 @@ export function resolveSmsSender(env: SmsEnv = process.env): SmsSender {
       : new SemaphoreSmsSender(apiKey, env.SEMAPHORE_SENDER_NAME);
   }
 
-  if (env.NODE_ENV === 'production') {
+  if (smsSendingIsRefused(env)) {
     throw new NoSmsSenderError();
   }
 

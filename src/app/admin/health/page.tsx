@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { NotificationChannel } from '@prisma/client';
 import { requireAdmin } from '@/lib/admin/access';
 import { deliveryHealth, demoDataPresence } from '@/lib/admin/queries';
+import { operatingDataGaps } from '@/lib/admin/operating-data';
 import { resolveChannels } from '@/lib/notifications/channels';
 import { isPushConfigured } from '@/lib/notifications/push/vapid';
 import { captchaIsHalfConfigured, isCaptchaConfigured } from '@/lib/auth/captcha';
@@ -46,12 +47,13 @@ export const dynamic = 'force-dynamic';
 export default async function AdminHealthPage() {
   await requireAdmin();
 
-  const [health, demo, backups, support, photos] = await Promise.all([
+  const [health, demo, backups, support, photos, gaps] = await Promise.all([
     deliveryHealth(),
     demoDataPresence(),
     backupState(),
     supportSummary(),
     menuImageFootprint(),
+    operatingDataGaps(),
   ]);
 
   // Read on the server, like everywhere else this is used: a NEXT_PUBLIC_
@@ -96,6 +98,49 @@ export default async function AdminHealthPage() {
           by how often that runs.
         </p>
       </div>
+
+      {gaps.length > 0 ? (
+        <div className="rounded-xl bg-red-50 px-4 py-3 text-xs leading-relaxed text-red-900 ring-1 ring-red-200">
+          <p className="font-semibold">
+            {gaps.length === 1
+              ? 'One feature is switched off because the rows it reads do not exist.'
+              : `${gaps.length} features are switched off because the rows they read do not exist.`}
+          </p>
+          {/* Not "misconfigured". Every one of these can be a deliberate
+              launch choice — no surge, no points programme — and the screen
+              has no way to tell a choice from an oversight. What it CAN do is
+              stop the choice being invisible, which is the whole reason this
+              panel exists: a deployment rehearsal found three of them at zero
+              on a database provisioned exactly as the documentation said. */}
+          <p className="mt-1">
+            Each of these is a feature that exists in full and does nothing.
+            Some may be what you intended; the point is that until now there
+            was nowhere to see which.
+          </p>
+          <ul className="mt-2 space-y-2">
+            {gaps.map((gap) => (
+              <li key={gap.what} className="rounded-lg bg-black/5 px-2.5 py-2">
+                <p>{gap.consequence}</p>
+                {gap.fix.kind === 'screen' ? (
+                  <Link
+                    href={gap.fix.href}
+                    className="mt-1 inline-block font-semibold underline"
+                  >
+                    {gap.fix.href}
+                  </Link>
+                ) : (
+                  <>
+                    <pre className="mt-1.5 overflow-x-auto rounded bg-black/5 px-2 py-1.5 text-[11px]">
+                      {gap.fix.command}
+                    </pre>
+                    <p className="mt-1">{gap.fix.note}</p>
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       {demo.demoUsers > 0 || demo.demoStores > 0 ? (
         <div

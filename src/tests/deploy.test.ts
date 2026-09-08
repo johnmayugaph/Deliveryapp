@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
@@ -238,6 +239,47 @@ describe('the dockerignore', () => {
 // The compose deployment
 // -----------------------------------------------------------------------------
 
+describe('what a fresh deployment is missing, and where it says so', () => {
+  const source = readFileSync(
+    path.join(process.cwd(), 'src/lib/admin/operating-data.ts'),
+    'utf8',
+  );
+
+  it('links only to console routes that exist', () => {
+    /**
+     * The first draft of this panel pointed at `/admin/cities` and
+     * `/admin/fees`. Neither exists — `City` and `DeliveryFeeRule` rows are
+     * created by the seed and by nothing else — so an operator following the
+     * one screen that told them what was wrong would have landed on a 404.
+     *
+     * Read from the source rather than imported, because importing the module
+     * constructs a Prisma client, and this assertion needs no database.
+     */
+    const hrefs = [...source.matchAll(/kind: 'screen', href: '([^']+)'/g)].map(
+      (match) => match[1]!,
+    );
+    expect(hrefs.length).toBeGreaterThan(0);
+    for (const href of hrefs) {
+      const segment = href.replace(/^\/admin\//, '');
+      const dir = path.join(process.cwd(), 'src/app/admin', segment);
+      expect(existsSync(dir), `${href} has no route directory`).toBe(true);
+      expect(
+        existsSync(path.join(dir, 'page.tsx')),
+        `${href} has no page`,
+      ).toBe(true);
+    }
+  });
+
+  it('tells an operator to run the seed for the rows only the seed creates', () => {
+    // Measured: `migrate deploy` plus the guards leaves zero cities, zero
+    // services and zero fee rules, and the home page then tells customers
+    // "No service is available in your area yet" with a 200.
+    expect(source).toMatch(/npm run db:setup/);
+    expect(source).toMatch(/npm run db:purge-demo -- --confirm/);
+    expect(source).toMatch(/there is no screen/);
+  });
+});
+
 describe('docker compose', () => {
   const compose = yaml<Compose>('docker-compose.yml');
 
@@ -295,5 +337,66 @@ describe('docker compose', () => {
 
   it('pins the database to the major version the schema was written against', () => {
     expect(compose.services.db!.image).toMatch(/^postgres:16/);
+  });
+
+  it('every inline shell command is valid shell', () => {
+    /**
+     * Nothing else checks this. CI builds both images, so a broken `command:`
+     * gets through green and fails at 02:00 on the machine, in a container
+     * whose logs nobody is watching. `sh -n` parses without executing.
+     */
+    for (const [name, service] of Object.entries(compose.services)) {
+      const command = service.command;
+      if (typeof command !== 'string' || !command.trim().startsWith('sh -c')) {
+        continue;
+      }
+      // Compose's own `$$` escape for a literal dollar, undone.
+      const body = command
+        .trim()
+        .replace(/^sh -c '/, '')
+        .replace(/'$/, '')
+        .replaceAll('$$', '$');
+      const result = spawnSync('sh', ['-n'], { input: body, encoding: 'utf8' });
+      expect(
+        `${name}: ${result.stderr}`.trim(),
+        `${name}'s command is not valid shell`,
+      ).toBe(`${name}:`);
+    }
+  });
+
+  it('refuses to start when the backup directory is not writable', () => {
+    /**
+     * Measured, not guessed: Docker creates a missing bind-mount source as
+     * root:root 0755, the ops image runs as uid 1000, and `db:backup` then
+     * dies with `EACCES: permission denied, mkdir '/backups'`. With the
+     * failure swallowed by `|| true` the container reports healthy and retries
+     * once a minute forever, so a deployment can run for months with no
+     * backups and nothing saying so. Crash-looping is the honest answer: it
+     * shows up in `docker compose ps`.
+     */
+    const command = compose.services.backup!.command!;
+    expect(command).toMatch(/touch \/backups\//);
+    expect(command).toMatch(/exit 1/);
+    expect(command).toMatch(/chown 1000:1000/);
+  });
+
+  it('schedules the backup by a once-a-day latch, not by the current minute', () => {
+    /**
+     * `if [ "$now" = "1800" ]` only sees the minute the loop happens to
+     * sample, and the loop samples nothing while a job runs. A dump that takes
+     * more than thirty minutes — what a real database eventually takes —
+     * finishes after 18:30 has passed, so the restore drill never runs again.
+     * Demonstrated against both loops under a compressed clock: the old shape
+     * ran the backup and never the check; this one ran the check as soon as
+     * the dump returned.
+     */
+    const command = compose.services.backup!.command!;
+    expect(command).not.toMatch(/=\s*"?\$\$?now"?\s*=/);
+    expect(command).toMatch(/-ge 1800/);
+    expect(command).toMatch(/-ge 1830/);
+    // The latch: one run per UTC day, per job.
+    expect(command).toMatch(/last_backup/);
+    expect(command).toMatch(/last_check/);
+    expect(command).toMatch(/date -u \+%F/);
   });
 });
