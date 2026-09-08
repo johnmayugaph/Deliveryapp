@@ -2124,6 +2124,39 @@ NOT in the fingerprint: the same bug on four pages is one bug.
 Framework frames are skipped when picking the frame to group on, because an
 error thrown inside React's renderer has the same top frame whatever caused it.
 
+### What is not a fault
+
+A row on the error page is a claim that something needs fixing, so the page is
+only worth reading if everything on it is one. Two kinds of thrown error are
+not, and both were observed on the real console:
+
+- **An authorisation refusal.** `requireAdmin()` throws, the layout turns that
+  into a 404, and the customer gets exactly the right response — but the throw
+  still reaches `onRequestError`. A signed-in non-admin opening a bookmarked
+  `/admin` URL logged a fault, and anybody could have filled the page by
+  requesting `/admin` in a loop. The same applies to `NoStoreAccessError`,
+  `InsufficientStoreRoleError`, `NotAFleetPartnerError`, and to being signed
+  out at a server action. `lib/monitoring/expected.ts` holds the list.
+- **An abandoned request.** A tab closed mid-load leaves the render writing to
+  a stream that is gone. Seen as `/help/contact :: Error: Connection closed.`
+  Nothing on our side is wrong and nothing on our side can be fixed.
+
+The check runs first in `reportError`, before the hash and before the database,
+so the loop case costs one set lookup rather than one write per request.
+
+Matching is by error **name**, not `instanceof`: this module is reachable from
+the edge-compiled instrumentation hook, and importing the error classes would
+drag `next/headers` and Prisma behind them — the trap the hand-written hash
+below already documents. A test constructs every one of those classes and
+asserts the names still match, so a rename cannot quietly empty the list.
+
+**What this costs, and it is real.** A role bug that wrongly refuses a
+legitimate administrator now produces no error report. That is accepted: the
+alternative is a page nobody reads, and such a bug is loud in the other
+direction — the person locked out says so immediately. What is not accepted is
+widening the list. An error belongs on it only when the response the customer
+received was the correct one.
+
 ### Redaction, which is the part that matters
 
 Everything is redacted **before** it is written. These are all real messages

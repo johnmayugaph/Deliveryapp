@@ -10,7 +10,22 @@ import {
   redactStack,
 } from '@/lib/monitoring/redact';
 import { fingerprintOf, topOwnFrame } from '@/lib/monitoring/report';
+import {
+  EXPECTED_REFUSAL_NAMES,
+  notAFaultReason,
+} from '@/lib/monitoring/expected';
+import { AdminAccessRequiredError } from '@/lib/admin/access';
+import {
+  NotAuthenticatedError,
+  OnboardingIncompleteError,
+} from '@/lib/auth/session';
+import {
+  InsufficientStoreRoleError,
+  NoStoreAccessError,
+} from '@/lib/merchant/access';
+import { NotAFleetPartnerError } from '@/lib/fleet/partner';
 import { ERROR_SOURCE_LABEL } from '@/lib/monitoring/queries';
+import { StoreRole } from '@prisma/client';
 import { KIND_POLICY } from '@/lib/notifications/policy';
 import { renderNotification } from '@/lib/notifications/templates';
 
@@ -365,5 +380,107 @@ describe('the reporter cannot make things worse', () => {
     // the database.
     const action = codeOnly('src/lib/actions/monitoring-actions.ts');
     expect(action).not.toMatch(/stack/i);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Not every throw is a fault
+// -----------------------------------------------------------------------------
+
+describe('what does not belong on the error page', () => {
+  /**
+   * Every refusal class, actually constructed.
+   *
+   * `expected.ts` matches on names rather than `instanceof`, because it is
+   * reachable from the edge-compiled instrumentation hook and cannot import
+   * these modules. This is the test that stops the two drifting apart: rename
+   * a class or change its `this.name` and the name it was matched by is no
+   * longer produced by anything.
+   */
+  const refusals: Error[] = [
+    new AdminAccessRequiredError(),
+    new NotAuthenticatedError(),
+    new OnboardingIncompleteError(),
+    new NoStoreAccessError('store_1'),
+    new InsufficientStoreRoleError(StoreRole.OWNER, StoreRole.STAFF),
+    new NotAFleetPartnerError(),
+  ];
+
+  it('ignores every refusal an access check can throw', () => {
+    for (const error of refusals) {
+      expect(
+        notAFaultReason({ kind: error.name, message: error.message }),
+        `${error.name} would still fill the error page`,
+      ).toBe('EXPECTED_REFUSAL');
+    }
+  });
+
+  it('lists no name that no class produces', () => {
+    // The other direction: a stale entry here is a rule that silently stopped
+    // applying, which is worse than no rule at all because it reads as one.
+    const produced = new Set(refusals.map((error) => error.name));
+    for (const name of EXPECTED_REFUSAL_NAMES) {
+      expect(produced.has(name), `${name} is matched but nothing throws it`).toBe(true);
+    }
+    expect(EXPECTED_REFUSAL_NAMES).toHaveLength(refusals.length);
+  });
+
+  it('ignores a request the customer walked away from', () => {
+    // Observed for real on /help/contact: a tab closed while the RSC stream
+    // was still being written. Nothing on our side is wrong or fixable.
+    expect(notAFaultReason({ kind: 'Error', message: 'Connection closed.' })).toBe(
+      'ABANDONED_REQUEST',
+    );
+    expect(notAFaultReason({ kind: 'ResponseAborted', message: '' })).toBe(
+      'ABANDONED_REQUEST',
+    );
+  });
+
+  it('still records everything that is a fault', () => {
+    const faults = [
+      { kind: 'TypeError', message: "Cannot read properties of undefined (reading 'id')" },
+      { kind: 'PrismaClientValidationError', message: 'Invalid `prisma.store.findMany()`' },
+      { kind: 'ClientError', message: 'Minified React error #418' },
+      { kind: 'IllegalTransitionError', message: 'Cannot go from DELIVERED to PREPARING' },
+      // A wallet refusal that reached the hook means an action failed to catch
+      // it and the customer saw a 500. The refusal was right; the 500 was not.
+      { kind: 'InsufficientCreditsError', message: 'Not enough credits' },
+    ];
+    for (const fault of faults) {
+      expect(notAFaultReason(fault), `${fault.kind} would be swallowed`).toBeNull();
+    }
+  });
+
+  it('matches an abandoned request exactly, never by substring', () => {
+    // The loose version of this rule is the dangerous one: a real database
+    // failure that happens to mention a closed connection must still be seen.
+    expect(
+      notAFaultReason({
+        kind: 'PrismaClientUnknownRequestError',
+        message: 'Connection closed. The connection pool was exhausted.',
+      }),
+    ).toBeNull();
+  });
+
+  it('costs nothing at all, so /admin in a loop writes no rows', () => {
+    const report = codeOnly('src/lib/monitoring/report.ts');
+    expect(report.indexOf('notAFaultReason(')).toBeGreaterThan(-1);
+    expect(report.indexOf('notAFaultReason(')).toBeLessThan(
+      report.indexOf('errorReport.upsert'),
+    );
+  });
+
+  it('imports nothing, so the edge-compiled hook still builds', () => {
+    // The hand-written hash in `report.ts` exists because one node-only import
+    // in this layer silently switches monitoring off. Naming the errors as
+    // strings is what keeps this module free of the classes that would.
+    const expectedModule = codeOnly('src/lib/monitoring/expected.ts');
+    expect(expectedModule).not.toMatch(/^\s*import /m);
+  });
+
+  it('says why it ignored something, rather than dropping it silently', () => {
+    const report = source('src/lib/monitoring/report.ts');
+    expect(report).toMatch(/notAFault\?: NotAFaultReason/);
+    expect(report).toMatch(/\.\.\.NOT_RECORDED, notAFault/);
   });
 });

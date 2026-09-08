@@ -5,6 +5,7 @@ import {
   redactMessage,
   redactStack,
 } from '@/lib/monitoring/redact';
+import { notAFaultReason, type NotAFaultReason } from '@/lib/monitoring/expected';
 
 /**
  * Writing down what broke.
@@ -26,6 +27,9 @@ import {
  *  3. **It is grouped, not appended.** One row per distinct fault, with a
  *     counter. A loop cannot fill the disk, and the console shows a shape
  *     somebody can act on rather than four hundred identical lines.
+ *  4. **It only records faults.** An authorisation refusal and an abandoned
+ *     request both arrive here as thrown errors, and neither is anything
+ *     broken — see `expected.ts` for which, and for what that costs.
  *
  * Deliberately NOT a third-party service. Sentry is the obvious alternative
  * and a good product; what it also is, for this application, is a US processor
@@ -55,6 +59,12 @@ export interface ReportOutcome {
   /** True the first time this fault has ever been seen. */
   isNew: boolean;
   fingerprint: string;
+  /**
+   * Why nothing was written, when the error was not a fault. Absent when the
+   * report was recorded, and absent when the reporter itself failed — those
+   * two are told apart by `recorded`, and this says which RULE applied.
+   */
+  notAFault?: NotAFaultReason;
 }
 
 const NOT_RECORDED: ReportOutcome = {
@@ -175,7 +185,8 @@ export function fingerprintOf(input: {
 }
 
 /**
- * Records one error. Returns quietly on failure — see rule 1.
+ * Records one error, unless it was not a fault. Returns quietly on failure —
+ * see rule 1.
  *
  * The upsert is the whole implementation: a new fault inserts, a repeat
  * increments. `isNew` is read from the occurrence count that comes back rather
@@ -189,8 +200,18 @@ export async function reportError(
   try {
     const now = context.now ?? new Date();
     const kind = kindOf(error).slice(0, 120);
+    const message = messageOf(error);
+
+    // Rule 4, and it comes first: a refusal must cost one set lookup, because
+    // a stranger requesting /admin in a loop is exactly the traffic that would
+    // otherwise turn this function into a write per request.
+    const notAFault = notAFaultReason({ kind, message });
+    if (notAFault !== null) {
+      return { ...NOT_RECORDED, notAFault };
+    }
+
     const stack = stackOf(error);
-    const redactedMessage = redactMessage(messageOf(error));
+    const redactedMessage = redactMessage(message);
     const topFrame = topOwnFrame(stack);
     const fingerprint = fingerprintOf({ kind, redactedMessage, topFrame });
     const route = normaliseRoute(context.route);

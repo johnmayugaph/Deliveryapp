@@ -801,12 +801,6 @@ real file later is one line in `tailwind.config.ts`.
 - **A ratings digest waits up to an hour, by design.** Batching is what stops
   a busy shop getting thirty notifications, but it does mean a single rating on
   a quiet day is not immediate. Nobody is waiting on it.
-- **A non-admin hitting an /admin URL records an error report.** Found while
-  drilling this: `requireAdmin()` throws, the layout's `notFound()` wins the
-  response, but the throw still reaches `onRequestError` and lands on
-  /admin/errors. The 404 is correct; the error report is noise, and anybody
-  could fill that page with it. The reporter needs to treat an expected
-  authorisation refusal as not-a-fault.
 - **Support has no public contact channel until somebody sets one.**
   `SUPPORT_PHONE`, `SUPPORT_EMAIL` and `SUPPORT_FACEBOOK` are all optional and
   nothing is invented, because a number nobody answers is worse than no number.
@@ -1734,8 +1728,69 @@ only — and no comment text appears in either.
 A non-admin hitting an `/admin` URL **records an error report**. The layout's
 `notFound()` correctly wins the response, but the page's `requireAdmin()` throw
 still reaches `onRequestError` and lands on /admin/errors. The 404 is right;
-the error report is noise, and anybody could fill that page with it. It is
-listed under Known gaps rather than fixed in this commit, because it belongs to
-the monitoring layer and not to ratings.
+the error report is noise, and anybody could fill that page with it. Fixed in
+Phase 26, because it belongs to the monitoring layer and not to ratings.
 
 922 tests pass; build and lint clean.
+
+## Phase 26 — only faults on the error page ✅
+
+The gap Phase 25 left open, and it was worse than untidy. The error page is
+read on the assumption that everything on it is broken; two of the four rows on
+the real console were the system working correctly:
+
+```
+Error                     /help/contact   Connection closed.
+AdminAccessRequiredError  /admin/support   That is only available to an administrator.
+```
+
+The first is a tab closed while the page was still streaming. The second is a
+signed-in non-admin opening a bookmarked console URL: `requireAdmin()` throws,
+the layout turns it into a 404, the customer gets the right response — and the
+throw reaches `onRequestError` anyway. Anybody could have filled the page by
+requesting `/admin` in a loop, which makes it a small denial-of-attention as
+well as noise.
+
+`lib/monitoring/expected.ts` is now the answer to "is this a fault", and the
+whole module is a list plus one function. Three things about it are decisions
+rather than mechanism:
+
+- **The rule is the response, not the exception.** An error belongs on the
+  ignore list only when what the customer received was correct. A refusal from
+  an access check qualifies. `InsufficientCreditsError` reaching the hook does
+  not — the refusal was right, but the 500 the customer saw means an action
+  failed to catch it, and that is a fault.
+- **The check runs first**, before the hash and before the database, so the
+  loop case costs one set lookup instead of one write per request.
+- **Matched by name, held to the classes by a test.** The module is reachable
+  from the edge-compiled instrumentation hook, so it cannot import the error
+  classes — a node-only import in that layer silently switches monitoring off,
+  which is why the hash in `report.ts` is written out by hand. The test
+  constructs all six classes and asserts both directions: every one is ignored,
+  and no name in the list is one nothing throws any more.
+
+Rather than dropping an ignored error silently, `reportError` returns
+`notAFault: 'EXPECTED_REFUSAL' | 'ABANDONED_REQUEST'`. No caller reads it
+today; it is there so that "nothing was written" and "why nothing was written"
+are not the same answer.
+
+**What this costs.** A role bug that wrongly refuses a legitimate administrator
+now produces no error report. Accepted — the alternative is a page nobody
+reads, and that bug is loud in the other direction, because the person locked
+out says so within the minute. The list stays narrow for the same reason.
+
+The abandoned-request match is on the message text, which is fragile, and
+deliberately so: the name is plain `Error`, there is nothing else to key on,
+and if React changes the wording the noise comes back and somebody notices. A
+loose match would swallow real faults instead — `Connection closed. The
+connection pool was exhausted.` from Prisma is still recorded, and there is a
+test that says so.
+
+Verified against the real server and the real database: three requests to
+`/admin/support` and one to `/admin` as a non-admin all return 404, and the
+existing `AdminAccessRequiredError` row stayed at one occurrence rather than
+counting to five. Then straight at the reporter: the refusal and a dropped
+connection both come back `recorded: false` with a reason, a `TypeError`
+through the same call writes its row.
+
+930 tests pass; build and lint clean.
