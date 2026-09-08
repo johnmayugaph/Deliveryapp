@@ -4505,3 +4505,90 @@ survives it.
 **A browser** on that data, which is where the "the rest" wording was caught.
 
 1971 tests pass; lint, typecheck, tests and build all exit zero.
+
+---
+
+## Phase 50 — The payouts screen shows what it had been recording
+
+The screen already existed: a balance, Earned and Paid-to-you, sixty statement
+lines, the commission rate, and the sentence that nothing in the app moves
+money. What it did not do was show two things it had been recording since
+settlement was built.
+
+**`metadata`.** `accrueOrderSettlement` writes the subtotal, the commission
+rate and the commission taken on every store earnings line, and the fee and the
+tip on every rider one. **Nothing read it.** A shop that sold ₱500 of food saw
+`+₱425.00` and had to do the arithmetic to check its own deduction, on the one
+screen whose whole purpose is to be checkable.
+
+**`reference`.** The schema requires one on a payout, a remittance and an
+adjustment, and says why: *"a claim with no reference is one nobody can check
+later."* It was rendered on three admin screens and on neither partner
+statement — so the person who most needs to match a payout against their
+account was the only one who could not see its reference. It now shows, and
+when a payout has none, the line says so and tells the partner to ask, rather
+than leaving them unable to reconcile and unaware that is why.
+
+### Two mistakes of my own, one caught by a grep and one by a screenshot
+
+The first version of the module carried its own
+`Readonly<Record<SettlementEntryType, boolean>>` for which types need a
+reference. `referenceIsRequired` already existed in `settlement/policy.ts` and
+is what the ledger's WRITER uses to refuse an entry without one — so that map
+was a second copy of one decision, exactly the drift consolidated away one
+phase earlier for the absorbed-cost sum. Two copies is a screen that can demand
+a reference the writer no longer requires, or stay silent about one it does. It
+asks the writer's own predicate now, and the test checks agreement across the
+whole enum rather than restating the list — verified by changing the writer's
+rule and watching the test fail.
+
+The second was visible only on the rendered page: seventy statement rows each
+carrying an identical **"Rate 15.00%"**, under a footer already saying the shop
+pays 15% of the food. Pure noise, seventy times over. But deleting it would
+have lost the one case that matters — the rate is snapshotted per entry, so a
+line from before a rate change carries the old one, and that is precisely when
+the footer's current figure misleads. It appears only when the line disagrees
+with the footer, labelled *"Rate then"*. Both states were then checked in a
+browser: silent at 15%, and reading "Rate then 15.00%" against a 20% footer
+after the rate was changed underneath it.
+
+### What it still does not answer, and why not
+
+"When will I be paid?" Nothing in the app knows a payout schedule, because
+there isn't one to know — every payout is a person recording that they moved
+money. Inventing a date would be worse than silence. What the ledger can
+answer honestly is **when they were last paid, for how much, and against what
+reference**, and that is now a line under the statement.
+
+It comes from its own query rather than a scan of the sixty lines already
+loaded. Deriving it from the visible window would have told exactly the shops
+with the most orders that they had never been paid — proven in the live check
+by adding seventy more orders until the payout fell off the window and watching
+`lastPayout` still find it.
+
+Both changes reach the rider's earnings screen too, because the panel is shared
+and a rider needs a payout reference for the same reason a shop does.
+
+### Verified in four places
+
+**Twenty-eight new unit tests** (1999 total), most of them defensive:
+`metadata` is `Json?` written by application code and rendered on a screen
+about somebody's money, so a string where centavos belong, a float, a negative,
+`NaN`, `Infinity`, a number beyond a safe integer, an array and a bare string
+all produce no line rather than a figure — because a wrong number on a payout
+screen is worse than none, a shop would reconcile against it. A malformed
+sibling field does not cost the subtotal its line.
+
+**Nine mutations, all killed**, including believing a string as centavos, going
+quiet about a payout with no reference, breaking down a payout line as though
+it were earnings, showing a zero commission on every row, deriving the last
+payout from the capped statement, and the writer's own rule changed underneath
+the screen.
+
+**Eleven live-database checks**, with the commission reconciling against the
+entry amount, the writer refusing a payout with no reference, and the
+seventy-order window test above.
+
+**A browser**, in both rate states.
+
+1999 tests pass; lint, typecheck, tests and build all exit zero.

@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import { SettlementParty, StoreRole } from '@prisma/client';
 import { requireStoreAccess } from '@/lib/merchant/access';
-import { positionOf, statementFor } from '@/lib/settlement/ledger';
+import { lastPayout, positionOf, statementFor } from '@/lib/settlement/ledger';
 import { storeReferralSummary } from '@/lib/referrals/store-summary';
 import { PositionPanel } from '@/components/settlement/PositionPanel';
 import { StoreReferralPanel } from '@/components/settlement/StoreReferralPanel';
@@ -45,10 +45,11 @@ export default async function MerchantPayoutsPage({
   }
 
   const ref = { party: 'STORE' as const, storeId: access.store.id };
-  const [position, entries, referrals] = await Promise.all([
+  const [position, entries, referrals, latestPayout] = await Promise.all([
     positionOf(ref),
     statementFor(ref, 60),
     storeReferralSummary(access.store.id),
+    lastPayout(ref),
   ]);
 
   return (
@@ -57,6 +58,8 @@ export default async function MerchantPayoutsPage({
         party={SettlementParty.STORE}
         position={position}
         entries={entries}
+        lastPayout={latestPayout}
+        currentCommissionBasisPoints={access.store.commissionBasisPoints}
       />
 
       {access.store.commissionBasisPoints > 0 ? (

@@ -191,6 +191,26 @@ export async function positionOf(
   return positionFrom(entries);
 }
 
+/**
+ * The most recent payout to a partner, whenever it happened.
+ *
+ * A dedicated query rather than a scan of the statement the screen already
+ * has: the statement is capped at sixty lines, and a busy shop's last payout
+ * is easily older than its last sixty orders. Deriving it from the visible
+ * window would have told exactly the shops with the most orders that they had
+ * never been paid.
+ */
+export async function lastPayout(
+  ref: PartyRef,
+  client?: PrismaTransactionClient,
+): Promise<SettlementEntry | null> {
+  const db = client ?? prisma;
+  return db.settlementEntry.findFirst({
+    where: { ...whereFor(ref), type: SettlementEntryType.PAYOUT_SENT },
+    orderBy: { createdAt: 'desc' },
+  });
+}
+
 /** A partner's statement, newest first. */
 export async function statementFor(
   ref: PartyRef,

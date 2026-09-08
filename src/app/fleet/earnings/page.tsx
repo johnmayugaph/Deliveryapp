@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import { SettlementParty } from '@prisma/client';
 import { getFleetPartner } from '@/lib/fleet/partner';
-import { positionOf, statementFor } from '@/lib/settlement/ledger';
+import { lastPayout, positionOf, statementFor } from '@/lib/settlement/ledger';
 import { PositionPanel } from '@/components/settlement/PositionPanel';
 
 export const dynamic = 'force-dynamic';
@@ -22,9 +22,10 @@ export default async function FleetEarningsPage() {
   }
 
   const ref = { party: 'FLEET_PARTNER' as const, fleetPartnerId: partner.id };
-  const [position, entries] = await Promise.all([
+  const [position, entries, latestPayout] = await Promise.all([
     positionOf(ref),
     statementFor(ref, 60),
+    lastPayout(ref),
   ]);
 
   return (
@@ -33,6 +34,7 @@ export default async function FleetEarningsPage() {
         party={SettlementParty.FLEET_PARTNER}
         position={position}
         entries={entries}
+        lastPayout={latestPayout}
       />
     </main>
   );
