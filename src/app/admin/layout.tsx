@@ -78,6 +78,9 @@ export default async function AdminLayout({
             <Link href="/admin/promo" className="hover:text-brand-700">
               Promo
             </Link>
+            <Link href="/admin/gift-cards" className="hover:text-brand-700">
+              Gift cards
+            </Link>
             <Link href="/admin/support" className="hover:text-brand-700">
               Support
             </Link>

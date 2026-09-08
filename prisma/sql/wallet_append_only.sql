@@ -59,13 +59,18 @@ CREATE TRIGGER wallet_transaction_no_delete
 -- 2. Signs are forced by type.
 --    Credits are positive, ORDER_PAYMENT is negative, ADJUSTMENT may be either,
 --    and nothing may be zero.
+--
+--    GIFT_CARD sits with the credit types: a card is something WE issued, so
+--    redeeming one can only ever increase a balance. The list is spelled out
+--    rather than written as "everything except the debits" so that adding a
+--    type without deciding its sign is a migration that fails.
 -- -----------------------------------------------------------------------------
 ALTER TABLE "WalletTransaction"
   DROP CONSTRAINT IF EXISTS wallet_transaction_sign_matches_type;
 
 ALTER TABLE "WalletTransaction"
   ADD CONSTRAINT wallet_transaction_sign_matches_type CHECK (
-    ("type" IN ('PROMO_CREDIT', 'REFUND', 'REFERRAL_BONUS') AND "amountCentavos" > 0)
+    ("type" IN ('PROMO_CREDIT', 'REFUND', 'REFERRAL_BONUS', 'GIFT_CARD') AND "amountCentavos" > 0)
     OR ("type" = 'ORDER_PAYMENT' AND "amountCentavos" < 0)
     OR ("type" = 'ADJUSTMENT' AND "amountCentavos" <> 0)
   );

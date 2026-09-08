@@ -199,6 +199,7 @@ enum WalletTransactionType {
   PROMO_CREDIT // granted by us (campaign, goodwill, credit-back benefit)
   REFUND // returned to the customer for a failed or cancelled order
   REFERRAL_BONUS // granted by us for a successful referral
+  GIFT_CARD // granted by us, redeemed by whoever held the code
   ORDER_PAYMENT // spent on an order inside the app — the only debit customers cause
   ADJUSTMENT // signed correction, requires an admin actor and a reason
 }
@@ -481,6 +482,9 @@ model User {
   loyaltyAdjustments      LoyaltyEntry[]                    @relation("LoyaltyAdjustmentActor")
   promoRedemptions        PromoRedemption[]
   promoCodesCreated       PromoCode[]                       @relation("PromoCodeCreator")
+  giftCardsIssued         GiftCard[]                        @relation("GiftCardIssuer")
+  giftCardsRedeemed       GiftCard[]                        @relation("GiftCardRedeemer")
+  giftCardsVoided         GiftCard[]                        @relation("GiftCardVoider")
 
   @@index([roles], type: Gin)
   @@index([preferredCityId])
@@ -2390,6 +2394,15 @@ enum AdminAction {
   /// "was TARA50 live on Friday" is the question a complaint turns on, and it
   /// should be answerable without reading a diff.
   PROMO_CODE_ACTIVATION_CHANGED
+  /// A gift card was issued. Audited because it is the only instrument here
+  /// that puts spendable money into the hands of whoever holds a piece of
+  /// paper — the row records the amount and the reason, and it is the only
+  /// place the decision survives, since the card itself keeps no plaintext.
+  GIFT_CARD_ISSUED
+  /// A gift card was cancelled before anybody redeemed it. Separate from
+  /// issuing because "was that card still good on Tuesday" is the question a
+  /// customer standing at a counter is asking.
+  GIFT_CARD_VOIDED
 }
 
 /// One privileged action, and why.
@@ -2996,6 +3009,103 @@ model LoyaltyTier {
 /// the case. A store-funded promo, where a shop subsidises its own campaign
 /// out of its settlement, would be a change to the split rather than a column
 /// here, so there is deliberately no `fundedByStore` flag sitting unwired.
+/// A gift card TARA issues, redeemable once by whoever holds the code.
+///
+/// ### What this is NOT
+///
+/// It is not a card a customer BUYS. That would be a top-up (their cash
+/// becoming a balance) and a transfer (the balance ending up with somebody
+/// else), and both are named in the "do not add these" block at the foot of
+/// src/lib/wallet/ledger.ts — the whole reason this app has credits rather
+/// than a wallet. Selling stored value is a different product with a
+/// different licence.
+///
+/// What it IS: an instrument for US to give credits away without needing to
+/// know whose account they are going to. Support goodwill for somebody who
+/// has not signed in yet, a printed card for a launch event, a partner
+/// giveaway. It resolves to a `GIFT_CARD` row in the credits ledger, which
+/// already cannot be transferred or cashed out.
+///
+/// ### The one thing that makes it different from a promo code
+///
+/// A promo code is public by design and its defence is the caps. A gift card
+/// is a BEARER INSTRUMENT: the string itself is worth money, so the defence
+/// is that it cannot be guessed and cannot be read back out of the database.
+model GiftCard {
+  id String @id @default(cuid())
+
+  /// The bearer code, HASHED — the plaintext is returned once, to the
+  /// administrator who issued it, and never stored or shown again.
+  ///
+  /// Plain SHA-256 rather than the OTP's keyed HMAC, for two reasons. The code
+  /// is ~78 bits of CSPRNG output, so there is no dictionary to attack and
+  /// nothing for a key to protect against. And an HMAC would tie every
+  /// outstanding card to `AUTH_SECRET`: rotating that secret is a routine
+  /// security action, and it would silently void every gift card in
+  /// circulation — destroying money owed to people holding paper. Same
+  /// reasoning as `hashSessionToken`.
+  codeHash String @unique
+
+  /// A non-secret handle, so the console can list, discuss and void a card
+  /// without holding anything worth stealing. Generated independently of the
+  /// code rather than being a prefix of it, so it leaks no entropy at all.
+  reference String @unique
+
+  /// Face value. What redeeming it puts in somebody's credits.
+  amountCentavos Int
+
+  /// Who issued it. A gift card is us giving money away, so it is
+  /// attributable — and the reason is on the row, not only in the audit log,
+  /// because the console lists cards and not audit events.
+  issuedById   String?
+  issuedBy     User?   @relation("GiftCardIssuer", fields: [issuedById], references: [id], onDelete: SetNull)
+  issuedReason String
+
+  /// Free text for whoever comes back to this later: which event, which
+  /// ticket, which partner.
+  note String?
+
+  /// NULL means it never expires, and that is the default.
+  ///
+  /// Deliberate: RA 10962 (the Gift Check Act) says gift checks sold in the
+  /// Philippines may not expire, and while a card we give away for nothing is
+  /// arguably not a gift check that was sold, the safe direction is obvious.
+  /// An expiry we should not have enforced is a consumer-protection problem;
+  /// no expiry is a balance-sheet figure the console already shows.
+  expiresAt DateTime?
+
+  /// Set together, or not at all — see `gift_card_redemption_is_complete`.
+  redeemedAt   DateTime?
+  redeemedById String?
+  redeemedBy   User?     @relation("GiftCardRedeemer", fields: [redeemedById], references: [id], onDelete: SetNull)
+
+  /// The credits row this became. A plain id and NOT a foreign key, on
+  /// purpose: purging an account cascades its ledger away, and a FK would
+  /// either block the purge or null this column out — which would make a
+  /// redeemed card look unredeemed and hand somebody a second one. The fact
+  /// that it was redeemed, and which row recorded it, is history rather than
+  /// a live pointer.
+  walletTransactionId String? @unique
+
+  /// A card can be cancelled before it is redeemed — printed wrong, lost,
+  /// issued by mistake. Never after: the credits are already spendable, and a
+  /// correction to a balance is an ADJUSTMENT.
+  voidedAt   DateTime?
+  voidedById String?
+  voidedBy   User?     @relation("GiftCardVoider", fields: [voidedById], references: [id], onDelete: SetNull)
+  voidReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// Status is DERIVED from the three timestamps and the clock, never stored.
+  /// A `status` column beside them would be a second truth, and the first time
+  /// it drifted a redeemed card would read as issued.
+  @@index([redeemedAt])
+  @@index([expiresAt])
+  @@index([issuedById, createdAt])
+}
+
 model PromoCode {
   id String @id @default(cuid())
 

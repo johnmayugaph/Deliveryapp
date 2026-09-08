@@ -11,6 +11,10 @@ export const CREDIT_TYPES: readonly WalletTransactionType[] = [
   WalletTransactionType.PROMO_CREDIT,
   WalletTransactionType.REFUND,
   WalletTransactionType.REFERRAL_BONUS,
+  // Issued by us and redeemed by whoever held the code. Still a grant, so
+  // still positive-only — see the note in `ledger.ts` on why a gift card is
+  // not a top-up.
+  WalletTransactionType.GIFT_CARD,
 ];
 
 /** Types that may only ever decrease a balance. */

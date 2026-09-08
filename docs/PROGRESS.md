@@ -3274,3 +3274,197 @@ failing for a reason that had nothing to do with either. It now checks each
 action's own body.
 
 1631 tests pass; typecheck, lint and build clean.
+
+## Phase 40 — Gift cards
+
+### The half of "gift cards" that this app can have, and the half it cannot
+
+The request runs straight into the credits constraints, so it is worth
+separating two different products that share a name.
+
+**A card a customer buys** is a top-up and a transfer in one feature: their
+cash becomes a balance, and then that balance ends up with somebody else. Both
+are named in the `DELIBERATELY ABSENT — do not add these` block at the foot of
+`wallet/ledger.ts`, with a test asserting the functions do not exist, and they
+are the whole reason this product says *credits* rather than *wallet*. Selling
+stored value is also the version that needs a licence rather than a schema.
+There is no payment rail for it either — the only prepaid path is a manual
+transfer somebody confirms by hand — so "customers buy gift cards" would be a
+human process with a database behind it.
+
+**A card TARA issues** is a grant with a bearer token. We decide the money and
+record the liability; whoever holds the string collects credits that still
+cannot be topped up, transferred or cashed out. That is what got built, and it
+is the useful half: support goodwill for somebody who has not signed in yet, a
+printed card for a launch event, a partner giveaway. Until now the only way to
+give credits to a person was `recordAdjustment`, which needs their account.
+
+`sellGiftCard()` is now named in that same do-not-add block, because "let
+customers buy gift cards" is the shape the request actually arrives in.
+
+### A bearer instrument inverts every promo-code defence
+
+A promo code is **public**: it goes on a tarpaulin, its defence is the caps,
+and secrecy is pointless because a code people say aloud is guessable by
+construction. A gift card is the opposite on every axis:
+
+| | Promo code | Gift card |
+| --- | --- | --- |
+| Defence | Caps on how much it can cost | Entropy, and a hash at rest |
+| Code | Chosen by marketing, memorable | 16 chars of CSPRNG, ~78 bits |
+| Stored | In plaintext — it is public | SHA-256 only; shown once, ever |
+| Refusals | All answered identically | Each says which |
+
+That last row is the interesting one. The promo field answers "unknown",
+"expired" and "exhausted" the same way because distinguishing them turns it
+into an **oracle** for finding real codes. Here there is no oracle to protect —
+you cannot find a 78-bit code by guessing — and the person typing it is holding
+a physical card. They need to know whether somebody at home already used it,
+whether it lapsed, or whether they misread a letter. So each refusal is
+specific, and the reasoning for the difference is written next to both.
+
+### Why SHA-256 and not the OTP's keyed HMAC
+
+The OTP is six digits — a million possibilities — so an unkeyed hash in a
+leaked database is a rainbow table away from plaintext, and the key is what
+stands between them. A gift card has no dictionary to attack.
+
+More importantly, an HMAC would make `AUTH_SECRET` load-bearing for money.
+Rotating that secret is a routine security action, and it would silently void
+every card in circulation: a drawer of printed cards that stop working, and
+money owed to people who cannot prove it. Same reasoning as
+`hashSessionToken`, which is the same shape of value.
+
+### Three things that make double redemption impossible
+
+1. **A compare-and-set**, not a read-then-write: `UPDATE … WHERE "redeemedAt"
+   IS NULL`, with the affected row count checked. Atomic at any isolation
+   level, so it holds even for a future caller who forgets to use a
+   transaction.
+2. **The idempotency key** `gift-card:<id>` on the grant, which is unique in
+   the database — an independent second barrier, so two transactions that
+   somehow both got past the compare-and-set collide there instead.
+3. **The database refusing to rewrite an outcome.** Once `redeemedAt` is set,
+   a trigger refuses any change to it or to its ledger reference. So does
+   `voidedAt`, because un-voiding a card would put a cancelled instrument back
+   into circulation. `codeHash` and `amountCentavos` are immutable outright: a
+   card whose value can be edited after printing is not a gift card, it is a
+   suggestion.
+
+The ledger row is written *first*, inside the same transaction, because
+`gift_card_redemption_is_complete` requires `redeemedAt` and
+`walletTransactionId` to be set together and a Postgres CHECK cannot be
+deferred. If the compare-and-set then loses, the credits roll back with it.
+Six people redeeming one code at once produce one credit and five
+"already added to an account".
+
+### The defect the live-database run caught
+
+`normaliseGiftCode` first stripped **every character outside the alphabet**,
+which sounds like a superset of stripping formatting and is a different,
+dangerous function — because English prose is made of alphabet characters:
+
+```
+"Code: PB7A-ENJ3-37R2-E9MZ"           ->  CDEPB7AENJ337R2E
+"Your gift card: PB7A-ENJ3-37R2-E9MZ" ->  YURGFTCARDPB7AEN
+```
+
+Both are well-formed sixteen-character codes that are **not the code the
+person is holding** — and with enough cards issued, one of them eventually is
+somebody else's. That is the referral bug in a new dress: its first version
+folded confusable characters onto each other, so a typo could resolve to a
+different real code and attribute somebody to a stranger. Here it would redeem
+a stranger's money.
+
+It now strips only formatting — the hyphens we printed, the spaces they typed
+instead, a trailing newline, an em dash a word processor autocorrected — and
+refuses anything else. It also no longer truncates to sixteen characters,
+because cutting a longer string down is the same guess by another route.
+"That does not look like a code" feels worse than finding sixteen letters in a
+sentence and is far better.
+
+### Two smaller decisions worth recording
+
+**No rate limiter, stated rather than hidden.** The defence against guessing is
+the ~78 bits, not a throttle: at a million attempts a second, expecting one hit
+takes longer than the age of the universe. A malformed code is refused with no
+database work at all, and a well-formed wrong one costs a single index seek on
+a unique hash. A bespoke throttle table here would protect the server from load
+rather than the cards from theft, and would buy a false sense of security. When
+this app gets general rate limiting, this endpoint should use it.
+
+**No refusal for a frozen balance.** The first draft of the refusal union had
+one, and it would have been a branch that can never be taken — the ledger
+blocks freezes against debits only, on the stated grounds that a refund into a
+frozen balance must still land. It is also the right behaviour: if a card could
+be refused, an account-takeover victim's cardholder would burn an attempt for
+nothing, whereas a card that lands in a held balance is recovered along with
+the account. A check that cannot fail was removed rather than shipped.
+
+### The number the console makes impossible to miss
+
+**Outstanding**: the face value of every card printed and not yet redeemed.
+Every other way this app gives credits away needs the recipient to do something
+first — a promo code needs an order at checkout, a referral needs a signup and
+a delivery, an adjustment needs an account to name. A gift card needs nothing
+but the string, so its face value is money sitting on paper we no longer
+control, and unlike a promo campaign there is no aggregate switch: cards are
+cancelled one at a time, and only while unredeemed.
+
+The total comes from a query rather than from the page of rows on screen, which
+is capped at 200 — a liability computed from a truncated list would quietly
+understate itself the day somebody issues the 201st card.
+
+The expiry field defaults to never and carries the law next to it: **RA 10962,
+the Gift Check Act**, says gift checks sold in the Philippines may not expire.
+A card given away for nothing is arguably not one that was sold, but that is a
+question for a lawyer and not for a form, so the default is the safe direction.
+
+### Also in this phase
+
+The serialization retry that order placement gained last phase now lives in
+`db/serializable.ts` and is used by both callers. That also means it is tested
+for **behaviour** — it retries a P2034, never retries a decision, and gives up
+after four attempts — rather than by grepping `place-order.ts` for a constant,
+which is what the promo tests were reduced to doing and which broke the moment
+the code moved.
+
+### Verified in three places
+
+**62 unit tests**: the frozen alphabet asserted character for character, both
+halves of every confusable pair excluded, the keyspace arithmetic, 200 codes
+generated without a repeat, the hash stable across six ways a human types the
+same code and independent of `AUTH_SECRET`, prose refused rather than mined,
+a longer string not truncated into a plausible code, the four states with
+REDEEMED beating a passed expiry, each refusal getting its own distinct
+sentence, and the retry helper's three behaviours. Six seams were mutated to
+confirm the checks fail — including the exact normalisation defect above.
+
+**Sixteen SQL-guard checks** against the live database, each firing for its own
+named constraint: a redemption half-written in either direction, a void with no
+reason, a zero and an over-ceiling face value, a blank reason, a code that was
+never hashed, an expiry before the issue, the face value and the code hash
+edited after printing, a redemption rewritten, a void undone, and redeemed and
+void in both orders — plus the escape hatch still allowing a lawful purge.
+
+**Twenty-five more against the live database**: every text column in the table
+scanned for the plaintext code, a code round-tripping through lowercase and
+spaces, **six concurrent redemptions producing exactly one credit**, the
+derived balance equalling the ledger sum afterwards, expiry tested at its edge
+in both directions, and the outstanding figure matching between the pure rule
+and the query the console runs.
+
+**Thirty-four in a real browser**: the console refusing an over-ceiling card,
+the code appearing once with "COPY IT NOW", the code absent from the list
+screen and from the audit log, a customer typing it in lowercase with spaces,
+the confirmation surviving the refresh that moved the balance, the history
+naming the reference rather than the code, a second attempt refused with the
+reason, the outstanding total clearing, a redeemed card offering no cancel
+button at all, and a cancelled card refusing by name.
+
+One piece of polish came out of reading the screenshots: the credits history
+rendered "Gift card / Gift card GC-5686JY", because both screens that show a
+description also show the transaction type. The description is now the bare
+reference.
+
+1699 tests pass; typecheck, lint and build clean.

@@ -309,13 +309,22 @@ export async function listWalletTransactions(
  * top-up that exists, and it is deliberately not one: the caller is a promo
  * campaign, a referral payout, or a support goodwill gesture, never a customer
  * handing over cash.
+ *
+ * `GIFT_CARD` belongs on this list and it is worth saying why, because it is
+ * the one grant a customer's own action triggers. The distinction that keeps
+ * it on the right side of constraint 1: the customer supplies a code WE
+ * issued, and the money was decided when it was issued. They are not handing
+ * over cash and receiving a balance; they are collecting a balance we already
+ * gave away and recorded as a liability. A card a customer could BUY would be
+ * a top-up, and there is no path to one — see the block at the foot of this
+ * file.
  */
 export async function grantCredit(
   input: {
     userId: string;
     type: Extract<
       WalletTransactionType,
-      'PROMO_CREDIT' | 'REFERRAL_BONUS'
+      'PROMO_CREDIT' | 'REFERRAL_BONUS' | 'GIFT_CARD'
     >;
     amountCentavos: number;
     description: string;
@@ -431,6 +440,14 @@ export async function recordAdjustment(
 //                        cash-in rail, and adding one turns this into a stored
 //                        value instrument with the regulatory weight that
 //                        implies.
+//                        This is also why gift cards here are ISSUED BY US and
+//                        cannot be bought. A customer-funded gift card is a
+//                        top-up wearing a bow: their cash becomes a balance,
+//                        and then a transfer moves it to somebody else. Both
+//                        of the first two constraints, in one feature.
+//   sellGiftCard()     — the same thing said a second way, because "let
+//                        customers buy gift cards" is the shape the request
+//                        actually arrives in.
 //   transferCredits()  — credits do not move between users. Every function
 //                        above touches exactly one wallet.
 //   withdrawCredits()  — no cash-out. Credits are spent on orders or they are

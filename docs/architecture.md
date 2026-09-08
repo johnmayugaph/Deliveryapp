@@ -864,10 +864,18 @@ another device, and a stale queue is how two people cook the same thing.
 `WalletTransaction` (append-only: `walletId`, `type`, `amountCentavos`,
 `balanceAfterCentavos`, `relatedOrderId`, `description`, `createdAt`).
 
-Transaction types: `PROMO_CREDIT`, `REFUND`, `REFERRAL_BONUS`, `ORDER_PAYMENT`,
-`ADJUSTMENT`. Note what is *absent* — there is no `TOP_UP`, no `TRANSFER_IN`/
-`TRANSFER_OUT`, no `WITHDRAWAL`. The absence is the product constraint,
-expressed in the type system.
+Transaction types: `PROMO_CREDIT`, `REFUND`, `REFERRAL_BONUS`, `GIFT_CARD`,
+`ORDER_PAYMENT`, `ADJUSTMENT`. Note what is *absent* — there is no `TOP_UP`, no
+`TRANSFER_IN`/`TRANSFER_OUT`, no `WITHDRAWAL`. The absence is the product
+constraint, expressed in the type system, and the list is exhaustive in a test
+so that adding a type means arguing for it in writing.
+
+`GIFT_CARD` is the one credit type a customer's own action triggers, and it is
+worth saying why it stays on the right side of constraint 1: they supply a code
+**we** issued, and the money was decided when it was issued. They are not
+handing over cash and receiving a balance; they are collecting a balance we
+already gave away and already recorded as a liability. A card a customer could
+*buy* would be a top-up followed by a transfer — see § Gift cards.
 
 ### Hard constraints
 
@@ -881,14 +889,14 @@ These are enforced, not merely stated:
 
 | Constraint | Enforcement |
 | --- | --- |
-| No top-up | No transaction type and no function grants credit on a customer's authority. `grantCredit()` is called by promo campaigns, referral payouts and support — never by a customer paying in. |
+| No top-up | No transaction type and no function grants credit on a customer's authority. `grantCredit()` is called by promo campaigns, referral payouts, gift card redemption and support — never by a customer paying in. |
 | No transfers | No function accepts two wallet or user identifiers. A transfer needs two parties and there is no signature for one. |
 | No cash-out | No withdrawal function exists. `refundToCredits()` returns credits *to credits*, never to cash or a card. |
 | Spend on orders only | `ORDER_PAYMENT` and `REFUND` require a `relatedOrderId` in application code **and** in a database `CHECK`. |
 
 `src/tests/wallet-ledger.test.ts` asserts the module exports nothing matching
 `topUp`, `transfer`, `withdraw`, `cashOut`, `setBalance` and friends, and that
-the enum contains exactly the five permitted types. Adding one of those is a
+the enum contains exactly the six permitted types. Adding one of those is a
 failing test, not a quiet regression. `src/lib/wallet/ledger.ts` ends with a
 comment block naming the four functions that must never be added, and why.
 
@@ -1830,6 +1838,124 @@ shared a code and watched a friend order deserves to know why nothing arrived;
 an unexplained absence is how a referral programme becomes a support queue. The
 reasons are also grouped on the console screen, because a minimum nobody clears
 or a cap everybody hits shows up there first.
+
+## Gift cards — a bearer instrument, not a top-up
+
+`GiftCard`, with the rules in `lib/gift-cards/policy.ts` (no database, no
+clock, no crypto), code generation and hashing in `codes.ts`, and the two
+halves of the lifecycle in `issue.ts` and `redeem.ts`.
+
+### What could not be built, and why
+
+"Gift cards" names two different products. **A card a customer buys** is a
+top-up and a transfer at once: their cash becomes a balance, and that balance
+ends up with somebody else. Both are named in the do-not-add block at the foot
+of `wallet/ledger.ts`, with a test asserting the functions do not exist, and
+they are the reason this product says *credits* rather than *wallet*. Selling
+stored value needs a licence rather than a schema, and there is no card-
+acquiring rail here in any case.
+
+**A card TARA issues** is a grant with a bearer token — we decide the money,
+record the liability, and whoever holds the string collects credits that still
+cannot be topped up, transferred or cashed out. That is what this is. It fills
+a real gap: before it, giving credits to a person required
+`recordAdjustment`, which needs their account, so there was no way to hand
+something to a customer who has not signed in yet.
+
+### It inverts every promo-code defence
+
+| | Promo code | Gift card |
+| --- | --- | --- |
+| What protects it | Caps on total cost | Entropy, and a hash at rest |
+| The code | Chosen by marketing | 16 chars of CSPRNG, ~78 bits |
+| Stored as | Plaintext — it is public | SHA-256 only, shown once |
+| Refusals | Deliberately identical | Each says which |
+
+The refusals differ because the *reason* for the promo field's uniformity does
+not apply. There, distinguishing "unknown" from "exhausted" turns the field
+into an oracle for finding real codes. Here there is nothing to find by
+guessing, and the person typing is holding a card: they need to know whether
+somebody at home used it, whether it lapsed, or whether they misread a letter.
+
+### SHA-256, not the OTP's keyed HMAC
+
+Two reasons, and the second is the one that matters. There is no dictionary to
+attack at 78 bits, so a key protects nothing. And an HMAC would make
+`AUTH_SECRET` load-bearing for money: rotating that secret is routine, and it
+would silently void every card in circulation — a drawer of printed cards that
+stop working, owed to people who cannot prove it. Same reasoning as
+`hashSessionToken`, which is the same shape of value.
+
+The **reference** (`GC-7K2MPQ`) is generated independently of the code, not
+derived from it, and is the only handle that appears on screens, in the audit
+log and in the customer's credits history. A reference derived from the code
+would leak part of the secret into every backup that holds one.
+
+### Redemption cannot happen twice
+
+Three independent barriers, in the order they engage:
+
+1. **A compare-and-set.** `UPDATE … WHERE "redeemedAt" IS NULL`, with the
+   affected row count checked. Atomic at any isolation level, so it holds even
+   for a caller who forgets a transaction.
+2. **A unique idempotency key** — `gift-card:<id>` on the grant. Two
+   transactions that somehow both passed the compare-and-set collide here.
+3. **The database refusing to rewrite an outcome.** A trigger freezes
+   `redeemedAt` and its ledger reference once set, freezes `voidedAt` once set
+   (un-voiding would recirculate a cancelled instrument), and makes `codeHash`
+   and `amountCentavos` immutable outright — a card whose value can be edited
+   after printing is a suggestion, not a gift card.
+
+The ledger row is written **first**, inside the same transaction, because
+`gift_card_redemption_is_complete` requires `redeemedAt` and
+`walletTransactionId` to be set together and a Postgres CHECK cannot be
+deferred. A losing compare-and-set rolls the credits back with it.
+
+### Status is derived, never stored
+
+`giftCardStatus` is a total function from three timestamps and a clock to
+ISSUED / REDEEMED / VOID / EXPIRED. The branch order is the content:
+**redeemed beats everything**, because a card redeemed in January and
+"expiring" in February is redeemed for good — the money moved, and an expiry
+cannot un-move it. A `status` column beside those timestamps would be a second
+truth, and the first time it drifted a redeemed card would read as issued and
+be handed out again.
+
+### Normalising strips formatting and refuses prose
+
+Only the formatting a human or a keyboard inserts — the hyphens we printed, the
+spaces they typed instead, a newline from a paste, an em dash a word processor
+autocorrected. Nothing else.
+
+The first version stripped every character outside the alphabet, which sounds
+stricter and is dangerous, because prose is made of alphabet characters:
+`"Your gift card: PB7A-ENJ3-37R2-E9MZ"` became `YURGFTCARDPB7AEN`, a
+well-formed code that is not the one in the customer's hand — and with enough
+cards issued, eventually somebody else's. It also no longer truncates a longer
+string down to sixteen characters, which is the same guess by another route.
+
+### What the console exists to show
+
+**Outstanding**: the face value of every card printed and unredeemed. Every
+other way this app gives credits away needs the recipient to act first; a gift
+card needs only the string, so that total is money on paper we no longer
+control — and unlike a promo campaign there is no aggregate switch, since cards
+are cancelled one at a time and only while unredeemed. The figure comes from a
+query, not from the 200-row page on screen.
+
+The expiry field defaults to **never** and names RA 10962, the Gift Check Act,
+beside itself: gift checks sold in the Philippines may not expire, and whether
+a card given away for nothing counts is a question for a lawyer rather than for
+a form.
+
+### No rate limiter, and why that is a decision rather than an omission
+
+The defence against guessing is the entropy. A malformed code is refused with
+no database work; a well-formed wrong one costs one index seek on a unique
+hash. A bespoke throttle here would protect the server from load rather than
+the cards from theft, and would buy a false sense of security — the code is
+sized so that guessing is hopeless *even with no throttle at all*. When this
+app gains general rate limiting, this endpoint should use it.
 
 ## Promo codes — bounds, not secrecy
 

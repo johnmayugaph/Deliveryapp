@@ -7,6 +7,7 @@ import {
   WALLET_CONSTRAINTS,
 } from '@/lib/wallet/ledger';
 import { formatCentavos } from '@/lib/money';
+import { RedeemGiftCard } from '@/components/credits/RedeemGiftCard';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,6 +25,7 @@ const TYPE_LABELS: Readonly<Record<WalletTransactionType, string>> = {
   [WalletTransactionType.PROMO_CREDIT]: 'Promo credit',
   [WalletTransactionType.REFUND]: 'Refund',
   [WalletTransactionType.REFERRAL_BONUS]: 'Referral bonus',
+  [WalletTransactionType.GIFT_CARD]: 'Gift card',
   [WalletTransactionType.ORDER_PAYMENT]: 'Spent on an order',
   [WalletTransactionType.ADJUSTMENT]: 'Adjustment',
 };
@@ -48,8 +50,8 @@ export default async function CreditsPage() {
           {formatCentavos(balanceCentavos)}
         </p>
         <p className="mt-2 text-xs leading-relaxed text-white/80">
-          Rewards from us — promos, referral bonuses and refunds. Spend them on any
-          order in the app.
+          Rewards from us — promos, referral bonuses, gift cards and refunds.
+          Spend them on any order in the app.
         </p>
       </header>
 
@@ -69,6 +71,13 @@ export default async function CreditsPage() {
           <li>• Spend it on orders in this app — that is all.</li>
         </ul>
       </section>
+
+      {/* Above the earning links on purpose: somebody who arrived holding a
+          card came here to type it, not to read about points. Only for a
+          signed-in account — there is nowhere to put the credits otherwise,
+          and the action would bounce them to the login screen having lost
+          what they typed. */}
+      {user ? <RedeemGiftCard /> : null}
 
       {/* Where credits come from, on the screen where somebody is looking at
           how few they have. The two earning paths a customer controls. */}

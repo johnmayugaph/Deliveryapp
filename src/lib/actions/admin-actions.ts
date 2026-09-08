@@ -35,6 +35,13 @@ import {
   giveawayFor,
   normalisePromoCode,
 } from '@/lib/promo/policy';
+import { MAX_GIFT_CARD_CENTAVOS } from '@/lib/gift-cards/policy';
+import {
+  GiftCardAmountError,
+  GiftCardNotVoidableError,
+  issueGiftCard,
+  voidGiftCard,
+} from '@/lib/gift-cards/issue';
 import { PROGRAMME_ID } from '@/lib/referrals/programme';
 import {
   MAX_POINTS_PER_PESO_BASIS_POINTS,
@@ -148,6 +155,15 @@ async function guarded(
     if (
       error instanceof PaymentAlreadySettledError ||
       error instanceof PaymentNotExpectedError
+    ) {
+      return { ok: false, message: error.message };
+    }
+    // "That card has already been redeemed, so correct the balance instead" is
+    // a sentence, not a fault. Two administrators looking at the same list is
+    // normal, and so is somebody redeeming a card while one of them cancels it.
+    if (
+      error instanceof GiftCardNotVoidableError ||
+      error instanceof GiftCardAmountError
     ) {
       return { ok: false, message: error.message };
     }
@@ -2678,6 +2694,164 @@ export async function setPromoCodeActiveAction(
         ? `${code.code} works again, within its dates and caps.`
         : `${code.code} is off. Anybody typing it now is told it is not available — ` +
           'orders already placed with it keep their discount.',
+    };
+  });
+}
+
+
+// =============================================================================
+// Gift cards
+// =============================================================================
+//
+// A gift card is the only control in this console that hands SPENDABLE money
+// to a bearer. Everything else grants credits to an account somebody has
+// already signed into: a promo code needs an order at checkout, a referral
+// needs a signup and a delivery, an adjustment needs to name whose balance it
+// is correcting. A gift card needs nothing but the string.
+//
+// Two consequences run through both actions below.
+//
+// The plaintext code exists exactly ONCE, in the success message of
+// `issueGiftCardAction`. It is never stored, never logged, and cannot be
+// recovered — the row holds a SHA-256 of it. That is deliberate and it is the
+// reason a leaked backup is not a pile of cash, but it does mean an
+// administrator who closes the tab has lost the card and has to issue another
+// and cancel the first.
+//
+// And cards are cancelled, never deleted, and only while unredeemed. After
+// redemption the money is in somebody's balance and the correction is a signed
+// ADJUSTMENT against that account.
+
+export async function issueGiftCardAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const reason = normaliseReason(formData.get('reason'));
+
+    const amountCentavos = centavosFromPesoInput(String(formData.get('amountPesos') ?? ''));
+    if (amountCentavos === null) {
+      return { ok: false, message: 'Write the amount in pesos, like 250 or 99.50.' };
+    }
+    if (amountCentavos <= 0) {
+      return { ok: false, message: 'A gift card has to be worth something.' };
+    }
+    if (amountCentavos > MAX_GIFT_CARD_CENTAVOS) {
+      return {
+        ok: false,
+        message:
+          `The most one card may be worth is ${formatCentavos(MAX_GIFT_CARD_CENTAVOS)}. ` +
+          'A single card worth more than that is usually a decimal point in the ' +
+          'wrong place, and the recovery is finding whoever holds the paper. ' +
+          'Issue several, or adjust an account you can name.',
+      };
+    }
+
+    const note = String(formData.get('note') ?? '').trim();
+    const expiryRaw = String(formData.get('expiresAt') ?? '').trim();
+    let expiresAt: Date | null = null;
+    if (expiryRaw.length > 0) {
+      const parsed = new Date(expiryRaw);
+      if (Number.isNaN(parsed.getTime())) {
+        return { ok: false, message: 'That expiry date could not be read.' };
+      }
+      if (parsed.getTime() <= Date.now()) {
+        return {
+          ok: false,
+          message: 'An expiry in the past would make the card dead on arrival.',
+        };
+      }
+      expiresAt = parsed;
+    }
+
+    const { card, code } = await prisma.$transaction(async (tx) => {
+      const issued = await issueGiftCard(
+        {
+          amountCentavos,
+          issuedById: admin.id,
+          issuedReason: reason,
+          note: note || undefined,
+          expiresAt,
+        },
+        tx,
+      );
+      await recordAdminAction(
+        {
+          actorId: admin.id,
+          action: AdminAction.GIFT_CARD_ISSUED,
+          subjectType: 'GiftCard',
+          subjectId: issued.card.id,
+          // The REFERENCE, never the code. This row is permanent and readable
+          // by every administrator; putting the code in it would hand the card
+          // to anybody with console access, forever.
+          subjectLabel: `${issued.card.reference} · ${formatCentavos(amountCentavos)}`,
+          reason,
+          detail: {
+            reference: issued.card.reference,
+            amountCentavos,
+            expiresAt: expiresAt?.toISOString() ?? null,
+            note: note || null,
+          },
+        },
+        tx,
+      );
+      return issued;
+    });
+
+    revalidatePath('/admin/gift-cards');
+
+    return {
+      ok: true,
+      message:
+        `${card.reference} — ${formatCentavos(amountCentavos)}. ` +
+        `The code is ${code}. ` +
+        'COPY IT NOW: it is stored only as a hash, so this is the one and only ' +
+        'time it can be shown. If you lose it, cancel this card and issue another.',
+    };
+  });
+}
+
+export async function voidGiftCardAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const reason = normaliseReason(formData.get('reason'));
+    const cardId = String(formData.get('cardId') ?? '');
+
+    const card = await prisma.$transaction(async (tx) => {
+      // Refuses a redeemed or already-cancelled card by name, and
+      // compare-and-sets so a redemption landing at this instant wins rather
+      // than being cancelled out from under the person holding the card.
+      const voided = await voidGiftCard(
+        { cardId, voidedById: admin.id, reason },
+        tx,
+      );
+      await recordAdminAction(
+        {
+          actorId: admin.id,
+          action: AdminAction.GIFT_CARD_VOIDED,
+          subjectType: 'GiftCard',
+          subjectId: voided.id,
+          subjectLabel: `${voided.reference} cancelled`,
+          reason,
+          detail: {
+            reference: voided.reference,
+            amountCentavos: voided.amountCentavos,
+          },
+        },
+        tx,
+      );
+      return voided;
+    });
+
+    revalidatePath('/admin/gift-cards');
+
+    return {
+      ok: true,
+      message:
+        `${card.reference} is cancelled. Anybody typing it now is told so, and ` +
+        `the ${formatCentavos(card.amountCentavos)} is off the outstanding total.`,
     };
   });
 }

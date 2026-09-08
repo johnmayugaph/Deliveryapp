@@ -50,9 +50,41 @@ describe('the four hard constraints', () => {
     for (const forbidden of ['TOP_UP', 'TOPUP', 'TRANSFER_IN', 'TRANSFER_OUT', 'WITHDRAWAL', 'CASH_OUT']) {
       expect(types, `${forbidden} must not exist`).not.toContain(forbidden);
     }
+    // An EXHAUSTIVE list, on purpose. The names above are the obvious
+    // smuggling routes; this line catches the unobvious ones by making any new
+    // type a failing test, so somebody has to come here and argue for it.
+    //
+    // GIFT_CARD was argued for and added: a card is issued by US, credits one
+    // wallet, and cannot be bought — so it is a grant with a bearer token, not
+    // a customer putting cash in. The two tests below are what hold that line.
     expect(types.sort()).toEqual(
-      ['ADJUSTMENT', 'ORDER_PAYMENT', 'PROMO_CREDIT', 'REFERRAL_BONUS', 'REFUND'].sort(),
+      [
+        'ADJUSTMENT',
+        'GIFT_CARD',
+        'ORDER_PAYMENT',
+        'PROMO_CREDIT',
+        'REFERRAL_BONUS',
+        'REFUND',
+      ].sort(),
     );
+  });
+
+  it('treats a gift card as a grant, so it can only ever increase a balance', () => {
+    // If GIFT_CARD were ever signed, or debit-capable, a bearer code would
+    // become a way to take money OUT of somebody's balance.
+    expect(CREDIT_TYPES).toContain(WalletTransactionType.GIFT_CARD);
+    expect(DEBIT_TYPES).not.toContain(WalletTransactionType.GIFT_CARD);
+    expect(signedAmountFor(WalletTransactionType.GIFT_CARD, 20_000)).toBe(20_000);
+    expect(() => signedAmountFor(WalletTransactionType.GIFT_CARD, -20_000)).toThrow(
+      InvalidLedgerEntryError,
+    );
+  });
+
+  it('keeps gift cards out of the order-linked types', () => {
+    // A gift card is not spent on an order and does not come back from one, so
+    // demanding a relatedOrderId would make it unrecordable — and adding it to
+    // this list is how somebody would try to fix the resulting error.
+    expect(ORDER_LINKED_TYPES).not.toContain(WalletTransactionType.GIFT_CARD);
   });
 
   it('declares the constraints so callers and docs cannot drift from the code', () => {

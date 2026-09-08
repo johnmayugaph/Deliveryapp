@@ -19,6 +19,7 @@ import { commitBenefitUsage, quoteOrderPrice, type PriceQuote } from '@/lib/pric
 import { quoteDeliveryFee, type DeliveryQuote } from '@/lib/pricing/delivery-fee';
 import { currentSurge } from '@/lib/pricing/surge';
 import { PromoNoLongerValidError, consumePromoCode } from '@/lib/promo/consume';
+import { withSerializationRetry } from '@/lib/db/serializable';
 import { resolvePromoForOrder, type ResolvedPromo } from '@/lib/promo/resolve';
 import type { PromoOrderFacts } from '@/lib/promo/policy';
 import type { SurgeCharge } from '@/lib/pricing/surge-policy';
@@ -404,69 +405,24 @@ export async function placeOrder(input: CheckoutInput): Promise<{
   order: Order;
   quote: CheckoutQuote;
 }> {
-  let lastConflict: unknown;
-
-  for (let attempt = 1; attempt <= MAX_PLACEMENT_ATTEMPTS; attempt += 1) {
-    try {
-      return await attemptPlacement(input);
-    } catch (error) {
-      // Only a serialization conflict is retried. Every domain refusal —
-      // a code that ran out, surge that moved, credits that fall short — is a
-      // DECISION, and retrying a decision just makes the same one slower.
-      if (!isSerializationConflict(error)) throw error;
-      lastConflict = error;
-      if (attempt < MAX_PLACEMENT_ATTEMPTS) await pauseBeforeRetry(attempt);
-    }
-  }
-
-  // Past four attempts this is not ordinary contention, and the caller's
-  // generic "try again in a moment" is the right thing for the customer. It is
-  // deliberately NOT wrapped in a named domain error: a persistent conflict
-  // should reach error monitoring rather than be filed as an expected refusal.
-  throw lastConflict;
+  // One attempt is the WHOLE of placement, quote included, so a retry prices
+  // the order against fresh state rather than replaying a stale quote. That
+  // matters here specifically: a retry re-resolves the promo code against a
+  // redemption count that has moved, and the accepted-discount floor below is
+  // what stops the customer being charged more than they were shown.
+  return withSerializationRetry(() => attemptPlacement(input));
 }
 
 /**
- * How many times a placement may be retried after a serialization conflict.
+ * One attempt. Everything it writes is inside one serializable transaction.
  *
- * Placement is `Serializable`, and until promo codes it only ever contended
- * per CUSTOMER — their own credits ledger. A promo code changes that: the
- * redemption cap is counted across everybody, so every checkout using the same
- * popular code now conflicts with every other one. Four concurrent placements
- * against one code produced three `P2034` failures and one order, which the
- * customer reads as "that did not go through" while the campaign was nowhere
- * near its cap.
- *
- * That contention is not a mistake to be optimised away — it is what makes the
- * cap hold to the centavo, and a design that counted outside the transaction
- * would go over budget silently instead. So the fix is to absorb it: retry the
- * whole placement, which re-quotes and re-resolves against fresh counts.
- *
- * Found by running four placements at once against a real database. No unit
- * test can see it, and a single-threaded browser click never will.
+ * Placement contends per CUSTOMER on their own credits ledger, and — since
+ * promo codes — across EVERYBODY on a shared redemption count. Four
+ * concurrent placements against one code produced three `P2034` failures and
+ * one order before the retry above existed. The contention is not a mistake to
+ * optimise away: it is what makes a campaign's cap exact, and counting outside
+ * the transaction would go over budget silently instead.
  */
-const MAX_PLACEMENT_ATTEMPTS = 4;
-
-function isSerializationConflict(error: unknown): boolean {
-  // P2034 is Prisma's code for "write conflict or deadlock, please retry",
-  // which is what Postgres's 40001 arrives as.
-  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034';
-}
-
-/**
- * A short, growing, jittered pause.
- *
- * Retrying immediately re-collides with whoever won, which is how a retry loop
- * turns a conflict into a stampede. The jitter matters more than the delay:
- * four clients backing off by the same amount collide again together.
- */
-async function pauseBeforeRetry(attempt: number): Promise<void> {
-  const base = 15 * 2 ** (attempt - 1);
-  const delay = base + Math.floor(Math.random() * base);
-  await new Promise((resolve) => setTimeout(resolve, delay));
-}
-
-/** One attempt. Everything it writes is inside one serializable transaction. */
 async function attemptPlacement(input: CheckoutInput): Promise<{
   order: Order;
   quote: CheckoutQuote;

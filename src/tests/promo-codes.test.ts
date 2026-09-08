@@ -745,38 +745,20 @@ describe('never charging more than was shown', () => {
 // =============================================================================
 describe('a popular code must not fail everybody’s checkout', () => {
   it('retries a serialization conflict rather than surfacing it', () => {
+    // The retry itself now lives in `db/serializable.ts` and is tested there
+    // for BEHAVIOUR rather than by reading source — which is the better test,
+    // and the reason it moved. What is left to assert here is that placement
+    // actually uses it, and that one attempt is the whole of placement
+    // including the quote (so a retry re-resolves the promo code rather than
+    // replaying a stale discount).
     const place = codeOnly('src/lib/orders/place-order.ts');
-    expect(place).toMatch(/const MAX_PLACEMENT_ATTEMPTS = \d+;/);
-    // P2034 is what Postgres's 40001 arrives as. Counting redemptions across
-    // everybody inside a serializable transaction means every checkout on a
-    // popular code contends with every other one.
-    expect(place).toMatch(/error\.code === 'P2034'/);
-    expect(place).toMatch(/isSerializationConflict\(error\)/);
+    expect(place).toMatch(/withSerializationRetry\(\(\) => attemptPlacement\(input\)\)/);
+    expect(place).toMatch(/async function attemptPlacement/);
+    // The quote is inside the attempt, not outside it.
+    const attempt = place.slice(place.indexOf('async function attemptPlacement'));
+    expect(attempt).toMatch(/await quoteCheckout\(input\)/);
   });
 
-  it('never retries a decision', () => {
-    // A code that ran out, surge that moved, credits that fall short: retrying
-    // makes the same refusal slower, and for the promo case it would place the
-    // order the customer was just refused.
-    expect(codeOnly('src/lib/orders/place-order.ts')).toMatch(
-      /if \(!isSerializationConflict\(error\)\) throw error;/,
-    );
-  });
-
-  it('backs off with jitter, so four clients do not re-collide together', () => {
-    const place = codeOnly('src/lib/orders/place-order.ts');
-    expect(place).toMatch(/Math\.random\(\)/);
-  });
-
-  it('lets a persistent conflict reach error monitoring', () => {
-    // Deliberately NOT wrapped in a named domain error: past four attempts
-    // this is not an expected refusal and somebody should see it.
-    const place = codeOnly('src/lib/orders/place-order.ts');
-    expect(place).toMatch(/throw lastConflict;/);
-    expect(codeOnly('src/lib/actions/checkout-actions.ts')).not.toMatch(
-      /PlacementConflictError/,
-    );
-  });
 });
 
 // =============================================================================
