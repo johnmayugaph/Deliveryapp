@@ -3,13 +3,27 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
-/** Partner tabs. "Job" is first because a partner with a job cares about nothing else. */
-export function FleetTabs({ hasActiveJob }: { hasActiveJob: boolean }) {
+/**
+ * Partner tabs. "Job" is first because a partner with a job cares about
+ * nothing else.
+ *
+ * `holdingCash` puts a mark on Money when the rider is carrying takings that
+ * are not theirs. It is the one tab whose contents can be urgent without the
+ * rider having done anything, so it says so without their having to look.
+ */
+export function FleetTabs({
+  hasActiveJob,
+  holdingCash = false,
+}: {
+  hasActiveJob: boolean;
+  holdingCash?: boolean;
+}) {
   const pathname = usePathname();
 
   const tabs = [
     { href: '/fleet', label: 'Offers' },
     { href: '/fleet/job', label: hasActiveJob ? 'Job ●' : 'Job' },
+    { href: '/fleet/earnings', label: holdingCash ? 'Money ●' : 'Money' },
     { href: '/fleet/history', label: 'History' },
     { href: '/fleet/profile', label: 'Profile' },
   ];

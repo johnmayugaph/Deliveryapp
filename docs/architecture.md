@@ -1086,6 +1086,126 @@ business registration, and it is the next real piece of work behind this one.
 Each payment records which order it was for, so what is owed is computable —
 but computing it is not paying it.
 
+## Settlement — the third ledger, and who is holding whose money
+
+Payments answered "did the customer pay". Settlement answers the question
+behind it: **the money is now somewhere, and it belongs to somebody else.**
+
+### Every centavo belongs to exactly one party
+
+`splitOrderValue` divides an order's GROSS value three ways:
+
+| Share | What it is |
+| --- | --- |
+| Store | the food subtotal, less commission |
+| Rider | the delivery fee and the whole tip — from `partnerEarningsCentavos`, the same function the fleet screens show a partner |
+| Platform | **the remainder** |
+
+The platform getting the remainder rather than its own formula is the whole
+trick: it makes the split exhaustive by construction, so a fee added to the
+schema next year cannot belong to nobody. On top of that the function asserts
+its own result — the three shares must sum to the gross, and **none may be
+negative**. That last clause was added because a sum can balance while a part
+is negative: pay a rider more than the order is worth and the platform silently
+absorbs the difference. The remainder never complains, which is exactly why it
+has to be checked.
+
+**The gross, not `totalCentavos`.** A subscription waiver, a promo and credits
+spent all reduce what the customer pays without reducing what the shop cooked
+or what the rider rode. TARA absorbs the difference, and settling on the total
+would take that absorption out of a partner's pay. `platformNetCentavos` is
+allowed to go negative, because a heavily promoted order really is a loss and a
+clamped number is a loss nobody can see.
+
+**Commission is data, and zero by default.** Per store, in basis points,
+settable from the console with a reason and an audit row. Zero because a
+non-zero default would have invented revenue the moment settlement was switched
+on and quietly changed what every existing shop was owed. It applies to the
+subtotal only — never the tip, which is the rider's entirely, and never the
+delivery fee. Rounded DOWN, so a fraction of a centavo stays with the shop:
+over thousands of orders that costs TARA a few pesos and can never be described
+as shaving money off a partner.
+
+### The direction depends on who physically collected
+
+This is the part that makes settlement a ledger rather than a list of earnings.
+
+A ₱399 cash order: the rider takes the **whole total** at the door — the shop's
+money and ours along with their own ₱39 fee. So:
+
+```
+earnings   +₱39
+collected  −₱399
+           ------
+balance    −₱360    the rider owes TARA
+```
+
+The same order paid by transfer leaves TARA holding it, so TARA owes the rider
+₱39 and the shop ₱350. Same ledger, opposite sign. `COLLECTED_BY` is keyed by
+every payment method, so a new instrument is a compile error rather than a
+default that puts somebody's money in the wrong pocket. Credits count as
+PLATFORM: nothing was collected from anybody, and the shop and rider are still
+owed real money — which is what a credit costs, recognised at redemption.
+
+A balance is **what TARA owes the partner**: positive we owe, negative they are
+holding ours. Most riders will sit negative most of the time, and that number —
+totalled as "cash held by riders" in the console — is the float the launch
+checklist called the operational problem most likely to bite in week one.
+Nothing in the app knew it before this.
+
+### `SettlementEntry`: append-only, like the other two
+
+The third ledger and the same discipline: append-only trigger, sign forced by
+type, one write function (`recordSettlementEntry`), a reason or reference
+required wherever a human decided something. Five entry types —
+`ORDER_EARNINGS`, `CASH_COLLECTED`, `PAYOUT_SENT`, `CASH_REMITTED`,
+`ADJUSTMENT` — and the last one exists because the real world produces cases no
+rule anticipated: a rider who paid a shop directly to keep an order moving, a
+damaged order somebody absorbed. The alternative to an audited adjustment is
+either a ledger somebody edits (the database refuses) or a balance nobody can
+reconcile.
+
+**The balance is NOT cached**, unlike a credits balance, and the difference is
+worth stating because somebody will want to "make it consistent". `Wallet`
+caches because spending must check a balance atomically on the hot path of
+every checkout. Nothing here is blocked that way, so a summed query beats a
+column that can drift from the rows that define it. One thing does check it — a
+payout — and it reads the sum inside its own serializable transaction.
+
+Accrual happens **inside the completion transaction**, keyed idempotently to
+the order and the party. An order that completed with no accrual is a shop that
+cooked food nobody recorded owing it for, and the only way to find those later
+is to trawl every order against the ledger. A cancelled order accrues nothing:
+nobody delivered anything.
+
+### Nothing in this app moves money
+
+Every control records that a **person** moved it: a payout, a cash handover, a
+correction, each with a name, a reference and a reason. That is the same posture
+the customer refund control takes, and for the same reason — a button that
+looked like it paid somebody would be the most dangerous thing in the console.
+The rider's and shop's own screens say so too, because a partner who expects
+the app to pay them will not chase a payout that never arrives.
+
+A payout **cannot exceed the balance**. Paying past what is owed is an
+unrecorded loan the next accrual silently swallows, and on a rider who is
+holding our cash it would be handing money to somebody already in debt to us.
+
+### What settlement does NOT do
+
+- **No bank rail.** No provider, no scheduled payout run, no API. Recording
+  only.
+- **No commission snapshot on the order.** The rate is read from the store at
+  accrual, so an order completed a week late accrues at today's rate rather
+  than the rate on the day it was placed. A snapshot column would fix it and is
+  not worth a migration while every rate is zero.
+- **Surge goes to the platform**, because `partnerEarningsCentavos` counts only
+  the fee and the tip and settlement deliberately does not disagree with the
+  number the fleet screens already show a rider. Surge arguably belongs to
+  riders — it exists to make somebody accept a job in bad weather — but that is
+  a pay decision to take deliberately, and it changes in one function when it
+  is taken.
+
 ## 6. Subscription tier
 
 `SubscriptionPlan` (name, `monthlyPriceCentavos`, benefits, `isActive`) and
@@ -2843,7 +2963,7 @@ sense as an undrained outbox, and says which command to run.
 
 ## Verification
 
-Database-free, in CI (`npm run verify`) — **1222 tests across 37 files**. The
+Database-free, in CI (`npm run verify`) — **1277 tests across 38 files**. The
 table below names the ones that carry a rule rather than a case; the rest cover
 a single feature each and are named for it.
 
@@ -2866,6 +2986,7 @@ a single feature each and are named for it.
 | `admin-access.test.ts` | Who counts as an admin, the reason rule, Manila day boundaries, and grep rules that every action is authorised, reasoned and logged |
 | `live-tracking.test.ts` | The four gates on a rider's position, the share throttle including a held fix, distance wording, and greps for the privacy boundary and the map's honesty |
 | `payments.test.ts` | The no-top-up rule per instrument and in the database, the prepaid hold across every lifecycle, event signs, the derived status including a short payment, and what the rider is told to collect |
+| `settlement.test.ts` | The order-value split proved exhaustive over every combination of fees, tips and commission; who holds the money per payment method; the cash round trip netting to zero; and the payout ceiling |
 | `menu-options.test.ts` | Server-authoritative choice pricing, group bounds, satisfiability, and every tamper case |
 | `menu-photos.test.ts` | Magic-byte sniffing, dimension limits, and the bytes never entering a page payload |
 | `fleet-verification.test.ts` | Who may decide an application, per-service independence, and what the partner is told |

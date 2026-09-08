@@ -173,4 +173,8 @@ export const ADMIN_ACTION_LABEL: Readonly<Record<AdminAction, string>> = {
   [AdminAction.PAYMENT_CONFIRMED]: 'Payment confirmed as received',
   [AdminAction.PAYMENT_REFUSED]: 'Claimed payment refused',
   [AdminAction.PAYMENT_REFUNDED]: 'Money sent back to the customer',
+  [AdminAction.SETTLEMENT_PAYOUT_RECORDED]: 'Payout to a partner recorded',
+  [AdminAction.SETTLEMENT_REMITTANCE_RECORDED]: 'Cash handed in by a rider recorded',
+  [AdminAction.SETTLEMENT_ADJUSTED]: 'Partner balance corrected',
+  [AdminAction.STORE_COMMISSION_CHANGED]: 'Store commission rate changed',
 };

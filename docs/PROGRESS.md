@@ -2365,3 +2365,127 @@ shop, the audit row, **the rider told to collect nothing on a prepaid order and
 no credits row written.
 
 1222 tests pass; typecheck, lint and build clean.
+
+## Phase 33 — Settlement
+
+Payments answered "did the customer pay". This answers the question behind it:
+the money is now somewhere, and it belongs to somebody else.
+
+### The realisation that shaped it
+
+Settlement direction depends on **who physically collected**. A ₱399 cash order
+puts the whole total in the rider's hand — the shop's money and ours along with
+their own ₱39 fee — so the rider ends up owing TARA ₱360. The same order paid
+by transfer leaves it with us, so we owe the rider ₱39 and the shop ₱350. Same
+ledger, opposite sign.
+
+That is why this had to be a netting ledger rather than a list of earnings, and
+it is what makes the cash problem tractable for the first time. The console now
+totals "cash held by riders", and the rider's own screen says, in an amber band:
+**you are holding ₱360 of TARA's cash — hand it in.** The launch checklist has
+called cash handling "the operations problem most likely to bite in week one"
+since Phase 26; nothing in the app knew the number until now.
+
+### Every centavo belongs to exactly one party
+
+`splitOrderValue` divides an order's gross three ways: the shop gets the food
+less commission, the rider gets the fee and the whole tip, and the platform gets
+**the remainder**. Defining the last share as what is left makes the split
+exhaustive by construction — a fee added to the schema next year lands somewhere
+rather than nowhere.
+
+Computed on the GROSS, never on what the customer paid. A subscription waiver,
+a promo and credits spent reduce the customer's total without reducing what the
+shop cooked or the rider rode; TARA absorbs that, and settling on the total
+would silently take it out of a partner's pay.
+
+Commission is data on the store, in basis points, **zero by default** — a
+non-zero default would have invented revenue and quietly changed what every
+existing shop was owed. It touches the subtotal only, never the tip, and rounds
+down so the fraction of a centavo stays with the shop.
+
+### A test found a real hole
+
+My first version asserted that the three shares sum to the gross and that the
+shop's and rider's shares are non-negative. The platform's was not checked —
+and a sum can balance while a part is negative. Pay a rider more than the order
+is worth and the platform's share goes negative, absorbing the difference
+without a word. **The remainder never complains, which is exactly why it needs
+checking.** The exhaustive unit test over every combination of fees, tips and
+rates was already asserting it; the function was not.
+
+### The third ledger
+
+`SettlementEntry`, with the same discipline as the credits and payment ledgers:
+append-only trigger, sign forced by type, one write function, a reference
+required wherever a person asserts something happened off-system.
+
+One deliberate difference, written down so nobody "fixes" it: **the balance is
+not cached.** `Wallet` caches because spending must check a balance atomically
+on the hot path of every checkout. Nothing here is blocked that way, so a
+summed query beats a column that can drift. The one thing that does check it —
+a payout — reads the sum inside its own serializable transaction.
+
+Accrual runs inside the completion transaction. An order that completed with no
+accrual is a shop that cooked food nobody recorded owing it for, and the only
+way to find those afterwards is to trawl every order against the ledger.
+
+### Nothing in this app moves money
+
+Every control records that a person moved it, with a name, a reference and a
+reason — the same posture the customer refund control takes. A payout cannot
+exceed the balance: paying past what is owed is an unrecorded loan the next
+accrual swallows, and on a rider holding our cash it is handing money to
+somebody already in debt to us. The partner screens say it out loud, because a
+rider who expects the app to pay them will not chase a payout that never
+arrives.
+
+### Two vacuous checks, again
+
+Two live-database checks passed for the wrong reason: my raw inserts testing the
+one-party constraint had no `orderId`, so a *different* constraint refused them
+first and the party rule was never reached. They now assert which constraint
+fired, by name. That is the same class of mistake as the two vacuous browser
+checks in the payments phase — worth recording twice, because a check that
+cannot fail is worse than no check: it reports safety that was never tested.
+
+And a third: the browser pass set a commission on whichever shop sorted first
+alphabetically rather than on the one under test, then read zero from the right
+one and called it a bug. The fixture is now reset at the start of the run rather
+than only at the end, so it is re-runnable.
+
+### What is still not built
+
+- **No bank rail.** No provider, no scheduled payout run. Recording only, and
+  that is the honest limit: the money has to be moved by a person with access to
+  a business account, which needs the registration in the checklist.
+- **No commission snapshot on the order**, so an order completed a week late
+  accrues at today's rate. A migration for a column that is zero everywhere is
+  not worth it yet.
+- **Surge goes to the platform**, because that is what `partnerEarningsCentavos`
+  already tells riders they earn and settlement must not disagree with the fleet
+  screens. It arguably belongs to riders; that is a pay decision, and it changes
+  in one function when somebody takes it.
+
+### Verified in three places
+
+Forty-three unit tests, led by an exhaustive sweep of the split across five
+subtotals, three fees, three tips, two surges, two small-order fees and five
+commission rates — 900 combinations, each asserting the shares sum to the gross
+and none is negative.
+
+Twenty checks against the real database: accrual on both sides of a prepaid and
+a cash order, idempotency, the append-only trigger, the sign constraint, the
+exactly-one-party constraint asserted by name, the commission cap, the payout
+ceiling in both directions, a claim with no reference refused, the full cash
+round trip netting to zero, and a cancelled order accruing nothing.
+
+Twenty-three in a real browser across three roles: the console showing both
+directions and the float, a rider told they are carrying TARA's cash with the
+mark on their tab, a shop shown what it is owed and that the tip is not its to
+be charged on, a payout past the balance refused in a sentence, a payout with no
+reference refused, the shop paid and the cash handed in, both landing on zero
+with every movement still on the record, and a commission rate refused at 99.99%
+then accepted at 2.5% with an audit row.
+
+1277 tests pass; typecheck, lint and build clean.

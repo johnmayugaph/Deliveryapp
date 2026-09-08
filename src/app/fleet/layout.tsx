@@ -3,6 +3,8 @@ import { redirect } from 'next/navigation';
 import { getCurrentUser, displayNameFor } from '@/lib/auth/session';
 import { getFleetPartner, getActiveJob } from '@/lib/fleet/partner';
 import { FleetTabs } from '@/components/fleet/FleetTabs';
+import { positionOf } from '@/lib/settlement/ledger';
+import { owedToPlatformCentavos } from '@/lib/settlement/policy';
 import { AvailabilityToggle } from '@/components/fleet/AvailabilityToggle';
 import { LocationShare } from '@/components/fleet/LocationShare';
 import { NotificationBell } from '@/components/notifications/NotificationBell';
@@ -34,7 +36,7 @@ export default async function FleetLayout({ children }: { children: React.ReactN
     return <div className="min-h-dvh bg-surface-sunken">{children}</div>;
   }
 
-  const [activeJob, homeCity] = await Promise.all([
+  const [activeJob, homeCity, position] = await Promise.all([
     getActiveJob(partner.id),
     partner.homeCityId
       ? prisma.city.findUnique({
@@ -42,6 +44,9 @@ export default async function FleetLayout({ children }: { children: React.ReactN
           select: { centroidLat: true, centroidLng: true },
         })
       : Promise.resolve(null),
+    // Read in the layout so the mark on the Money tab is right on every
+    // screen, not only on the one that shows the number.
+    positionOf({ party: 'FLEET_PARTNER', fleetPartnerId: partner.id }),
   ]);
 
   return (
@@ -71,7 +76,10 @@ export default async function FleetLayout({ children }: { children: React.ReactN
           </div>
         </div>
 
-        <FleetTabs hasActiveJob={activeJob !== null} />
+        <FleetTabs
+          hasActiveJob={activeJob !== null}
+          holdingCash={owedToPlatformCentavos(position) > 0}
+        />
       </header>
 
       {/* Mounted in the layout so it survives moving between the fleet

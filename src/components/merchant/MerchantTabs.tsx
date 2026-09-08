@@ -13,6 +13,7 @@ export function MerchantTabs({ storeId }: { storeId: string }) {
     { href: base, label: 'Queue' },
     { href: `${base}/menu`, label: 'Menu' },
     { href: `${base}/history`, label: 'History' },
+    { href: `${base}/payouts`, label: 'Payouts' },
     { href: `${base}/staff`, label: 'Staff' },
     { href: `${base}/settings`, label: 'Settings' },
   ];

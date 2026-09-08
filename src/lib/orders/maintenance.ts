@@ -10,6 +10,7 @@ import { transitionOrder } from '@/lib/orders/state-machine';
 import { ALL_STATUS_TIMEOUTS } from '@/lib/orders/transitions';
 import { grantCredit, refundToCredits } from '@/lib/wallet/ledger';
 import { recordCashCollected } from '@/lib/payments/manual';
+import { accrueOrderSettlement } from '@/lib/settlement/accrual';
 import { heldForCustomerCentavos } from '@/lib/payments/events';
 import { resolvePaymentRail } from '@/lib/payments/rails';
 import { pruneSessions, pruneVerifications } from '@/lib/auth/prune';
@@ -404,6 +405,12 @@ export async function completeOrder(input: {
         tx,
       );
     }
+
+    // And who is owed what, in the same transaction. An order that completed
+    // with no accrual is a shop that cooked food nobody recorded owing it for,
+    // and the only way to find those afterwards is to trawl every order
+    // against the ledger.
+    await accrueOrderSettlement(order, tx);
 
     return { order, creditBackCentavos };
   });

@@ -442,6 +442,7 @@ model User {
   statusEvents            OrderStatusEvent[]
   recordedAdjustments     WalletTransaction[]               @relation("WalletAdjustmentActor")
   paymentEventsCaused     PaymentEvent[]                    @relation("PaymentEventActor")
+  settlementEntries       SettlementEntry[]                 @relation("SettlementActor")
   sessions                Session[]
   storeMemberships        StoreMember[]
   grantedStoreAccess      StoreMember[]                     @relation("StoreAccessGranted")
@@ -659,6 +660,20 @@ model Store {
   /// checkout so a later menu edit cannot rewrite history.
   preparationMinutes Int @default(20)
 
+  /// What TARA keeps from this shop's food, in basis points of the subtotal.
+  /// 250 = 2.5%.
+  ///
+  /// **Zero by default, and that is deliberate.** Commission is a negotiated
+  /// term per partner, not a platform constant, and a non-zero default would
+  /// invent revenue the moment settlement was switched on — quietly changing
+  /// what every existing shop is owed. Set it per store, with a reason, from
+  /// the console.
+  ///
+  /// It applies to the SUBTOTAL only. Never to the tip, which is the rider's
+  /// entirely, and never to the delivery fee, which is what the rider is paid
+  /// for the ride.
+  commissionBasisPoints Int @default(0)
+
   /// DERIVED from `OrderReview`, never incremented. Recomputed from the rows
   /// inside the same transaction as the review that changed them — the same
   /// rule the credits ledger follows, for the same reason: an aggregate that
@@ -669,10 +684,11 @@ model Store {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  menuItems MenuItem[]
-  reviews   OrderReview[]
-  members   StoreMember[]
-  invites   StoreInvite[]
+  menuItems         MenuItem[]
+  reviews           OrderReview[]
+  members           StoreMember[]
+  invites           StoreInvite[]
+  settlementEntries SettlementEntry[]
 
   @@index([cityId, isVisible, isOpen])
   @@index([serviceKeys], type: Gin)
@@ -1081,6 +1097,7 @@ model Order {
   dispatchOffers     DispatchOffer[]
   walletTransactions WalletTransaction[]
   paymentEvents      PaymentEvent[]
+  settlementEntries  SettlementEntry[]
   supportTickets     SupportTicket[]
   appliedBenefits    OrderAppliedBenefit[]
   notifications      Notification[]
@@ -1202,6 +1219,7 @@ model FleetPartner {
   serviceVerifications FleetPartnerServiceVerification[]
   orders               Order[]
   dispatchOffers       DispatchOffer[]
+  settlementEntries    SettlementEntry[]
 
   @@index([isOnline, isSuspended, homeCityId])
   @@index([enabledServices], type: Gin)
@@ -1423,6 +1441,106 @@ model PaymentEvent {
   @@index([orderId, createdAt])
   @@index([type, createdAt])
   @@index([reference])
+}
+
+/// Which side of TARA a settlement row belongs to.
+enum SettlementParty {
+  STORE
+  FLEET_PARTNER
+}
+
+/// Every way a balance with a partner can move.
+///
+/// The signs are the thing to hold on to. A balance here is **what TARA owes
+/// the partner**: positive means we owe them, negative means they are holding
+/// our money. A rider on a cash order earns ₱39 and collects ₱399 at the door,
+/// so their balance goes to −₱360 — they owe us. That is not an edge case, it
+/// is what every cash order does, and it is the whole reason this ledger nets
+/// rather than just accumulating.
+enum SettlementEntryType {
+  /// What a partner earned on an order that completed. Always positive.
+  ORDER_EARNINGS
+  /// A rider took the customer's money at the door. Negative: it is ours.
+  CASH_COLLECTED
+  /// We sent them money. Negative — it discharges what we owed.
+  PAYOUT_SENT
+  /// They handed our cash back. Positive — it discharges what they owed.
+  CASH_REMITTED
+  /// A signed correction. Requires an admin and a reason, and exists because
+  /// the real world produces cases no rule anticipated — a rider who paid a
+  /// store directly, a damaged order somebody absorbed.
+  ADJUSTMENT
+}
+
+/// APPEND-ONLY ledger of what TARA owes its partners, and what they owe TARA.
+///
+/// The third ledger, and the one that finally connects the other two to the
+/// people doing the work. `WalletTransaction` is credits we granted;
+/// `PaymentEvent` is money customers moved; this is money owed between TARA
+/// and the shops and riders. Same discipline as both: append-only, sign forced
+/// by type, one write function, a reason required where a human decided.
+///
+/// **Unlike the other two, the balance is NOT cached.** `Wallet` caches its
+/// balance because spending has to check it atomically before allowing a
+/// debit; nothing here is blocked on a balance in that way, so a summed query
+/// is cheaper than a cached column that can drift. A payout does check the
+/// balance, and reads the sum inside its own transaction.
+model SettlementEntry {
+  id String @id @default(cuid())
+
+  party SettlementParty
+
+  /// Exactly one of these is set, enforced by a CHECK in
+  /// `prisma/sql/settlement_append_only.sql`. Real foreign keys rather than a
+  /// polymorphic id, because this table is money and a row pointing at a
+  /// partner who does not exist is not a row anybody can settle.
+  storeId String?
+  store   Store?  @relation(fields: [storeId], references: [id])
+
+  fleetPartnerId String?
+  fleetPartner   FleetPartner? @relation(fields: [fleetPartnerId], references: [id])
+
+  type SettlementEntryType
+
+  /// SIGNED centavos, from TARA's point of view: positive means we owe the
+  /// partner more, negative means we owe them less. Forced by `type` in
+  /// `signedSettlementAmount()` and never supplied by a caller — the same rule
+  /// both other ledgers follow, because a caller who picks the sign can book a
+  /// payout as an earning.
+  amountCentavos Int
+  currency       String @default("PHP")
+
+  /// The order this arose from, for earnings and cash collection. NULL for a
+  /// payout or a remittance, which settle many orders at once.
+  orderId String?
+  order   Order?  @relation(fields: [orderId], references: [id])
+
+  /// Partner-visible line in their statement.
+  description String
+
+  /// Required for a payout, a remittance and an adjustment: each is a person
+  /// asserting that money moved in the real world, and a claim with no
+  /// reference is one nobody can check later.
+  reference String?
+
+  /// Who recorded it. NULL for accruals, which the system writes on
+  /// completion; set for everything a human did.
+  actorUserId String?
+  actorUser   User?   @relation("SettlementActor", fields: [actorUserId], references: [id])
+
+  /// Makes accrual idempotent: keyed to the order and the party, so a
+  /// completion that runs twice pays once.
+  idempotencyKey String? @unique
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  /// Note the absence of `updatedAt`. This table is not updated.
+  @@index([storeId, createdAt])
+  @@index([fleetPartnerId, createdAt])
+  @@index([party, type])
+  @@index([orderId])
 }
 
 // -----------------------------------------------------------------------------
@@ -2027,6 +2145,18 @@ enum AdminAction {
   /// purpose: approval to carry food is not approval to carry a passenger, and
   /// the audit trail has to be able to say which decision was made.
   FLEET_VERIFICATION_CHANGED
+  /// A payout to a store or a rider was recorded as sent. Records a claim
+  /// about the world: nothing in this system can move money, so the audit row
+  /// and its reference are what make the claim checkable against a statement.
+  SETTLEMENT_PAYOUT_RECORDED
+  /// A rider handed in cash they had collected, and somebody recorded it.
+  SETTLEMENT_REMITTANCE_RECORDED
+  /// A signed correction to what a partner is owed. The settlement ledger's
+  /// equivalent of a credits ADJUSTMENT, and audited for the same reason.
+  SETTLEMENT_ADJUSTED
+  /// A store's commission rate was changed. Audited because it changes what
+  /// every future order pays that shop.
+  STORE_COMMISSION_CHANGED
   /// A customer's payment was confirmed as received. Audited because it is the
   /// moment somebody decides money arrived, on the word of a person reading a
   /// statement — which is exactly the decision a dispute needs a record of.

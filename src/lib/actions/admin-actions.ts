@@ -46,6 +46,18 @@ import {
   refusePayment,
 } from '@/lib/payments/manual';
 import {
+  PayoutExceedsBalanceError,
+  positionOf,
+  recordSettlementEntry,
+  type PartyRef,
+} from '@/lib/settlement/ledger';
+import {
+  InvalidCommissionError,
+  InvalidSettlementEntryError,
+  assertCommissionInRange,
+  payableCentavos,
+} from '@/lib/settlement/policy';
+import {
   AlreadyAMemberError,
   InviteNotFoundError,
   LastOwnerError,
@@ -116,6 +128,16 @@ async function guarded(
     if (
       error instanceof PaymentAlreadySettledError ||
       error instanceof PaymentNotExpectedError
+    ) {
+      return { ok: false, message: error.message };
+    }
+    // Settlement refusals are all sentences an operator can act on: a payout
+    // bigger than the balance, a missing reference, a commission that is a
+    // typo. None is a fault, so none should reach `/admin/errors` either.
+    if (
+      error instanceof PayoutExceedsBalanceError ||
+      error instanceof InvalidSettlementEntryError ||
+      error instanceof InvalidCommissionError
     ) {
       return { ok: false, message: error.message };
     }
@@ -1346,6 +1368,299 @@ export async function recordRefundSentAction(
     return {
       ok: true,
       message: `Recorded ${formatCentavos(amountCentavos)} sent back. The customer has been told.`,
+    };
+  });
+}
+
+// --- Settlement --------------------------------------------------------------
+
+/**
+ * Reads a party from a form.
+ *
+ * The console posts `party` and `partyId` rather than two optional id fields,
+ * so a form cannot describe a row that belongs to a store and a rider at once
+ * — which the database would refuse anyway, less helpfully.
+ */
+function partyFromForm(formData: FormData): PartyRef | null {
+  const party = String(formData.get('party') ?? '');
+  const partyId = String(formData.get('partyId') ?? '');
+  if (!partyId) return null;
+  if (party === 'STORE') return { party: 'STORE', storeId: partyId };
+  if (party === 'FLEET_PARTNER') {
+    return { party: 'FLEET_PARTNER', fleetPartnerId: partyId };
+  }
+  return null;
+}
+
+/** The partner's name, for the audit row and the confirmation sentence. */
+async function partyLabel(ref: PartyRef): Promise<string> {
+  if (ref.party === 'STORE') {
+    const store = await prisma.store.findUnique({
+      where: { id: ref.storeId },
+      select: { name: true },
+    });
+    return store?.name ?? ref.storeId;
+  }
+  const partner = await prisma.fleetPartner.findUnique({
+    where: { id: ref.fleetPartnerId },
+    select: { user: { select: { fullName: true, displayName: true, phone: true } } },
+  });
+  return (
+    partner?.user.displayName ?? partner?.user.fullName ?? partner?.user.phone ?? ref.fleetPartnerId
+  );
+}
+
+/**
+ * Records a payout to a store or a rider.
+ *
+ * Records, not sends. Nothing in this codebase can move money into somebody's
+ * bank account, so this is a person saying "I have paid them" with their name,
+ * a reference and a reason against it. That is the same honesty the customer
+ * refund control takes, and for the same reason: a button that looked like it
+ * paid somebody would be the most dangerous thing in the console.
+ *
+ * It cannot exceed the balance. Paying past what is owed is an unrecorded loan
+ * that the next accrual silently swallows, and on a rider who is holding our
+ * cash it would be handing money to somebody already in debt to us.
+ */
+export async function recordPayoutAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const reason = normaliseReason(formData.get('reason'));
+    const ref = partyFromForm(formData);
+    if (!ref) return { ok: false, message: 'No such partner.' };
+
+    const amountCentavos = centavosFromPesoInput(
+      String(formData.get('amount') ?? '').trim(),
+    );
+    if (amountCentavos === null || amountCentavos <= 0) {
+      return { ok: false, message: 'Write what you sent, in pesos, like 1200 or 1200.50.' };
+    }
+
+    const reference = String(formData.get('reference') ?? '').trim();
+    if (reference.length < 3) {
+      return {
+        ok: false,
+        message: 'Give the transfer reference — it is what makes this checkable later.',
+      };
+    }
+
+    const label = await partyLabel(ref);
+    const before = await positionOf(ref);
+
+    await recordSettlementEntry({
+      ref,
+      type: 'PAYOUT_SENT',
+      amountCentavos,
+      description: `Payout · ${reference}`,
+      reference,
+      actorUserId: admin.id,
+    });
+
+    await recordAdminAction({
+      actorId: admin.id,
+      action: AdminAction.SETTLEMENT_PAYOUT_RECORDED,
+      subjectType: ref.party === 'STORE' ? 'Store' : 'FleetPartner',
+      subjectId: ref.party === 'STORE' ? ref.storeId : ref.fleetPartnerId,
+      subjectLabel: label,
+      reason,
+      detail: {
+        amountCentavos,
+        reference,
+        balanceBeforeCentavos: before.balanceCentavos,
+        payableBeforeCentavos: payableCentavos(before),
+      },
+    });
+
+    revalidatePath('/admin/settlement');
+    return {
+      ok: true,
+      message: `Recorded ${formatCentavos(amountCentavos)} paid to ${label}.`,
+    };
+  });
+}
+
+/**
+ * Records cash a rider handed in.
+ *
+ * The other direction, and the one that actually closes the loop on a cash
+ * order: the rider collected ₱399 at the door, earned ₱39 of it, and hands
+ * back ₱360. Their balance returns to zero and the money is ours again.
+ */
+export async function recordRemittanceAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const reason = normaliseReason(formData.get('reason'));
+    const ref = partyFromForm(formData);
+    if (!ref) return { ok: false, message: 'No such partner.' };
+
+    const amountCentavos = centavosFromPesoInput(
+      String(formData.get('amount') ?? '').trim(),
+    );
+    if (amountCentavos === null || amountCentavos <= 0) {
+      return { ok: false, message: 'Write what you received, in pesos, like 360 or 360.50.' };
+    }
+
+    const reference = String(formData.get('reference') ?? '').trim();
+    if (reference.length < 3) {
+      return {
+        ok: false,
+        message: 'Give a receipt number or say who took it in — this is a cash handover.',
+      };
+    }
+
+    const label = await partyLabel(ref);
+
+    await recordSettlementEntry({
+      ref,
+      type: 'CASH_REMITTED',
+      amountCentavos,
+      description: `Cash handed in · ${reference}`,
+      reference,
+      actorUserId: admin.id,
+    });
+
+    await recordAdminAction({
+      actorId: admin.id,
+      action: AdminAction.SETTLEMENT_REMITTANCE_RECORDED,
+      subjectType: ref.party === 'STORE' ? 'Store' : 'FleetPartner',
+      subjectId: ref.party === 'STORE' ? ref.storeId : ref.fleetPartnerId,
+      subjectLabel: label,
+      reason,
+      detail: { amountCentavos, reference },
+    });
+
+    revalidatePath('/admin/settlement');
+    return {
+      ok: true,
+      message: `Recorded ${formatCentavos(amountCentavos)} handed in by ${label}.`,
+    };
+  });
+}
+
+/**
+ * A signed correction to what a partner is owed.
+ *
+ * Exists because the real world produces cases no rule anticipated: a rider
+ * who paid a shop directly to keep an order moving, a damaged order somebody
+ * absorbed, a fee waived after an argument. The alternative to an audited
+ * adjustment is somebody editing the ledger, which the database refuses, or a
+ * balance nobody can reconcile — so this is the pressure valve, and it is
+ * built to leave a mark.
+ */
+export async function adjustSettlementAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const reason = normaliseReason(formData.get('reason'));
+    const ref = partyFromForm(formData);
+    if (!ref) return { ok: false, message: 'No such partner.' };
+
+    const raw = String(formData.get('amount') ?? '').trim();
+    const negative = raw.startsWith('-');
+    const magnitude = centavosFromPesoInput(negative ? raw.slice(1) : raw);
+    if (magnitude === null || magnitude <= 0) {
+      return {
+        ok: false,
+        message:
+          'Write the correction in pesos, like 150 to credit them or -150 to charge them.',
+      };
+    }
+    const amountCentavos = negative ? -magnitude : magnitude;
+
+    const reference = String(formData.get('reference') ?? '').trim();
+    if (reference.length < 3) {
+      return { ok: false, message: 'Give a reference: a ticket number, or what this settles.' };
+    }
+
+    const label = await partyLabel(ref);
+
+    await recordSettlementEntry({
+      ref,
+      type: 'ADJUSTMENT',
+      amountCentavos,
+      description: `Adjustment · ${reference}`,
+      reference,
+      actorUserId: admin.id,
+    });
+
+    await recordAdminAction({
+      actorId: admin.id,
+      action: AdminAction.SETTLEMENT_ADJUSTED,
+      subjectType: ref.party === 'STORE' ? 'Store' : 'FleetPartner',
+      subjectId: ref.party === 'STORE' ? ref.storeId : ref.fleetPartnerId,
+      subjectLabel: label,
+      reason,
+      detail: { amountCentavos, reference },
+    });
+
+    revalidatePath('/admin/settlement');
+    return {
+      ok: true,
+      message:
+        amountCentavos > 0
+          ? `Credited ${label} ${formatCentavos(amountCentavos)}.`
+          : `Charged ${label} ${formatCentavos(-amountCentavos)}.`,
+    };
+  });
+}
+
+/**
+ * Sets a shop's commission rate.
+ *
+ * In basis points, because a percentage typed as a decimal is how somebody
+ * sets 250% instead of 2.5%. Applies to FUTURE orders only: settled ones keep
+ * what they settled at, which is what makes a rate change safe to make on a
+ * Tuesday afternoon.
+ */
+export async function setStoreCommissionAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const reason = normaliseReason(formData.get('reason'));
+    const storeId = String(formData.get('storeId') ?? '');
+
+    const basisPoints = Number(String(formData.get('basisPoints') ?? '').trim());
+    if (!Number.isFinite(basisPoints)) {
+      return { ok: false, message: 'Write the rate in basis points, like 250 for 2.5%.' };
+    }
+    assertCommissionInRange(basisPoints);
+
+    const store = await prisma.store.findUnique({
+      where: { id: storeId },
+      select: { id: true, name: true, commissionBasisPoints: true },
+    });
+    if (!store) return { ok: false, message: 'No such store.' };
+
+    await prisma.$transaction(async (tx) => {
+      await tx.store.update({
+        where: { id: store.id },
+        data: { commissionBasisPoints: basisPoints },
+      });
+      await recordAdminAction(
+        {
+          actorId: admin.id,
+          action: AdminAction.STORE_COMMISSION_CHANGED,
+          subjectType: 'Store',
+          subjectId: store.id,
+          subjectLabel: store.name,
+          reason,
+          detail: { before: store.commissionBasisPoints, after: basisPoints },
+        },
+        tx,
+      );
+    });
+
+    revalidatePath('/admin/settlement');
+    return {
+      ok: true,
+      message: `${store.name} now pays ${(basisPoints / 100).toFixed(2)}% on food. Existing orders keep what they settled at.`,
     };
   });
 }
