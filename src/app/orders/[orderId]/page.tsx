@@ -20,6 +20,9 @@ import { cancellationStatusForActor } from '@/lib/orders/state-machine';
 import { reviewableOrder } from '@/lib/ratings/reviews';
 import { REVIEW_REFUSAL_MESSAGE } from '@/lib/ratings/policy';
 import { RatingForm } from '@/components/orders/RatingForm';
+import { RiderMap } from '@/components/orders/RiderMap';
+import { isTrackableStatus } from '@/lib/orders/tracking';
+import { tileSource } from '@/lib/geo/tiles';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,6 +48,13 @@ export default async function OrderDetailPage({
       addresses: true,
       statusEvents: { orderBy: { createdAt: 'asc' } },
       appliedBenefits: true,
+      // The rider's NAME, for the map's caption. Never their position: that is
+      // read by `riderPositionForCustomer`, which applies the freshness rule
+      // and would otherwise be bypassed by a page that had the columns to
+      // hand.
+      assignedRider: {
+        select: { user: { select: { fullName: true, displayName: true } } },
+      },
     },
   });
 
@@ -126,6 +136,28 @@ export default async function OrderDetailPage({
           </p>
         ) : null}
       </header>
+
+      {/* The map, and only while somebody is carrying this. Not on a
+          delivered order — where the rider went afterwards is nobody's
+          business — and not before assignment, when there is nobody to show.
+          Gating it here is also what keeps map tiles proportional to live
+          deliveries rather than to page views. */}
+      {isTrackableStatus(order.status) && dropoff ? (
+        <div className="mx-4 mt-4">
+          <RiderMap
+            orderId={order.id}
+            tileSource={tileSource()}
+            dropoff={{ latitude: dropoff.latitude, longitude: dropoff.longitude }}
+            riderName={
+              order.assignedRider
+                ? order.assignedRider.user.displayName ??
+                  order.assignedRider.user.fullName ??
+                  null
+                : null
+            }
+          />
+        </div>
+      ) : null}
 
       <section aria-labelledby="summary-heading" className="mx-4 mt-4">
         <h2 id="summary-heading" className="sr-only">

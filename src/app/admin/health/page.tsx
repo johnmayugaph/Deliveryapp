@@ -7,6 +7,7 @@ import { isPushConfigured } from '@/lib/notifications/push/vapid';
 import { captchaIsHalfConfigured, isCaptchaConfigured } from '@/lib/auth/captcha';
 import { backupState } from '@/lib/backup/queries';
 import { menuImageFootprint } from '@/lib/media/menu-images';
+import { OPENSTREETMAP, tileSource } from '@/lib/geo/tiles';
 import { supportSummary } from '@/lib/support/queries';
 import { contactDetails, describeContactPosture } from '@/lib/support/contact';
 import {
@@ -51,6 +52,14 @@ export default async function AdminHealthPage() {
     supportSummary(),
     menuImageFootprint(),
   ]);
+
+  // Read on the server, like everywhere else this is used: a NEXT_PUBLIC_
+  // variable would bake the build machine's setting into the image.
+  const source = tileSource();
+  const tiles = {
+    url: source.url,
+    isDefault: source.url === OPENSTREETMAP.url,
+  };
 
   const contact = contactDetails();
   // Asked of the same function the cron uses, so this reports what would
@@ -299,6 +308,39 @@ export default async function AdminHealthPage() {
             machine, and this application cannot see whether it is switched on.
             The dump is the copy you can take somewhere else.
           </p>
+        </div>
+      </Panel>
+
+      <Panel
+        title="Map tiles"
+        description="Live tracking puts a map on a customer's screen, which is the point at which whose tiles these are stops being a detail."
+        action={
+          <Pill tone={tiles.isDefault ? 'warn' : 'good'}>
+            {tiles.isDefault ? 'OpenStreetMap' : 'Your own'}
+          </Pill>
+        }
+      >
+        <div className="space-y-2 px-4 py-3">
+          {/* Written down here rather than left in a code comment because it
+              is a licence matter, not a performance one: OSM's tile policy
+              covers light use, and a map on every live delivery is not that.
+              The seam has existed since the store picker was built; this is
+              the deployment that has to use it. */}
+          <p
+            className={`text-xs leading-relaxed ${
+              tiles.isDefault ? 'font-semibold text-amber-800' : 'text-ink-muted'
+            }`}
+          >
+            {tiles.isDefault
+              ? 'Tiles are coming from OpenStreetMap’s own servers. Their policy allows light use, and a map on every live delivery is not light use — set MAP_TILE_URL to a provider or to tiles you host before real volume.'
+              : 'Tiles are coming from your own MAP_TILE_URL, which is what a customer-facing map needs.'}
+          </p>
+          <p className="text-[11px] leading-relaxed text-ink-faint">
+            The map only loads while a rider is carrying an order, so requests
+            are proportional to live deliveries rather than to page views. It is
+            never on a delivered order.
+          </p>
+          <p className="break-all font-mono text-[11px] text-ink-faint">{tiles.url}</p>
         </div>
       </Panel>
 

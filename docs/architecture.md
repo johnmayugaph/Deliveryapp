@@ -515,6 +515,74 @@ food is still sitting on a counter and another partner can still collect it.
 Only where the lifecycle allows the move back to `AWAITING_RIDER_ASSIGNMENT`;
 otherwise it becomes a rider cancellation, with a reason.
 
+### Live tracking, and the half that was missing
+
+A customer watching an order in transit gets a map with two pins: their address
+and the rider. It exists because of one uncomfortable discovery — the rider's
+side of it had never been built.
+
+`updateLocationAction` had been in the codebase since dispatch, and **nothing
+called it**. A position was written once, when a partner went online, and then
+aged for the rest of the shift. Dispatch was ranking candidates on where they
+had been when they clocked in, and a map — had there been one — would have shown
+a motorcycle parked wherever the rider had breakfast. `LocationShare` is the
+missing half: a `watchPosition` subscription that runs while, and only while,
+the partner is online.
+
+**`watchPosition`, not a timer around `getCurrentPosition`.** The browser is
+already holding a fix for its own purposes; asking it to wake the radio afresh
+every fifteen seconds is how an app becomes the reason a rider's battery dies
+mid-shift. What is throttled is the **writing**: fifteen seconds *and*
+twenty-five metres, so a phone at a red light is silent.
+
+**A throttled fix is held, not dropped.** `watchPosition` reports *changes*, so
+a rider who moves and then stops gets one callback. If that callback lands
+inside the throttle window and is discarded, the position they stopped at is
+never written — and stopping is what arriving looks like, which makes it the
+worst fix in the world to lose. The newest reading is kept in a ref and
+reconsidered every three seconds. Hence `shouldShareFix(previous, next, now)`
+measures the interval against the **clock**, not against the gap between the two
+readings: asked the second way, a fix taken two seconds after a write stays two
+seconds after it forever and can never be sent, however long it sits in hand.
+
+**The rider can see that it is running.** A background location share nobody
+mentions is the kind of thing that ends up in a news story, so the fleet header
+carries a sentence naming the interval and the distance, and says when location
+is blocked and what that costs them.
+
+Four gates decide whether the customer sees a pin, and `riderPositionForCustomer`
+returns `null` — never an error, never a partial answer — at each of them:
+
+1. **The order is theirs.** `order.customerId !== userId` is the first check
+   after the row loads.
+2. **Somebody is carrying it.** `TRACKABLE_STATUSES` *is* `ACTIVE_JOB_STATUSES`
+   rather than a second list beside it; a tracking window that drifts out of
+   step with the lifecycle is a pin on a delivered order.
+3. **The fix is recent.** Ninety seconds. Older than that and the map says so in
+   a sentence instead of showing a pin that has stopped being true.
+4. **The coordinates are plausible.** A bad fix reports a position that is wrong
+   rather than absent — the null-island reading at (0, 0) is the classic — so the
+   Philippines bounds are applied before anything is returned.
+
+The order page's query asks for the rider's **name** and never the position
+columns; the coordinates reach the browser only through the polled action, which
+returns four numbers and nothing else. The rider's phone number, their other
+jobs and their history are not on the customer's screen and are not in the
+payload that builds it.
+
+**Distance, never an ETA.** The panel says "3.8 km away" and the caption says it
+is a straight line. Minutes across a city with one bridge is the number that
+makes somebody stand at a gate, and we do not have a routing engine — so we do
+not make the claim. The component is grep-tested against ever making it.
+
+The map is Leaflet with `MAP_TILE_URL` behind it. Two operational notes learned
+the hard way: `/admin/health` now warns that a customer-facing map on
+OpenStreetMap's own tiles is outside their usage policy and wants a self-hosted
+or paid provider; and the tile layer is trusted only as far as its own counters
+— Leaflet's `load` event fires when a batch settles whether the tiles arrived or
+failed, so `tileload`/`tileerror` are counted and an eight-second timeout falls
+back to the sentence.
+
 ### Completion closes the loop
 
 Delivering runs two transitions: the partner marks DELIVERED, then the SYSTEM
@@ -2627,7 +2695,9 @@ sense as an undrained outbox, and says which command to run.
 
 ## Verification
 
-Database-free, in CI (`npm run verify`) — **396 tests**:
+Database-free, in CI (`npm run verify`) — **1142 tests across 36 files**. The
+table below names the ones that carry a rule rather than a case; the rest cover
+a single feature each and are named for it.
 
 | File | Covers |
 | --- | --- |
@@ -2646,6 +2716,11 @@ Database-free, in CI (`npm run verify`) — **396 tests**:
 | `push-crypto.test.ts` | RFC 8291 output pinned to the reference implementation; an independent decryptor; VAPID signing and refusals |
 | `push-send.test.ts` | The Web Push request over a real socket; GONE versus FAILED on every status; what a browser may register |
 | `admin-access.test.ts` | Who counts as an admin, the reason rule, Manila day boundaries, and grep rules that every action is authorised, reasoned and logged |
+| `live-tracking.test.ts` | The four gates on a rider's position, the share throttle including a held fix, distance wording, and greps for the privacy boundary and the map's honesty |
+| `menu-options.test.ts` | Server-authoritative choice pricing, group bounds, satisfiability, and every tamper case |
+| `menu-photos.test.ts` | Magic-byte sniffing, dimension limits, and the bytes never entering a page payload |
+| `fleet-verification.test.ts` | Who may decide an application, per-service independence, and what the partner is told |
+| `public-routes.test.ts` | Which subtrees are reachable without a session, asserted against the middleware itself |
 
 Verified separately against a live PostgreSQL 16 with the SQL guards applied:
 

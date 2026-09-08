@@ -4,6 +4,7 @@ import { getCurrentUser, displayNameFor } from '@/lib/auth/session';
 import { getFleetPartner, getActiveJob } from '@/lib/fleet/partner';
 import { FleetTabs } from '@/components/fleet/FleetTabs';
 import { AvailabilityToggle } from '@/components/fleet/AvailabilityToggle';
+import { LocationShare } from '@/components/fleet/LocationShare';
 import { NotificationBell } from '@/components/notifications/NotificationBell';
 import { prisma } from '@/lib/prisma';
 
@@ -72,6 +73,11 @@ export default async function FleetLayout({ children }: { children: React.ReactN
 
         <FleetTabs hasActiveJob={activeJob !== null} />
       </header>
+
+      {/* Mounted in the layout so it survives moving between the fleet
+          screens: a share that restarted on every navigation would drop the
+          fix each time and report far less often than it says it does. */}
+      <LocationShare isOnline={partner.isOnline} />
 
       {children}
     </div>

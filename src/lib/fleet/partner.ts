@@ -12,6 +12,7 @@ import { prisma } from '@/lib/prisma';
 import { requireCurrentUser } from '@/lib/auth/session';
 import { getLifecycle } from '@/lib/orders/transitions';
 import { partnerEarningsCentavos } from '@/lib/fleet/offer-policy';
+import { ACTIVE_JOB_STATUSES } from '@/lib/fleet/job-policy';
 
 /**
  * The fleet partner's own view of themselves.
@@ -42,23 +43,12 @@ export async function requireFleetPartner(): Promise<FleetPartner> {
   return partner;
 }
 
-/**
- * Statuses that mean a partner is currently carrying something.
- *
- * Derived from the lifecycle map across every vertical, so a new vertical's
- * in-transit states are covered as soon as its lifecycle is registered. Only
- * the states AFTER assignment count — an order merely offered is not a job.
- */
-export const ACTIVE_JOB_STATUSES: readonly OrderStatus[] = [
-  OrderStatus.RIDER_ASSIGNED,
-  OrderStatus.RIDER_AT_PICKUP,
-  OrderStatus.SHOPPING_IN_PROGRESS,
-  OrderStatus.AWAITING_BUDGET_APPROVAL,
-  OrderStatus.PASSENGER_ONBOARD,
-  OrderStatus.PICKED_UP,
-  OrderStatus.IN_TRANSIT,
-  OrderStatus.ARRIVED_AT_DROPOFF,
-];
+/* `ACTIVE_JOB_STATUSES` moved to `fleet/job-policy.ts`, which is pure. This
+ * module reaches for the session, so a client component importing the list
+ * from here dragged `next/headers` into the browser bundle — which is exactly
+ * how the customer's tracking map first failed. Re-exported so the callers
+ * that already had it are unaffected. */
+export { ACTIVE_JOB_STATUSES };
 
 export interface ActiveJob {
   order: Order;

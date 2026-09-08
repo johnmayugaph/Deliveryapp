@@ -2125,3 +2125,109 @@ question, so the first thing a shop owner opening the menu screen sees is what
 the feature is rather than a note saying it exists.
 
 1097 tests pass; build and lint clean.
+
+## Phase 31 — Live tracking: the rider's pin on the customer's screen
+
+A customer with an order in transit now gets a map: their address, the rider,
+and how far apart the two are. Building it turned up something worse than a
+missing feature.
+
+### The action nothing called
+
+`updateLocationAction` has existed since dispatch was built, and **nothing ever
+called it**. A partner's position was written once — when they tapped Online —
+and then aged for the rest of the shift. Two consequences, one of them live in
+production logic for six phases: dispatch has been ranking candidates by
+distance from wherever they were when they clocked in, and any map would have
+shown a motorcycle parked outside wherever the rider had breakfast.
+
+So the customer's map is the second half of this change. The first is
+`LocationShare`, mounted in the fleet layout, which subscribes to
+`watchPosition` while the partner is online and stops when they go offline.
+
+`watchPosition` rather than a timer around `getCurrentPosition`: the browser is
+already keeping a fix, and waking the radio every fifteen seconds is how an app
+becomes the reason a rider's battery dies before their shift ends. The
+**writes** are what get throttled — fifteen seconds and twenty-five metres — so
+a phone at a red light is quiet.
+
+The rider is told it is happening, in the header, with the numbers: a background
+location share nobody mentions is the kind of thing that ends up in a news
+story.
+
+### Four gates, and every refusal is `null`
+
+`riderPositionForCustomer` answers with a position or with nothing. Not an
+error, not a partial answer — six separate `return null`s, because "why can't I
+see the rider" is not a question the answer should help somebody explore. It
+checks, in order: the order exists, **it belongs to the person asking**,
+somebody is actually carrying it, a rider is assigned, the coordinates are not
+null, the fix is under ninety seconds old, and the coordinates are inside the
+Philippines.
+
+`TRACKABLE_STATUSES` *is* `ACTIVE_JOB_STATUSES` — imported, not copied. A
+tracking window maintained separately from the lifecycle drifts out of step with
+it, and the drift shows up as a pin on a delivered order.
+
+The order page asks for the rider's **name** and never the position columns. The
+coordinates reach the browser through the polled action alone, four numbers at a
+time.
+
+### Distance, never an ETA
+
+"3.8 km away", with a caption saying it is a straight line and that it
+disappears if the signal goes quiet. Minutes across Metro Manila from a
+straight-line distance is the number that makes somebody go and stand at a gate,
+and there is no routing engine here — so the claim is not made, and a test greps
+the component to keep it that way.
+
+### Three bugs, two of them mine and only findable in a browser
+
+**A fix refused for being early was refused forever.** `shouldShareFix` measured
+the interval between the two *readings* rather than against the clock. A reading
+taken two seconds after a write is two seconds after it permanently — so it was
+dropped, and because `watchPosition` reports *changes*, a rider who moved and
+then stopped got no further callback and the position they stopped at was never
+written. Stopping is what arriving looks like. The rule now takes `now`, and the
+newest reading is held and reconsidered every three seconds instead of being
+discarded.
+
+**The map was unreadable and every test passed.** `RiderMap` never imported
+`leaflet/dist/leaflet.css`. The tiles loaded, Leaflet marked them loaded, my
+browser check counted six of them and two markers and went green — and the tiles
+were stacking down the page in document flow, because `.leaflet-tile { position:
+absolute }` lives in that stylesheet. Counting DOM nodes is not looking at a
+map. The e2e now samples a grid of twenty-five points across the map box and
+requires every one of them to land inside a tile, and a unit test asserts the
+stylesheet import in *every* component that draws a map, because the omission is
+easy to repeat and invisible until somebody looks at a screen.
+
+**`next/headers` in the client bundle, for the fourth time — and the first to
+take a page down.** `RiderMap` → `orders/tracking.ts` → `fleet/partner.ts` →
+`auth/session.ts` → `next/headers`, and both `/fleet` and the order page
+returned 500. `ACTIVE_JOB_STATUSES` moved into a new pure `fleet/job-policy.ts`
+which imports nothing but types, re-exported from `partner.ts` so no call site
+changed. That is the fifth such module now, each with a guard test.
+
+### Verified in three places
+
+Forty-three unit tests: the trackable set against every lifecycle in the
+registry, freshness including a fix dated slightly in the future, the share
+throttle including the held-fix case above, distance wording, and greps for the
+privacy boundary, the transport, the rider-side copy, the map's honesty and the
+stylesheet.
+
+Ten checks against the real database: a fresh fix returned, a stale one
+withheld, another account given nothing, a forged order id given nothing,
+nothing once DELIVERED or COMPLETED or CANCELLED_BY_CUSTOMER, a null-island fix
+dropped, a rider who never shared, and an order with no rider.
+
+Seventeen in a real browser at 390px, both sides at once: the tiles covering the
+box, two pins, the freshness line, no arrival claim, the rider's pin moving and
+the distance closing when the position changes, a stale fix blanking the pin and
+replacing it with "No signal from Maria for a moment", no sharing while offline,
+going online writing a first position, the rider being told they are sharing, **a
+moved phone reporting again** — which is the assertion this whole phase exists
+for — and no map at all on a delivered order.
+
+1142 tests pass; typecheck and lint clean.
