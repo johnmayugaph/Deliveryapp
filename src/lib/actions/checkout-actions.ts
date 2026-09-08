@@ -10,7 +10,7 @@ import {
   type CheckoutQuote,
 } from '@/lib/orders/place-order';
 import { cancellationStatusForActor, transitionOrder } from '@/lib/orders/state-machine';
-import { refundOrderCredits } from '@/lib/orders/maintenance';
+import { settleCancelledOrder } from '@/lib/orders/maintenance';
 import { prisma } from '@/lib/prisma';
 
 /**
@@ -102,7 +102,11 @@ export async function cancelOrderAction(
         },
         tx,
       );
-      return refundOrderCredits({ orderId, reason: 'Order cancelled' }, tx);
+      const settlement = await settleCancelledOrder(
+        { orderId, reason: 'Order cancelled' },
+        tx,
+      );
+      return settlement.creditsRefundedCentavos;
     });
 
     revalidatePath('/orders');

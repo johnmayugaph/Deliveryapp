@@ -245,15 +245,49 @@ export async function submitOrder(
     serviceType: ServiceKey;
     actor?: OrderActor;
     actorUserId?: string;
+    /**
+     * Park the order in PENDING_PAYMENT instead of sending it onward.
+     *
+     * The gate that stops a kitchen cooking food nobody has paid for. Checkout
+     * sets it from the payment method rather than naming a status, so this
+     * stays the only module that knows which state a payment wait is.
+     */
+    awaitPayment?: boolean;
   },
   client?: PrismaTransactionClient,
 ): Promise<Order> {
   return transitionOrder(
     {
       orderId: input.orderId,
-      to: getLifecycle(input.serviceType).submittedStatus,
+      to: input.awaitPayment
+        ? OrderStatus.PENDING_PAYMENT
+        : getLifecycle(input.serviceType).submittedStatus,
       actor: input.actor ?? OrderActor.CUSTOMER,
       actorUserId: input.actorUserId,
+    },
+    client,
+  );
+}
+
+/**
+ * Lets a paid order out of the payment wait and on to whoever fulfils it.
+ *
+ * SYSTEM rather than SUPPORT_AGENT even when a human confirmed the transfer:
+ * the person confirmed that money arrived, and the release is what this code
+ * does about it. Recording the release as a support action would put an
+ * administrator's name on every prepaid order in the audit trail and bury the
+ * ones they actually intervened in.
+ */
+export async function releaseAfterPayment(
+  input: { orderId: string; serviceType: ServiceKey },
+  client?: PrismaTransactionClient,
+): Promise<Order> {
+  return transitionOrder(
+    {
+      orderId: input.orderId,
+      to: getLifecycle(input.serviceType).submittedStatus,
+      actor: OrderActor.SYSTEM,
+      metadata: { releasedBy: 'payment-confirmed' },
     },
     client,
   );

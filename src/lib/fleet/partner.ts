@@ -11,6 +11,7 @@ import {
 import { prisma } from '@/lib/prisma';
 import { requireCurrentUser } from '@/lib/auth/session';
 import { getLifecycle } from '@/lib/orders/transitions';
+import { cashToCollectCentavos } from '@/lib/payments/policy';
 import { partnerEarningsCentavos } from '@/lib/fleet/offer-policy';
 import { ACTIVE_JOB_STATUSES } from '@/lib/fleet/job-policy';
 
@@ -58,6 +59,16 @@ export interface ActiveJob {
   /** Transitions this partner may perform now, from the lifecycle map. */
   nextActions: OrderStatus[];
   earningsCentavos: number;
+  /**
+   * What to collect at the door, in cash. Zero when it is already paid.
+   *
+   * Computed here rather than on the screen so there is one answer to the
+   * question, and it is the same answer everywhere. Getting this wrong costs
+   * real money in one direction and a customer's trust in the other: a rider
+   * who does not ask hands over food for free, and a rider who asks on a
+   * prepaid order is asking somebody to pay twice.
+   */
+  cashToCollectCentavos: number;
   /** Item lines, when the vertical has any. Read defensively. */
   itemSummary: string | null;
 }
@@ -117,6 +128,11 @@ export async function getActiveJob(fleetPartnerId: string): Promise<ActiveJob | 
       (to) => (lifecycle.permittedActors[to] ?? []).includes('FLEET_PARTNER'),
     ),
     earningsCentavos: partnerEarningsCentavos(order),
+    cashToCollectCentavos: cashToCollectCentavos(
+      order.paymentMethod,
+      order.paymentStatus,
+      order.totalCentavos,
+    ),
     itemSummary: summariseItems(order.details),
   };
 }

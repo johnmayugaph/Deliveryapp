@@ -2231,3 +2231,137 @@ moved phone reporting again** — which is the assertion this whole phase exists
 for — and no map at all on a delivered order.
 
 1142 tests pass; typecheck and lint clean.
+
+## Phase 32 — Payments
+
+Customers can now pay before the food is cooked. Cash on delivery still works
+and most orders will still use it, but riders carrying a shift's takings was the
+largest operational risk in the business, and this is the thing that reduces it.
+
+### The rail, and why it is a person rather than a webhook
+
+The prepaid rail is a transfer the customer makes themselves: they send the
+total in GCash (or Maya, or their bank), put the order number in the note, and
+type the reference back into the app. Somebody with access to the receiving
+account checks it at `/admin/payments` and confirms. Only then does the order
+reach the shop.
+
+I could not have shipped a provider integration honestly this session even if
+it were the right call — both PayMongo documentation domains are blocked by
+this environment's network policy, and I will not write a wire format from
+memory and call it verified. But the better reason is sequencing: a provider
+account needs DTI or SEC registration and BIR registration, which are still
+open items on the launch checklist. This rail needs a phone number, charges no
+per-transaction fee, and is how a great many small Philippine businesses
+already take money.
+
+What it costs is a person's attention, once per order. It does not scale past
+the volume one person can check, and `src/lib/payments/rails/` is the seam for
+a provider rail when it starts hurting — `begin()` already returns a
+discriminated union so a hosted redirect is a second arm rather than a rewrite.
+
+**No webhook verifier ships until something calls it.** I nearly built one:
+signature verification is provider-agnostic and fully testable, and it would
+have looked like progress. This codebase has now been bitten three times by
+machinery that was designed, committed and never wired up — twice in the last
+two phases — and adding a fourth piece would have been repeating the mistake
+while writing about it.
+
+### A second ledger, not a status column
+
+`PaymentEvent` is the credits ledger's twin: append-only, sign forced by event
+type, one write function, and `Order.paymentStatus` as a derived cache the way
+`Wallet.balanceCentavos` is. Seven event types, split between claims that move
+nothing and events that move money — because a customer saying they have paid
+is not money arriving, and the gap between those two is where a payments bug
+lives.
+
+The two ledgers are separate tables with **no schema path between them**, which
+is what makes "cash can never become credits" checkable rather than a
+convention. `REFUND_DESTINATION` states it per instrument, and the database
+repeats it: a credits refund is refused for an order that never spent credits,
+and a transfer-paid order has no such row. Pay ₱500, cancel, keep ₱500 of
+spendable balance would be a top-up, and the credits design promises there
+isn't one.
+
+### The third dead feature this codebase has been hiding
+
+`PENDING_PAYMENT` has been in `OrderStatus` since the schema was written, with
+the right edges in four of the five lifecycles, and nothing ever used it. After
+`updateLocationAction` last phase and `setItemPriceAction` before that, I have
+stopped being surprised. RIDE was the fifth lifecycle and did not have the edge
+— a drift nobody would have noticed until Sakay launched without prepayment,
+which is the vertical where prepaying matters most.
+
+### Four bugs, three of them mine
+
+**A claim looked like nothing had happened.** The expiry sweep cancels an
+unpaid order after twenty minutes. A customer's claim derived as `PENDING`, so
+the sweep cancelled orders where somebody had sent the money and was waiting on
+*us* to check it. Cancelling an order because we were slow is not a timeout, it
+is a bug with a clock attached. `CLAIMED` is now its own payment status — not
+`AUTHORIZED`, because in payments that word means an issuer approved the funds
+and anybody can type thirteen digits into a box. Found against the real
+database; the unit tests happily asserted the wrong thing because I had written
+them to match the code.
+
+**A cancelled prepaid order kept the customer's money.** Three call sites each
+refunded credits, and none noticed that a transfer-paid order has no credits to
+refund — so the credits refund correctly returned zero, correctly did nothing,
+and the ₱324 stayed with us. One `settleCancelledOrder` now handles both halves.
+
+**The refusal reason never reached the screen it was for.** The console demands
+a reason so the customer can act on it — "check the last four digits" is the
+whole value — and it went to their notification inbox while the order screen,
+the one with the field they have to correct, said "We could not match that
+payment". True, generic, useless. Found in a browser.
+
+**A guard that would have refused a legitimate refund.** My first version
+checked the destination against the order's headline payment method, which
+would have refused to return credits genuinely spent on a part-transfer order.
+The rule is per portion, not per order; the invariant is enforced at both ends
+instead.
+
+### Two vacuous tests, worth recording
+
+Two of my browser checks passed regardless of what the app did. One matched the
+word "reason" against the form's own explanatory copy rather than a validation
+failure. The other polled for a condition that was already true before the
+click, so it returned instantly and reported a stale reading. Both now assert
+the effect — the browser's own `validity`, and the payment status actually
+changing.
+
+### What is not built
+
+**Settlement.** Prepaid money arrives with us, not with the shop, and nothing
+here pays a store or a rider out. That needs a bank arrangement and the business
+registration. Each payment records the order it was for, so what is owed is
+computable — computing it is not paying it, and it is the next real piece of
+work.
+
+### Verified in three places
+
+Seventy unit tests: the no-top-up rule per instrument and asserted in the SQL
+guards, the prepaid hold and its timeout across every lifecycle in the
+registry, event signs against the database CHECK constraint, the derived status
+through short payments and refusals and partial refunds, reference parsing, and
+what the rider is told to collect.
+
+Twenty checks against the real database with the guards applied: the whole
+prepaid path from claim to kitchen, a short payment not opening it, a double
+tap not charging twice, the append-only trigger, the sign constraint, **a
+credits refund of transfer money refused by the database**, credits still
+refunding to credits, the refund queue clearing itself, and the sweep leaving a
+claimed payment alone while letting an unclaimed one go.
+
+Twenty-six in a real browser at 390px and 1280px, customer and console at once:
+choosing the transfer, the account details and our reference on the order
+screen, an unreadable reference refused kindly, a claim recorded as a claim,
+the console queue with the wait and the reference to look for, a refusal that
+cannot be submitted without a reason and does not cancel the order, the reason
+reaching the customer where they retry, confirmation sending the order to the
+shop, the audit row, **the rider told to collect nothing on a prepaid order and
+₱399.00 on an unconfirmed one**, and a cancelled order's refund recorded with
+no credits row written.
+
+1222 tests pass; typecheck, lint and build clean.

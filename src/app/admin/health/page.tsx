@@ -8,6 +8,7 @@ import { captchaIsHalfConfigured, isCaptchaConfigured } from '@/lib/auth/captcha
 import { backupState } from '@/lib/backup/queries';
 import { menuImageFootprint } from '@/lib/media/menu-images';
 import { OPENSTREETMAP, tileSource } from '@/lib/geo/tiles';
+import { paymentRailStatus } from '@/lib/payments/rails';
 import { supportSummary } from '@/lib/support/queries';
 import { contactDetails, describeContactPosture } from '@/lib/support/contact';
 import {
@@ -60,6 +61,11 @@ export default async function AdminHealthPage() {
     url: source.url,
     isDefault: source.url === OPENSTREETMAP.url,
   };
+
+  // Reduced to a status before it reaches the page: the account NUMBER is
+  // configuration a health screen has no reason to print, and the label is
+  // enough to say whether the rail is on.
+  const paymentRail = paymentRailStatus();
 
   const contact = contactDetails();
   // Asked of the same function the cron uses, so this reports what would
@@ -307,6 +313,42 @@ export default async function AdminHealthPage() {
             point-in-time recovery on the database host — it survives this
             machine, and this application cannot see whether it is switched on.
             The dump is the copy you can take somewhere else.
+          </p>
+        </div>
+      </Panel>
+
+      <Panel
+        title="Taking money"
+        description="Cash on delivery always works. Prepayment needs an account for customers to send to, and it is what takes cash out of a rider's hands."
+        action={
+          <Pill tone={paymentRail.configured ? 'good' : 'warn'}>
+            {paymentRail.configured ? paymentRail.label : 'Cash only'}
+          </Pill>
+        }
+      >
+        <div className="space-y-2 px-4 py-3">
+          <p
+            className={`text-xs leading-relaxed ${
+              paymentRail.configured ? 'text-ink-muted' : 'font-semibold text-amber-800'
+            }`}
+          >
+            {paymentRail.configured
+              ? `Customers can pay in advance by ${paymentRail.label} transfer, and somebody here confirms each one against the account. Prepaid orders wait in PENDING_PAYMENT and never reach a store unconfirmed.`
+              : 'Every order is cash on delivery, so riders carry money for the whole shift. Set PAYMENT_TRANSFER_LABEL, PAYMENT_TRANSFER_ACCOUNT_NAME and PAYMENT_TRANSFER_ACCOUNT_NUMBER — all three, or the method stays off — to let customers pay in advance.'}
+          </p>
+          {paymentRail.missing.length > 0 && paymentRail.missing.length < 3 ? (
+            <p className="text-[11px] font-semibold leading-relaxed text-amber-800">
+              Partly configured, so it is switched off on purpose: {paymentRail.missing.join(', ')}{' '}
+              {paymentRail.missing.length === 1 ? 'is' : 'are'} missing. Offering a
+              transfer with no account to send it to takes an order nobody can pay.
+            </p>
+          ) : null}
+          <p className="text-[11px] leading-relaxed text-ink-faint">
+            Confirmation is a person reading a statement, not a webhook, and that
+            is a deliberate limit rather than a stopgap: it needs no provider
+            account, has no per-transaction fee, and does not scale past the
+            volume one person can check. There is a seam for a provider rail when
+            it starts hurting — see docs/architecture.md.
           </p>
         </div>
       </Panel>

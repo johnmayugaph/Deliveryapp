@@ -256,6 +256,56 @@ export const KIND_POLICY: Readonly<Record<NotificationKind, KindPolicy>> = {
     urgency: NotificationUrgency.INFORMATIONAL,
     channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
   },
+
+  // Somebody sent money and is watching the screen for it to be acknowledged.
+  // Push, because the wait is the point; no SMS, because the app is already
+  // open in front of them.
+  [NotificationKind.PAYMENT_CONFIRMED]: {
+    urgency: NotificationUrgency.OPERATIONAL,
+    channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
+  },
+
+  // Their money is somewhere and their order is not moving. This one gets an
+  // SMS: the reason it exists is that something went wrong with a payment, and
+  // "check the app" is not a thing to leave sitting in an inbox nobody opens.
+  [NotificationKind.PAYMENT_NEEDS_ATTENTION]: {
+    urgency: NotificationUrgency.OPERATIONAL,
+    channels: [
+      NotificationChannel.IN_APP,
+      NotificationChannel.PUSH,
+      NotificationChannel.SMS,
+    ],
+  },
+
+  // We are holding somebody's money for an order that is not happening. Every
+  // channel short of unmutable: this is the message whose absence turns a
+  // cancelled order into a complaint.
+  [NotificationKind.PAYMENT_REFUND_DUE]: {
+    urgency: NotificationUrgency.OPERATIONAL,
+    channels: [
+      NotificationChannel.IN_APP,
+      NotificationChannel.PUSH,
+      NotificationChannel.SMS,
+    ],
+  },
+
+  // Money going back is news people chase. Worth an SMS for the same reason a
+  // refund is worth a receipt.
+  [NotificationKind.PAYMENT_REFUNDED]: {
+    urgency: NotificationUrgency.OPERATIONAL,
+    channels: [
+      NotificationChannel.IN_APP,
+      NotificationChannel.PUSH,
+      NotificationChannel.SMS,
+    ],
+  },
+
+  // To us, with a customer waiting. Push so it reaches a phone; no SMS,
+  // because at any volume that is a bill for telling ourselves to do our job.
+  [NotificationKind.PAYMENT_AWAITING_REVIEW]: {
+    urgency: NotificationUrgency.OPERATIONAL,
+    channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
+  },
 };
 
 /**

@@ -131,14 +131,64 @@ enum OrderActor {
 enum PaymentMethod {
   CASH_ON_DELIVERY
   WALLET_CREDIT
+  /// Money moved to us out of band — a GCash, Maya or bank transfer the
+  /// customer makes in their own app — and confirmed against a reference
+  /// number by a human. Deliberately brand-free: which wallet it is, and the
+  /// account it goes to, are configuration rather than a type.
+  MANUAL_TRANSFER
 }
 
+/// Every way money can move on an order, as a row rather than a state.
+///
+/// Same discipline as `WalletTransactionType`: the events are the truth and
+/// `Order.paymentStatus` is derived from them by `derivePaymentStatus()`. A
+/// payment that is disputed months later needs to show what happened and
+/// when, and a single mutable status column cannot.
+///
+/// Note what is absent: nothing here adds money to a credits balance. Cash
+/// paid in refunds to the source it came from, never into credits, or the
+/// no-top-up rule would have a way around it.
+enum PaymentEventType {
+  /// The customer chose a prepaid method. Nothing has moved yet.
+  CHARGE_REQUESTED
+  /// The customer says they have sent it, and gave us a reference to check.
+  CHARGE_SUBMITTED
+  /// The money is ours. A human checked the reference, or a provider said so.
+  CHARGE_CONFIRMED
+  /// The reference did not check out, or the provider declined it.
+  CHARGE_REFUSED
+  /// Nobody paid inside the window and the order was let go.
+  CHARGE_EXPIRED
+  /// Cash handed over at the door.
+  CASH_COLLECTED
+  /// Money sent back to wherever it came from.
+  REFUND_ISSUED
+}
+
+/// Derived from an order's `PaymentEvent` rows by `derivePaymentStatus()`.
+/// Never set by hand — it is a cache of the ledger, the way
+/// `Wallet.balanceCentavos` is a cache of the credits ledger.
 enum PaymentStatus {
+  /// Nothing has happened. Money is owed and nobody has said otherwise.
   PENDING
+  /// The customer says they have sent it and nobody has checked yet.
+  ///
+  /// Its own state rather than PENDING, and the distinction earns its keep:
+  /// the expiry sweep cancels an unpaid order after twenty minutes, and a
+  /// customer who has done their part must never be cancelled because WE were
+  /// slow to look. Treating a claim as PENDING did exactly that.
+  ///
+  /// And not AUTHORIZED either. In payments that word means the issuer
+  /// approved the funds; anybody can type thirteen digits into a box.
+  CLAIMED
+  /// Money arrived, and it is less than the total. Held rather than paid: the
+  /// order keeps waiting and the customer is told what is missing, because
+  /// calling ₱300 on a ₱324 order PAID leaves a shop out of pocket.
   AUTHORIZED
   PAID
   PARTIALLY_REFUNDED
   REFUNDED
+  /// A reference that did not check out, or a window that closed.
   FAILED
 }
 
@@ -391,6 +441,7 @@ model User {
   assignedTickets         SupportTicket[]                   @relation("SupportAgentTickets")
   statusEvents            OrderStatusEvent[]
   recordedAdjustments     WalletTransaction[]               @relation("WalletAdjustmentActor")
+  paymentEventsCaused     PaymentEvent[]                    @relation("PaymentEventActor")
   sessions                Session[]
   storeMemberships        StoreMember[]
   grantedStoreAccess      StoreMember[]                     @relation("StoreAccessGranted")
@@ -1029,6 +1080,7 @@ model Order {
   statusEvents       OrderStatusEvent[]
   dispatchOffers     DispatchOffer[]
   walletTransactions WalletTransaction[]
+  paymentEvents      PaymentEvent[]
   supportTickets     SupportTicket[]
   appliedBenefits    OrderAppliedBenefit[]
   notifications      Notification[]
@@ -1305,6 +1357,72 @@ model WalletTransaction {
   @@index([walletId, createdAt(sort: Desc)])
   @@index([relatedOrderId])
   @@index([type, createdAt])
+}
+
+/// APPEND-ONLY record of money moving on an order.
+///
+/// The credits ledger's twin, and for the same reason: money needs a history,
+/// not a status. `Order.paymentStatus` is a derived cache of these rows the way
+/// `Wallet.balanceCentavos` is a derived cache of the ledger, computed by
+/// `derivePaymentStatus()` in src/lib/payments/policy.ts. If the two ever
+/// disagree, these rows are right.
+///
+/// The two ledgers are deliberately separate tables. Credits are an internal
+/// balance that only we grant and only orders can spend; this is real money
+/// arriving from outside. Keeping them apart is what makes "cash can never
+/// become credits" checkable rather than a convention — there is no schema
+/// path from a confirmed charge here to a row over there.
+model PaymentEvent {
+  id      String @id @default(cuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id])
+
+  type PaymentEventType
+
+  /// Which instrument this event is about. Copied onto the row rather than
+  /// read from the order, because an order's method can be corrected by
+  /// support and these rows must keep saying what was true when they happened.
+  method PaymentMethod
+
+  /// Which rail handled it: `manual` for a transfer a person confirmed. A
+  /// provider key when one is wired. A string rather than an enum so adding a
+  /// provider is configuration, not a migration.
+  provider String @default("manual")
+
+  /// SIGNED centavos. Money in is positive, money out negative, and an event
+  /// that moves nothing is zero. The sign is forced by `type` in
+  /// `signedPaymentAmount()` and never supplied by a caller — the same rule
+  /// that stops a refund being booked as a charge in the credits ledger.
+  amountCentavos Int    @default(0)
+  currency       String @default("PHP")
+
+  /// What the customer typed, or the provider's own id for the transaction.
+  /// Not unique: a customer mistyping a reference and correcting it leaves two
+  /// rows, and both are part of what happened.
+  reference String?
+
+  /// Why, in words somebody can act on. Mandatory for a refusal — the
+  /// customer is shown it, and "no" with no reason is unanswerable.
+  note String?
+
+  /// Who caused it: the customer submitting a reference, or the admin who
+  /// confirmed or refused. NULL for events the system authored, like an
+  /// expiry.
+  actorUserId String?
+  actorUser   User?   @relation("PaymentEventActor", fields: [actorUserId], references: [id])
+
+  /// Makes confirmation idempotent. A provider that retries a webhook, or an
+  /// admin double-tapping Confirm, must not charge or refund twice.
+  idempotencyKey String? @unique
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  /// Note the absence of `updatedAt`. This table is not updated.
+  @@index([orderId, createdAt])
+  @@index([type, createdAt])
+  @@index([reference])
 }
 
 // -----------------------------------------------------------------------------
@@ -1664,6 +1782,30 @@ enum NotificationKind {
   /// said so. A DIGEST, deliberately — one message covering several ratings
   /// rather than a buzz per star. Carries the scores and never the words.
   RATINGS_RECEIVED
+  /// To the customer: their payment was matched and the order is moving. The
+  /// one message somebody is actively waiting for while staring at the screen,
+  /// which is why it is worth a push even though the order status message that
+  /// follows says something similar.
+  PAYMENT_CONFIRMED
+  /// To the customer: something about their payment needs them. A reference we
+  /// could not match, or an amount short of the total. Carries the reason
+  /// verbatim, because it is the only thing that tells them what to do next.
+  PAYMENT_NEEDS_ATTENTION
+  /// To the customer: we are holding money for an order that is not going to
+  /// happen, and it is coming back. Separate from PAYMENT_REFUNDED because
+  /// "we owe you" and "it has been sent" are different promises, and on a rail
+  /// where a person makes the transfer by hand there is real time between
+  /// them. Saying "refunded" at cancellation would be a lie with a number on
+  /// it.
+  PAYMENT_REFUND_DUE
+  /// To the customer: money went back. Separate from a cancellation, because
+  /// "your order is off" and "the ₱324 is on its way back to your GCash" are
+  /// two different facts and the second one is the one people chase.
+  PAYMENT_REFUNDED
+  /// To an administrator: a customer says they have paid and nobody has
+  /// checked it yet. The third kind addressed to the people running the
+  /// business, and the one with a customer waiting behind it.
+  PAYMENT_AWAITING_REVIEW
   /// To a fleet partner: a decision was made about one of their applications.
   /// Named per service, because that is the only useful version of the news —
   /// "you are approved" without saying for what is not actionable. A refusal
@@ -1885,6 +2027,17 @@ enum AdminAction {
   /// purpose: approval to carry food is not approval to carry a passenger, and
   /// the audit trail has to be able to say which decision was made.
   FLEET_VERIFICATION_CHANGED
+  /// A customer's payment was confirmed as received. Audited because it is the
+  /// moment somebody decides money arrived, on the word of a person reading a
+  /// statement — which is exactly the decision a dispute needs a record of.
+  PAYMENT_CONFIRMED
+  /// A claimed payment was refused. The reason goes to the customer as well as
+  /// to the audit trail.
+  PAYMENT_REFUSED
+  /// Money was sent back to where it came from. Records that somebody said
+  /// they made the transfer; the transfer itself happens outside this system,
+  /// which is precisely why the claim needs a name against it.
+  PAYMENT_REFUNDED
   /// A fleet partner was suspended from all work, or reinstated. Separate from
   /// the per-service decision because it is not a judgement about documents —
   /// it stops everything at once, and it is reversible.

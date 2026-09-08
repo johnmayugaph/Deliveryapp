@@ -1,6 +1,7 @@
 import {
   FulfilmentAddressRole,
   OrderActor,
+  PaymentEventType,
   PaymentMethod,
   PaymentStatus,
   Prisma,
@@ -11,6 +12,8 @@ import { prisma, type PrismaTransactionClient } from '@/lib/prisma';
 import { assertServiceOrderable } from '@/lib/services/registry';
 import { parseOrderDetails, type FoodItemSnapshot } from '@/lib/orders/details';
 import { submitOrder } from '@/lib/orders/state-machine';
+import { recordPaymentEvent } from '@/lib/payments/events';
+import { isPrepaid } from '@/lib/payments/policy';
 import { getLifecycle } from '@/lib/orders/transitions';
 import { commitBenefitUsage, quoteOrderPrice, type PriceQuote } from '@/lib/pricing/checkout';
 import { quoteDeliveryFee, type DeliveryQuote } from '@/lib/pricing/delivery-fee';
@@ -364,6 +367,13 @@ export async function placeOrder(input: CheckoutInput): Promise<{
         },
       });
 
+      // A prepaid order waits for the money before it reaches the shop.
+      // `totalCentavos > 0` matters: credits can cover an order completely, and
+      // holding an order that owes nothing would wait forever for a transfer
+      // nobody needs to make.
+      const awaitPayment =
+        isPrepaid(input.paymentMethod) && quote.price.totalCentavos > 0;
+
       // The state machine decides where a FOOD order goes next, not us.
       const submitted = await submitOrder(
         {
@@ -371,9 +381,26 @@ export async function placeOrder(input: CheckoutInput): Promise<{
           serviceType: ServiceKey.FOOD,
           actor: OrderActor.CUSTOMER,
           actorUserId: input.customerId,
+          awaitPayment,
         },
         tx,
       );
+
+      if (awaitPayment) {
+        // Recorded inside the placement transaction: an order parked in
+        // PENDING_PAYMENT with no event saying why is an order support cannot
+        // explain to the person waiting.
+        await recordPaymentEvent(
+          {
+            orderId: created.id,
+            type: PaymentEventType.CHARGE_REQUESTED,
+            method: input.paymentMethod,
+            actorUserId: input.customerId,
+            idempotencyKey: `charge-requested:${created.id}`,
+          },
+          tx,
+        );
+      }
 
       if (quote.price.subscriptionId && quote.price.appliedBenefits.length > 0) {
         await commitBenefitUsage(

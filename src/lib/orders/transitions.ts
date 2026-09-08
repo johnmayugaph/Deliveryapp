@@ -1,4 +1,5 @@
-import { OrderActor, OrderStatus, ServiceKey } from '@prisma/client';
+import { OrderActor, OrderStatus, PaymentStatus, ServiceKey } from '@prisma/client';
+import { PAYMENT_WINDOW_SECONDS } from '@/lib/payments/policy';
 
 /**
  * Per-service order lifecycles.
@@ -35,14 +36,28 @@ export interface StatusTimeout {
   to: OrderStatus;
   /** Recorded as the cancellation reason, so the customer gets an explanation. */
   reason: string;
+  /**
+   * Only expire while the order's payment is in one of these states. Absent
+   * means the timeout does not care about money.
+   *
+   * This exists for the payment wait, where "the clock ran out" is not enough
+   * to cancel on. A customer who has sent the money and given us a reference
+   * has done their part; if we are slow to check it, that is our delay and
+   * cancelling their order for it is indefensible. So the payment timeout
+   * fires only while NOTHING has been claimed — and the transition's own
+   * optimistic status guard covers the narrower race where a confirmation
+   * lands between this sweep reading the order and writing to it.
+   */
+  whilePaymentStatus?: readonly PaymentStatus[];
 }
 
 export interface ServiceLifecycle {
   /** State a freshly created order starts in. */
   initialStatus: OrderStatus;
   /**
-   * The status an order sits in while it waits for the customer to pay or
-   * confirm. Checkout moves an order here; nothing else should.
+   * Where a placed order goes once there is nothing left to wait for: to the
+   * shop for FOOD, straight to dispatch for a parcel. Checkout moves an order
+   * here, or to PENDING_PAYMENT first when the method is prepaid.
    */
   submittedStatus: OrderStatus;
   /** Nothing may leave these. */
@@ -142,6 +157,31 @@ const IN_TRANSIT_CANCELLATIONS: readonly OrderStatus[] = [
   OrderStatus.CANCELLED_BY_SYSTEM,
 ];
 
+/**
+ * Who may park an order in PENDING_PAYMENT.
+ *
+ * The customer, because placing a prepaid order is what puts it there, and the
+ * system, because a provider rail may need to move an order back into a wait.
+ * Not the merchant: a shop cannot decide an order is unpaid.
+ */
+const PAYMENT_ACTORS: readonly OrderActor[] = [OrderActor.CUSTOMER, OrderActor.SYSTEM];
+
+/**
+ * The payment wait, identical for every vertical.
+ *
+ * Defined once and spread into each lifecycle. Retyping it five times is how
+ * four of them end up with twenty minutes and the fifth with two, and nobody
+ * finds out until a customer complains that their order vanished.
+ */
+const PAYMENT_TIMEOUT: StatusTimeout = {
+  status: OrderStatus.PENDING_PAYMENT,
+  afterSeconds: PAYMENT_WINDOW_SECONDS,
+  to: OrderStatus.CANCELLED_BY_SYSTEM,
+  reason: 'We did not receive the payment in time.',
+  // Only while nothing has been claimed. See `whilePaymentStatus`.
+  whilePaymentStatus: [PaymentStatus.PENDING],
+};
+
 const TERMINAL_STATUSES: readonly OrderStatus[] = [
   OrderStatus.COMPLETED,
   OrderStatus.FAILED_DELIVERY,
@@ -195,6 +235,7 @@ const FOOD_LIFECYCLE: ServiceLifecycle = {
     [OrderStatus.DELIVERED]: [OrderStatus.COMPLETED],
   },
   timeouts: [
+    PAYMENT_TIMEOUT,
     {
       // The one that matters most: without it a placed order can sit unanswered
       // forever while the customer waits for food that is never being cooked.
@@ -222,6 +263,7 @@ const FOOD_LIFECYCLE: ServiceLifecycle = {
     [OrderStatus.IN_TRANSIT]: [OrderActor.FLEET_PARTNER],
     [OrderStatus.ARRIVED_AT_DROPOFF]: [OrderActor.FLEET_PARTNER],
     [OrderStatus.DELIVERED]: [OrderActor.FLEET_PARTNER, OrderActor.SUPPORT_AGENT],
+    [OrderStatus.PENDING_PAYMENT]: PAYMENT_ACTORS,
     ...CANCELLATION_ACTORS,
   },
 };
@@ -257,6 +299,7 @@ const MART_LIFECYCLE: ServiceLifecycle = {
     [OrderStatus.DELIVERED]: [OrderStatus.COMPLETED],
   },
   timeouts: [
+    PAYMENT_TIMEOUT,
     {
       status: OrderStatus.AWAITING_RIDER_ASSIGNMENT,
       afterSeconds: 20 * 60,
@@ -273,6 +316,7 @@ const MART_LIFECYCLE: ServiceLifecycle = {
     [OrderStatus.IN_TRANSIT]: [OrderActor.FLEET_PARTNER],
     [OrderStatus.ARRIVED_AT_DROPOFF]: [OrderActor.FLEET_PARTNER],
     [OrderStatus.DELIVERED]: [OrderActor.FLEET_PARTNER, OrderActor.SUPPORT_AGENT],
+    [OrderStatus.PENDING_PAYMENT]: PAYMENT_ACTORS,
     ...CANCELLATION_ACTORS,
   },
 };
@@ -306,6 +350,7 @@ const PARCEL_LIFECYCLE: ServiceLifecycle = {
     [OrderStatus.DELIVERED]: [OrderStatus.COMPLETED],
   },
   timeouts: [
+    PAYMENT_TIMEOUT,
     {
       status: OrderStatus.AWAITING_RIDER_ASSIGNMENT,
       afterSeconds: 20 * 60,
@@ -321,6 +366,7 @@ const PARCEL_LIFECYCLE: ServiceLifecycle = {
     [OrderStatus.IN_TRANSIT]: [OrderActor.FLEET_PARTNER],
     [OrderStatus.ARRIVED_AT_DROPOFF]: [OrderActor.FLEET_PARTNER],
     [OrderStatus.DELIVERED]: [OrderActor.FLEET_PARTNER, OrderActor.SUPPORT_AGENT],
+    [OrderStatus.PENDING_PAYMENT]: PAYMENT_ACTORS,
     ...CANCELLATION_ACTORS,
   },
 };
@@ -357,6 +403,7 @@ const PABILI_LIFECYCLE: ServiceLifecycle = {
     [OrderStatus.DELIVERED]: [OrderStatus.COMPLETED],
   },
   timeouts: [
+    PAYMENT_TIMEOUT,
     {
       status: OrderStatus.AWAITING_RIDER_ASSIGNMENT,
       afterSeconds: 20 * 60,
@@ -381,6 +428,7 @@ const PABILI_LIFECYCLE: ServiceLifecycle = {
     [OrderStatus.IN_TRANSIT]: [OrderActor.FLEET_PARTNER],
     [OrderStatus.ARRIVED_AT_DROPOFF]: [OrderActor.FLEET_PARTNER],
     [OrderStatus.DELIVERED]: [OrderActor.FLEET_PARTNER, OrderActor.SUPPORT_AGENT],
+    [OrderStatus.PENDING_PAYMENT]: PAYMENT_ACTORS,
     ...CANCELLATION_ACTORS,
   },
 };
@@ -403,7 +451,8 @@ const RIDE_LIFECYCLE: ServiceLifecycle = {
     OrderStatus.DROPPED_OFF,
   ],
   transitions: {
-    [OrderStatus.DRAFT]: [OrderStatus.AWAITING_RIDER_ASSIGNMENT, OrderStatus.CANCELLED_BY_CUSTOMER],
+    [OrderStatus.DRAFT]: [OrderStatus.PENDING_PAYMENT, OrderStatus.AWAITING_RIDER_ASSIGNMENT, OrderStatus.CANCELLED_BY_CUSTOMER],
+    [OrderStatus.PENDING_PAYMENT]: [OrderStatus.AWAITING_RIDER_ASSIGNMENT, ...PRE_DISPATCH_CANCELLATIONS],
     [OrderStatus.AWAITING_RIDER_ASSIGNMENT]: [OrderStatus.RIDER_ASSIGNED, ...PRE_PICKUP_CANCELLATIONS],
     [OrderStatus.RIDER_ASSIGNED]: [OrderStatus.RIDER_AT_PICKUP, OrderStatus.AWAITING_RIDER_ASSIGNMENT, ...PRE_PICKUP_CANCELLATIONS],
     [OrderStatus.RIDER_AT_PICKUP]: [OrderStatus.PASSENGER_ONBOARD, ...PRE_PICKUP_CANCELLATIONS],
@@ -413,6 +462,7 @@ const RIDE_LIFECYCLE: ServiceLifecycle = {
     [OrderStatus.DROPPED_OFF]: [OrderStatus.COMPLETED],
   },
   timeouts: [
+    PAYMENT_TIMEOUT,
     {
       status: OrderStatus.AWAITING_RIDER_ASSIGNMENT,
       afterSeconds: 20 * 60,
@@ -428,6 +478,7 @@ const RIDE_LIFECYCLE: ServiceLifecycle = {
     [OrderStatus.IN_TRANSIT]: [OrderActor.FLEET_PARTNER],
     [OrderStatus.ARRIVED_AT_DROPOFF]: [OrderActor.FLEET_PARTNER],
     [OrderStatus.DROPPED_OFF]: [OrderActor.FLEET_PARTNER, OrderActor.SUPPORT_AGENT],
+    [OrderStatus.PENDING_PAYMENT]: PAYMENT_ACTORS,
     ...CANCELLATION_ACTORS,
   },
 };

@@ -32,6 +32,11 @@ export const dynamic = 'force-dynamic';
 
 /** A glyph per kind. A lookup, so a new kind is one line rather than a branch. */
 const KIND_GLYPH: Readonly<Record<NotificationKind, string>> = {
+  [NotificationKind.PAYMENT_CONFIRMED]: '✅',
+  [NotificationKind.PAYMENT_NEEDS_ATTENTION]: '⚠️',
+  [NotificationKind.PAYMENT_REFUND_DUE]: '⏳',
+  [NotificationKind.PAYMENT_REFUNDED]: '↩️',
+  [NotificationKind.PAYMENT_AWAITING_REVIEW]: '🔍',
   [NotificationKind.ORDER_SUBMITTED]: '🧾',
   [NotificationKind.ORDER_ACCEPTED]: '👩‍🍳',
   [NotificationKind.ORDER_READY]: '🛍️',

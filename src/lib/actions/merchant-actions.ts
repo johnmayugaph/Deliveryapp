@@ -5,7 +5,7 @@ import { OrderActor, OrderStatus, StoreRole } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { requireOrderStoreAccess, requireStoreAccess } from '@/lib/merchant/access';
 import { allowedTransitions, transitionOrder } from '@/lib/orders/state-machine';
-import { refundOrderCredits } from '@/lib/orders/maintenance';
+import { settleCancelledOrder } from '@/lib/orders/maintenance';
 
 /**
  * Merchant actions.
@@ -97,7 +97,7 @@ export async function rejectOrderAction(
         tx,
       );
       // Credits spent on an order that will never arrive go straight back.
-      await refundOrderCredits({ orderId, reason: 'Rejected by the store' }, tx);
+      await settleCancelledOrder({ orderId, reason: 'Rejected by the store' }, tx);
       return updated;
     });
 

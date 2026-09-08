@@ -170,4 +170,7 @@ export const ADMIN_ACTION_LABEL: Readonly<Record<AdminAction, string>> = {
   [AdminAction.STORE_MEMBERSHIP_CHANGED]: "Store staff added, moved or removed",
   [AdminAction.FLEET_VERIFICATION_CHANGED]: 'Fleet partner approved or refused for a service',
   [AdminAction.FLEET_SUSPENSION_CHANGED]: 'Fleet partner suspended or reinstated',
+  [AdminAction.PAYMENT_CONFIRMED]: 'Payment confirmed as received',
+  [AdminAction.PAYMENT_REFUSED]: 'Claimed payment refused',
+  [AdminAction.PAYMENT_REFUNDED]: 'Money sent back to the customer',
 };

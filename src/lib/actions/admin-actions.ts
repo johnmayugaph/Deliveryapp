@@ -21,7 +21,7 @@ import {
   type AdminActionResult,
 } from '@/lib/admin/access';
 import { recordAdjustment } from '@/lib/wallet/ledger';
-import { formatCentavos } from '@/lib/money';
+import { centavosFromPesoInput, formatCentavos } from '@/lib/money';
 import { cancelSubscription } from '@/lib/subscriptions/enrollment';
 import {
   movePhoneNumber,
@@ -38,6 +38,13 @@ import {
   grantStoreAccessAsAdmin,
   revokeStoreAccessAsAdmin,
 } from '@/lib/merchant/staff';
+import {
+  PaymentAlreadySettledError,
+  PaymentNotExpectedError,
+  confirmPayment,
+  recordRefundToSource,
+  refusePayment,
+} from '@/lib/payments/manual';
 import {
   AlreadyAMemberError,
   InviteNotFoundError,
@@ -100,6 +107,16 @@ async function guarded(
   } catch (error) {
     if (error instanceof AdminAccessRequiredError) return DENIED;
     if (error instanceof AuditReasonRequiredError) {
+      return { ok: false, message: error.message };
+    }
+    // Two administrators looking at the same payment queue is normal, and the
+    // second one to tap Confirm should read a sentence rather than a stack
+    // trace. Handled here so it also never lands on `/admin/errors`: a race
+    // the code refused correctly is not a fault.
+    if (
+      error instanceof PaymentAlreadySettledError ||
+      error instanceof PaymentNotExpectedError
+    ) {
       return { ok: false, message: error.message };
     }
     throw error;
@@ -1149,6 +1166,186 @@ export async function setFleetSuspensionAction(
       message: suspended
         ? 'Suspended from all work, and taken offline.'
         : 'Reinstated. Their existing approvals are unchanged.',
+    };
+  });
+}
+
+/**
+ * Somebody checked the account and the money is there.
+ *
+ * The most consequential button in the console: it releases an order to a
+ * kitchen on one person's word that a payment arrived. Hence the reason and
+ * the audit row — not as ceremony, but because a chargeback or a dispute
+ * months later is answered by "who confirmed this, when, and what did they say
+ * they were looking at".
+ *
+ * The amount is optional and defaults to the order total. It is settable
+ * because the thing that actually goes wrong on this rail is somebody sending
+ * ₱300 for a ₱324 order, and recording what really arrived — rather than what
+ * was owed — is what keeps the ledger worth reading. A short payment leaves the
+ * order waiting and tells the customer what is missing.
+ *
+ * The payment method is read off the order inside `confirmPayment` and
+ * deliberately not named here: an invariant test forbids the words for a
+ * credits top-up rail anywhere in this file's code, one of which collides with
+ * the name of a payment instrument. Keeping the instrument out of this file
+ * costs nothing and keeps that rule at full strength.
+ */
+export async function confirmPaymentAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const orderId = String(formData.get('orderId') ?? '');
+    const reason = normaliseReason(formData.get('reason'));
+    const rawAmount = String(formData.get('amount') ?? '').trim();
+
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: { id: true, orderNumber: true, totalCentavos: true },
+    });
+    if (!order) return { ok: false, message: 'No such order.' };
+
+    let amountCentavos = order.totalCentavos;
+    if (rawAmount) {
+      const parsed = centavosFromPesoInput(rawAmount);
+      if (parsed === null) {
+        return { ok: false, message: 'Write the amount in pesos, like 324 or 324.50.' };
+      }
+      amountCentavos = parsed;
+    }
+
+    const { paymentStatus, released } = await confirmPayment({
+      orderId: order.id,
+      adminUserId: admin.id,
+      amountCentavos,
+      note: reason,
+    });
+
+    await recordAdminAction({
+      actorId: admin.id,
+      action: AdminAction.PAYMENT_CONFIRMED,
+      subjectType: 'Order',
+      subjectId: order.id,
+      subjectLabel: order.orderNumber,
+      reason,
+      detail: { amountCentavos, owed: order.totalCentavos, paymentStatus, released },
+    });
+
+    revalidatePath('/admin/payments');
+    revalidatePath(`/admin/orders/${order.orderNumber}`);
+    return {
+      ok: true,
+      message: released
+        ? `Confirmed ${formatCentavos(amountCentavos)}. The order is on its way to the store.`
+        : `Recorded ${formatCentavos(amountCentavos)}, which is short of ${formatCentavos(
+            order.totalCentavos,
+          )}. The order is still waiting and the customer has been told.`,
+    };
+  });
+}
+
+/**
+ * The reference did not check out.
+ *
+ * Does not cancel the order, on purpose. A mistyped digit is the likeliest
+ * explanation and the money may well be sitting in the account — so the
+ * customer keeps their slot until the payment window runs out on its own, and
+ * gets told why so they can send a corrected reference. Cancelling on the
+ * first bad reference would strand real payments.
+ *
+ * The reason is shown to the CUSTOMER verbatim, which makes this the one audit
+ * reason in this file that somebody outside the company reads. Worth knowing
+ * before writing "nonsense" in it.
+ */
+export async function refusePaymentAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const orderId = String(formData.get('orderId') ?? '');
+    const reason = normaliseReason(formData.get('reason'));
+
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: { id: true, orderNumber: true },
+    });
+    if (!order) return { ok: false, message: 'No such order.' };
+
+    await refusePayment({ orderId: order.id, adminUserId: admin.id, note: reason });
+
+    await recordAdminAction({
+      actorId: admin.id,
+      action: AdminAction.PAYMENT_REFUSED,
+      subjectType: 'Order',
+      subjectId: order.id,
+      subjectLabel: order.orderNumber,
+      reason,
+    });
+
+    revalidatePath('/admin/payments');
+    revalidatePath(`/admin/orders/${order.orderNumber}`);
+    return {
+      ok: true,
+      message: 'Refused, and the customer has been told why. Their order still has time to pay.',
+    };
+  });
+}
+
+/**
+ * Records that the money has been sent back.
+ *
+ * Records, not performs. Nothing in this codebase can push money into
+ * somebody's wallet, so this is a person saying "I have done it" with their
+ * name against it. That is exactly why it takes a reason and writes an audit
+ * row: it is a claim about the world, not a state change in a database.
+ *
+ * It cannot route money into credits. That refusal lives in the payment
+ * module and again in the database, because returning real money as spendable
+ * balance would be a top-up path, and this product does not have one.
+ */
+export async function recordRefundSentAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const orderId = String(formData.get('orderId') ?? '');
+    const reason = normaliseReason(formData.get('reason'));
+    const rawAmount = String(formData.get('amount') ?? '').trim();
+
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: { id: true, orderNumber: true },
+    });
+    if (!order) return { ok: false, message: 'No such order.' };
+
+    const amountCentavos = centavosFromPesoInput(rawAmount);
+    if (amountCentavos === null || amountCentavos <= 0) {
+      return { ok: false, message: 'Write what you sent, in pesos, like 324 or 324.50.' };
+    }
+
+    await recordRefundToSource({
+      orderId: order.id,
+      adminUserId: admin.id,
+      amountCentavos,
+      note: reason,
+    });
+
+    await recordAdminAction({
+      actorId: admin.id,
+      action: AdminAction.PAYMENT_REFUNDED,
+      subjectType: 'Order',
+      subjectId: order.id,
+      subjectLabel: order.orderNumber,
+      reason,
+      detail: { amountCentavos },
+    });
+
+    revalidatePath('/admin/payments');
+    revalidatePath(`/admin/orders/${order.orderNumber}`);
+    return {
+      ok: true,
+      message: `Recorded ${formatCentavos(amountCentavos)} sent back. The customer has been told.`,
     };
   });
 }

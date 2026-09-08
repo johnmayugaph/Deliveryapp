@@ -22,6 +22,10 @@ import { REVIEW_REFUSAL_MESSAGE } from '@/lib/ratings/policy';
 import { RatingForm } from '@/components/orders/RatingForm';
 import { RiderMap } from '@/components/orders/RiderMap';
 import { isTrackableStatus } from '@/lib/orders/tracking';
+import { PayByTransfer } from '@/components/orders/PayByTransfer';
+import { latestRefusalNote, transferDetailsFor } from '@/lib/payments/order-view';
+import { heldForCustomerCentavos } from '@/lib/payments/events';
+import { isPrepaid } from '@/lib/payments/policy';
 import { tileSource } from '@/lib/geo/tiles';
 
 export const dynamic = 'force-dynamic';
@@ -62,6 +66,21 @@ export default async function OrderDetailPage({
   if (!order || !user || order.customerId !== user.id) {
     notFound();
   }
+
+  // Payment, resolved after the ownership check above — the instructions name
+  // the account money goes to, and nobody who is not this order's customer
+  // gets that far.
+  const transfer =
+    order.status === OrderStatus.PENDING_PAYMENT && isPrepaid(order.paymentMethod)
+      ? await transferDetailsFor(order.id)
+      : null;
+  const refusalNote = transfer ? await latestRefusalNote(order.id) : null;
+
+  // Only meaningful once the order is over: while it is live, money we hold is
+  // money we are owed.
+  const refundDueCentavos = isTerminal(order.serviceType, order.status)
+    ? await heldForCustomerCentavos(order.id)
+    : 0;
 
   const dropoff = order.addresses.find((address) => address.role === 'DROPOFF');
   const nextStates = allowedTransitions(order.serviceType, order.status);
@@ -136,6 +155,40 @@ export default async function OrderDetailPage({
           </p>
         ) : null}
       </header>
+
+      {/* Paying, before anything else on the screen.
+          An order held for payment is the one case where the customer has
+          something to DO, and it goes above the map and the timeline because
+          nothing else on this page matters until it is done. Once confirmed
+          the panel disappears and the tracking panel takes its place. */}
+      {transfer ? (
+        <div className="mx-4 mt-4">
+          <PayByTransfer
+            orderId={order.id}
+            status={order.paymentStatus}
+            details={transfer}
+            refusalNote={refusalNote}
+          />
+        </div>
+      ) : null}
+
+      {/* Money we are holding that is not ours.
+          A cancelled prepaid order says so here rather than leaving somebody
+          to wonder where their ₱324 went. It is not a promise of a date: on
+          this rail a person makes the transfer, and inventing a deadline for
+          them would be inventing a complaint. */}
+      {refundDueCentavos > 0 ? (
+        <div className="mx-4 mt-4 rounded-xl bg-amber-50 px-4 py-3 ring-1 ring-amber-200">
+          <p className="text-[13px] font-semibold text-amber-900">
+            {formatCentavos(refundDueCentavos)} is coming back to you
+          </p>
+          <p className="mt-0.5 text-[11px] leading-relaxed text-amber-900/80">
+            This order did not go ahead, so we are returning what you sent. You
+            do not need to do anything — we will message you when it is on its
+            way.
+          </p>
+        </div>
+      ) : null}
 
       {/* The map, and only while somebody is carrying this. Not on a
           delivered order — where the rider went afterwards is nobody's

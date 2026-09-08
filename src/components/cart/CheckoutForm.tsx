@@ -23,9 +23,19 @@ export interface CheckoutAddressOption {
   isDefault: boolean;
 }
 
+/**
+ * Keyed by every method, so a new instrument is a compile error here rather
+ * than a radio button labelled `MANUAL_TRANSFER`. (It fired the moment the
+ * transfer rail was added, which is the entire point of writing it this way.)
+ *
+ * The transfer's label is generic on purpose: which wallet it is comes from
+ * configuration and is filled in by `transferLabel` below, so the same build
+ * serves a GCash deployment and a Maya one.
+ */
 const PAYMENT_LABELS: Record<PaymentMethod, string> = {
   [PaymentMethod.CASH_ON_DELIVERY]: 'Cash on delivery',
   [PaymentMethod.WALLET_CREDIT]: 'Credits',
+  [PaymentMethod.MANUAL_TRANSFER]: 'Pay now by transfer',
 };
 
 const TIP_OPTIONS = [0, 2_000, 5_000, 10_000];
@@ -42,10 +52,18 @@ export function CheckoutForm({
   addresses,
   spendableCreditsCentavos,
   paymentMethods,
+  transferLabel,
 }: {
   addresses: CheckoutAddressOption[];
   spendableCreditsCentavos: number;
   paymentMethods: PaymentMethod[];
+  /**
+   * The configured wallet's name — "GCash", "Maya" — or null when no prepaid
+   * rail is set up. Passed in from the server because the account details are
+   * server configuration, and a client component that could read them would be
+   * a client component that ships them to everybody.
+   */
+  transferLabel: string | null;
 }) {
   const router = useRouter();
   const { cart, isLoaded, clear } = useCart();
@@ -302,7 +320,11 @@ export function CheckoutForm({
                 onChange={() => setPaymentMethod(method)}
                 className="accent-brand-600"
               />
-              <span className="text-xs font-medium">{PAYMENT_LABELS[method]}</span>
+              <span className="text-xs font-medium">
+                {method === PaymentMethod.MANUAL_TRANSFER && transferLabel
+                  ? `Pay now with ${transferLabel}`
+                  : PAYMENT_LABELS[method]}
+              </span>
               {method === PaymentMethod.WALLET_CREDIT ? (
                 <span className="ml-auto text-[11px] text-ink-muted tabular-nums">
                   {formatCentavos(spendableCreditsCentavos)} available
@@ -311,6 +333,19 @@ export function CheckoutForm({
             </label>
           ))}
         </div>
+
+        {/* What choosing this actually commits them to, before they commit.
+            A prepaid order does not reach the shop until the money is
+            confirmed, and somebody expecting lunch needs to know that is the
+            deal rather than discovering it while watching a spinner. */}
+        {paymentMethod === PaymentMethod.MANUAL_TRANSFER ? (
+          <p className="mt-2 rounded-lg bg-brand-50 px-3 py-2 text-[11px] leading-relaxed text-brand-900">
+            You will get the account details on the next screen. Send the exact
+            total, then enter the reference number. The store starts cooking once
+            we have confirmed it — usually a few minutes — and the rider collects
+            nothing at your door.
+          </p>
+        ) : null}
 
         {/* Offer credits as a partial offset only when cash is the rail —
             choosing Credits already means spending them. */}

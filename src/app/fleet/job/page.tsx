@@ -64,6 +64,41 @@ export default async function FleetJobPage() {
         </p>
       </section>
 
+      {/* The money question, before the addresses.
+          A rider reads this screen at a kerb with a helmet on, and the one
+          thing that costs somebody money if it is missed is whether to ask for
+          cash. So it is a band of colour above everything else and it says the
+          amount, not just "paid" — a rider holding out a hand for ₱324 needs
+          the number, and a rider on a prepaid order needs to not ask at all. */}
+      {job.cashToCollectCentavos > 0 ? (
+        <section
+          aria-label="Payment"
+          className="rounded-xl bg-amber-100 p-4 ring-1 ring-amber-300"
+        >
+          <p className="text-[11px] font-bold uppercase tracking-wide text-amber-900">
+            Collect at the door
+          </p>
+          <p className="mt-0.5 text-2xl font-extrabold tabular-nums text-amber-950">
+            {formatCentavos(job.cashToCollectCentavos)}
+          </p>
+          <p className="mt-0.5 text-[11px] leading-snug text-amber-900">
+            Cash. Count it before you hand the order over.
+          </p>
+        </section>
+      ) : (
+        <section
+          aria-label="Payment"
+          className="rounded-xl bg-emerald-50 p-4 ring-1 ring-emerald-200"
+        >
+          <p className="text-[11px] font-bold uppercase tracking-wide text-emerald-900">
+            Already paid
+          </p>
+          <p className="mt-0.5 text-sm font-semibold text-emerald-950">
+            Collect nothing. Do not ask for money.
+          </p>
+        </section>
+      )}
+
       <section
         aria-labelledby="pickup-heading"
         className="rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5"

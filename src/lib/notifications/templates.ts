@@ -49,6 +49,11 @@ export interface NotificationContext {
   /** For store access: what they are at the shop (`storeName` is above). */
   storeRoleLabel?: string;
   storeAccessEvent?: 'GRANTED' | 'ROLE_CHANGED' | 'REMOVED';
+  /** For a payment: what it was for, and what is wrong with it if anything. */
+  paymentLabel?: string;
+  paymentShortfallCentavos?: number;
+  /** For a payment awaiting review: how many are queued behind it. */
+  paymentQueueDepth?: number;
   /** For a ratings digest: how many, the average, and the worst of them. */
   ratingCount?: number;
   ratingAverage?: number;
@@ -381,6 +386,108 @@ export const NOTIFICATION_TEMPLATES: Readonly<Record<NotificationKind, Template>
    * message: the point of telling somebody their application failed is that
    * they can fix the thing and come back.
    */
+  /**
+   * Paid, and moving.
+   *
+   * Says what happens next rather than only that the payment landed, because
+   * "payment received" on its own leaves somebody wondering whether they now
+   * have to do something else. They do not.
+   */
+  [NotificationKind.PAYMENT_CONFIRMED]: (context) => ({
+    title: `Payment received${orderRef(context)}`,
+    body:
+      `We matched your ${context.paymentLabel ?? 'payment'} and sent your order ` +
+      `to ${context.storeName ?? 'the store'}. Nothing to hand over at the door.`,
+    sms: `TARA: payment received for ${context.orderNumber ?? 'your order'}.`,
+  }),
+
+  /**
+   * Something is wrong with the money and only they can fix it.
+   *
+   * The reason is passed through verbatim and put first. A message that says
+   * "there was a problem with your payment, open the app" wastes the one
+   * channel that reached them — they still do not know whether to re-send a
+   * reference, send more money, or wait.
+   */
+  [NotificationKind.PAYMENT_NEEDS_ATTENTION]: (context) => {
+    const shortfall = context.paymentShortfallCentavos;
+    const detail =
+      context.reason ??
+      (shortfall && shortfall > 0
+        ? `We are short ₱${(shortfall / 100).toFixed(2)} on this order.`
+        : 'We could not match your payment.');
+    return {
+      title: `Your payment needs a look${orderRef(context)}`,
+      body: `${detail} Open the order to send a new reference number.`,
+      sms: `TARA: ${detail} Open the app for ${context.orderNumber ?? 'your order'}.`,
+    };
+  },
+
+  /**
+   * We have their money and their order is off.
+   *
+   * Deliberately does not promise a time. On this rail a person makes the
+   * transfer by hand, and an app that says "within 24 hours" when it has no
+   * way to enforce that has invented a deadline for somebody else to miss.
+   * What it does promise is the amount and the destination, which is what
+   * makes the message worth sending at all.
+   */
+  [NotificationKind.PAYMENT_REFUND_DUE]: (context) => ({
+    title: `Refund on the way${orderRef(context)}`,
+    body:
+      `Your order was cancelled and we are holding ${
+        context.amountCentavos !== undefined
+          ? formatCentavos(context.amountCentavos)
+          : 'your payment'
+      }. It is being sent back to your ${context.paymentLabel ?? 'account'} — ` +
+      'you do not need to do anything.',
+    sms: `TARA: ${
+      context.amountCentavos !== undefined ? formatCentavos(context.amountCentavos) : 'your payment'
+    } for ${context.orderNumber ?? 'your order'} is being returned.`,
+  }),
+
+  /**
+   * Money going back, and where to.
+   *
+   * Names the instrument rather than saying "refunded", because on this rail
+   * the money returns to a wallet by hand and somebody has to know which one
+   * to check. Deliberately does not promise a time we do not control.
+   */
+  [NotificationKind.PAYMENT_REFUNDED]: (context) => ({
+    title: `Refund sent${orderRef(context)}`,
+    body:
+      `${
+        context.amountCentavos !== undefined
+          ? `₱${(context.amountCentavos / 100).toFixed(2)}`
+          : 'Your payment'
+      } is on its way back to your ${context.paymentLabel ?? 'account'}.` +
+      (context.reason ? ` ${context.reason}` : ''),
+    sms: `TARA: refund sent for ${context.orderNumber ?? 'your order'}.`,
+  }),
+
+  /**
+   * To us: somebody is waiting on a human.
+   *
+   * Carries the queue depth because one waiting payment and eleven waiting
+   * payments call for different responses, and the number is the difference
+   * between a task and a problem.
+   */
+  [NotificationKind.PAYMENT_AWAITING_REVIEW]: (context) => {
+    const depth = context.paymentQueueDepth ?? 1;
+    return {
+      title: depth === 1 ? 'A payment needs checking' : `${depth} payments need checking`,
+      body:
+        `A customer says they have paid${orderRef(context)} and the order is ` +
+        'held until somebody confirms it. Check the account and confirm or refuse.',
+      // Never sent — PAYMENT_AWAITING_REVIEW has no SMS channel in
+      // `KIND_POLICY`, because at any volume texting ourselves to do our own
+      // job is a bill with no recipient who needed it. Written anyway because
+      // the type asks for it, and a future decision to add the channel should
+      // not have to invent the words under pressure.
+      sms: `TARA: ${depth} payment(s) waiting to be confirmed.`,
+    };
+  },
+
   [NotificationKind.FLEET_VERIFICATION_DECIDED]: (context) => {
     const service = context.serviceName ?? 'a service';
     const approved = context.verificationApproved === true;

@@ -9,6 +9,9 @@ import { prisma, type PrismaTransactionClient } from '@/lib/prisma';
 import { transitionOrder } from '@/lib/orders/state-machine';
 import { ALL_STATUS_TIMEOUTS } from '@/lib/orders/transitions';
 import { grantCredit, refundToCredits } from '@/lib/wallet/ledger';
+import { recordCashCollected } from '@/lib/payments/manual';
+import { heldForCustomerCentavos } from '@/lib/payments/events';
+import { resolvePaymentRail } from '@/lib/payments/rails';
 import { pruneSessions, pruneVerifications } from '@/lib/auth/prune';
 import {
   sweepDueSubscriptions,
@@ -63,9 +66,11 @@ import { resolveSmsSender } from '@/lib/auth/sms';
  *     `ORDER_LIFECYCLES`. It reads the flattened `ALL_STATUS_TIMEOUTS` and does
  *     not know that FOOD waits on a merchant or that PABILI waits on a budget
  *     approval — those are entries in the map.
- *   - `refundOrderCredits()` returns credits spent on an order that will never
- *     be delivered. Credits go back to CREDITS, never to cash: there is no rail
- *     out, by design.
+ *   - `settleCancelledOrder()` sorts out the money on an order that will never
+ *     be delivered — both halves of it. Credits go back to CREDITS, never to
+ *     cash: there is no rail out, by design. Real money goes back to the
+ *     instrument it arrived on, which on the manual rail means telling a human
+ *     to send it and telling the customer it is coming.
  *
  * Run from cron: `npm run jobs:orders`, which also drives dispatch and prunes
  * spent login codes and dead sessions — see `runMaintenance()`.
@@ -138,6 +143,76 @@ export async function refundOrderCredits(
   return outstanding;
 }
 
+/** Both halves of the money on an order that is not going to happen. */
+export interface CancellationSettlement {
+  /** Credits returned to the balance they came from. */
+  creditsRefundedCentavos: number;
+  /**
+   * Real money we are still holding, which somebody has to send back by hand.
+   * Recorded and surfaced rather than moved: no code here can push money into
+   * a customer's GCash.
+   */
+  cashOwedCentavos: number;
+}
+
+/**
+ * Sorts out the money when an order ends without being delivered.
+ *
+ * One function for both halves, called from all three places an order can die
+ * — the customer cancelling, the store rejecting, and the sweep giving up —
+ * because the previous arrangement had each of those calling the credits
+ * refund and none of them noticing that a prepaid order's cash was left
+ * sitting with us. An order paid by transfer has no `ORDER_PAYMENT` row, so the
+ * credits refund correctly returned zero and correctly did nothing, and the
+ * ₱324 simply stayed.
+ *
+ * The cash half deliberately does NOT write a `REFUND_ISSUED` row. That row
+ * means "money has been sent", and nothing here can send it. What it does is
+ * tell the customer it is coming and leave the order in the console's refund
+ * queue until a person has actually made the transfer and confirmed it.
+ */
+export async function settleCancelledOrder(
+  input: { orderId: string; reason: string },
+  client?: PrismaTransactionClient,
+): Promise<CancellationSettlement> {
+  const db = client ?? prisma;
+
+  const creditsRefundedCentavos = await refundOrderCredits(input, client);
+
+  const order = await db.order.findUniqueOrThrow({
+    where: { id: input.orderId },
+    select: {
+      id: true,
+      orderNumber: true,
+      customerId: true,
+      paymentMethod: true,
+    },
+  });
+
+  const cashOwedCentavos = await heldForCustomerCentavos(order.id, client);
+
+  if (cashOwedCentavos > 0) {
+    await enqueueNotification(
+      {
+        userId: order.customerId,
+        kind: NotificationKind.PAYMENT_REFUND_DUE,
+        relatedOrderId: order.id,
+        href: `/orders/${order.id}`,
+        context: {
+          orderNumber: order.orderNumber,
+          amountCentavos: cashOwedCentavos,
+          paymentLabel: resolvePaymentRail()?.customerLabel ?? 'account',
+          reason: input.reason,
+        },
+        dedupeKey: `payment-refund-due:${order.id}`,
+      },
+      client,
+    );
+  }
+
+  return { creditsRefundedCentavos, cashOwedCentavos };
+}
+
 /**
  * Moves orders that have sat too long in a waiting state, per the timeout
  * policies, and refunds any credits they consumed.
@@ -165,6 +240,13 @@ export async function expireStaleOrders(
         serviceType: policy.serviceType,
         status: policy.status,
         updatedAt: { lt: cutoff },
+        // The payment wait only expires while nothing has been claimed. A
+        // customer who sent the money and gave us a reference has done their
+        // part, and cancelling because WE were slow to check it is not a
+        // timeout, it is a bug with a clock attached.
+        ...(policy.whilePaymentStatus
+          ? { paymentStatus: { in: [...policy.whilePaymentStatus] } }
+          : {}),
       },
       orderBy: { updatedAt: 'asc' },
       take: limit,
@@ -198,7 +280,7 @@ export async function expireStaleOrders(
             tx,
           );
 
-          const refunded = await refundOrderCredits(
+          const { creditsRefundedCentavos: refunded } = await settleCancelledOrder(
             { orderId: order.id, reason: policy.reason },
             tx,
           );
@@ -311,12 +393,16 @@ export async function completeOrder(input: {
       );
     }
 
-    // A completed cash order has been paid by definition.
+    // A completed cash order has been paid by definition: the rider handed
+    // over the food and took the money. That was already true; what is new is
+    // that it gets WRITTEN DOWN as an event rather than as a status column,
+    // so a cash order and a transfer have the same kind of history and the
+    // day's takings can be added up from one table.
     if (order.paymentStatus === PaymentStatus.PENDING) {
-      await tx.order.update({
-        where: { id: order.id },
-        data: { paymentStatus: PaymentStatus.PAID },
-      });
+      await recordCashCollected(
+        { orderId: order.id, amountCentavos: order.totalCentavos },
+        tx,
+      );
     }
 
     return { order, creditBackCentavos };

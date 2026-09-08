@@ -5,6 +5,7 @@ import { getCurrentUser } from '@/lib/auth/session';
 import { listAddressBook } from '@/lib/addresses/usage';
 import { getSpendableCentavos } from '@/lib/wallet/ledger';
 import { CheckoutForm } from '@/components/cart/CheckoutForm';
+import { resolvePaymentRail } from '@/lib/payments/rails';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,6 +33,12 @@ export default async function CheckoutPage() {
     listAddressBook({ userId: user.id }),
     getSpendableCentavos(user.id),
   ]);
+
+  // Read on the server and reduced to a label before it crosses to the client:
+  // the account name and number are configuration, and they belong on the
+  // payment screen of an order that exists, not in the bundle of every
+  // checkout page view.
+  const rail = resolvePaymentRail();
 
   return (
     <main className="pb-4">
@@ -61,7 +68,15 @@ export default async function CheckoutPage() {
             isDefault: address.isDefault,
           }))}
           spendableCreditsCentavos={spendableCreditsCentavos}
-          paymentMethods={[PaymentMethod.CASH_ON_DELIVERY, PaymentMethod.WALLET_CREDIT]}
+          // The transfer appears only when there is an account to send money
+          // to. Offering a payment method the deployment cannot receive takes
+          // an order nobody can pay, which is worse than not offering it.
+          paymentMethods={[
+            PaymentMethod.CASH_ON_DELIVERY,
+            ...(rail ? [PaymentMethod.MANUAL_TRANSFER] : []),
+            PaymentMethod.WALLET_CREDIT,
+          ]}
+          transferLabel={rail?.customerLabel ?? null}
         />
       )}
     </main>

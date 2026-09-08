@@ -938,6 +938,154 @@ opposite.
 
 ---
 
+## Payments — a second ledger, and the rule it exists to protect
+
+Every order used to be cash on delivery. It still can be, and most will be —
+but riders carrying a shift's takings is the largest operational risk in the
+business, and the way to reduce it is to let customers pay before the food is
+cooked.
+
+### The rail that needs no provider account
+
+The prepaid rail is a **transfer the customer makes themselves**: they send the
+total in GCash, Maya or their bank, put the order number in the note, and type
+the reference back into TARA. Somebody with access to the receiving account
+checks it at `/admin/payments` and confirms. Only then does the order reach the
+shop.
+
+That is slower than a webhook and it is chosen deliberately:
+
+- **A provider account needs the paperwork.** PayMongo or Xendit onboarding
+  wants DTI or SEC registration and BIR registration, which are still open
+  items on the launch checklist. This rail needs a phone number.
+- **No per-transaction fee**, against a margin that is one delivery fee.
+- **It is how a great many small Philippine businesses already take money**, so
+  it needs no explaining to either side.
+
+What it costs is a person's attention, once per order, and it does not scale
+past the volume one person can check. `src/lib/payments/rails/` is the seam for
+a provider rail when it starts hurting; `begin()` returns a discriminated union
+so a hosted redirect is a second arm rather than a rewrite. The `HostedRedirect`
+arm is declared and unused on purpose — it documents what a provider rail must
+supply. **No webhook verifier ships until something calls it**: this codebase
+has now been bitten three times by machinery that was designed, committed and
+never wired up.
+
+### `PaymentEvent`: the credits ledger's twin
+
+Money gets a history, not a status column. `Order.paymentStatus` is a **derived
+cache** of an append-only `PaymentEvent` table, computed by
+`derivePaymentStatus()`, exactly as `Wallet.balanceCentavos` is a cache of the
+credits ledger. Same guards, for the same reasons: an append-only trigger, a
+CHECK constraint forcing the sign from the event type, a mandatory reason on the
+two events a customer reads, and one function — `recordPaymentEvent` — that
+every write goes through.
+
+Seven event types, and the split that matters is between **claims and money**:
+
+| Moves nothing | Moves money |
+| --- | --- |
+| `CHARGE_REQUESTED`, `CHARGE_SUBMITTED`, `CHARGE_REFUSED`, `CHARGE_EXPIRED` | `CHARGE_CONFIRMED`, `CASH_COLLECTED` (in), `REFUND_ISSUED` (out) |
+
+A customer saying they have paid is not money arriving, and the gap between
+those two is where a payments bug lives. `signedPaymentAmount` refuses to
+attach an amount to a claim at all.
+
+`derivePaymentStatus` reads **money first, intent second** — so a refusal
+followed by a good payment is PAID, and a customer refused once who sends a
+corrected reference is back in the queue rather than stuck at FAILED.
+
+### The two ledgers are separate tables, and that is the point
+
+Credits are an internal balance we grant and only orders can spend. Payments are
+real money arriving from outside. There is **no schema path** from a confirmed
+charge to a credits row, which is what makes "cash can never become credits"
+checkable rather than a convention.
+
+`REFUND_DESTINATION` states it per instrument: credits refund to credits, and
+everything else refunds to the instrument it arrived on. The temptation is real
+and convenient — a cancelled transfer is much easier to settle as credits, and
+a customer might even prefer it — and it is still a path from cash to spendable
+balance. Pay ₱500, cancel, keep ₱500 of credits: that is a top-up, and the
+whole credits design promises there isn't one.
+
+Enforced at both ends, because application code is one deployment away from
+being bypassed:
+
+- `recordRefundToSource` refuses an order whose instrument is credits.
+- The database refuses a credits `REFUND` row for an order that never spent
+  credits — and a transfer-paid order has no `ORDER_PAYMENT` row, so it has
+  nothing to return.
+
+The rule is per **portion**, not per order, because an order can use two
+instruments: credits covering part of a total and a transfer covering the rest.
+There is deliberately no single method-level guard — it would have read the
+order's headline method and refused to return credits genuinely spent on a
+part-transfer order.
+
+### A prepaid order is not an order until it is paid
+
+`PENDING_PAYMENT` had been in `OrderStatus` since the schema was written, with
+the right edges in four of the five lifecycles, and **nothing ever used it** —
+the third such find in this codebase. It is now what checkout parks a prepaid
+order in, and RIDE has the edge the other four already had. (Prepaying matters
+*most* for a ride, where the alternative is arguing with a passenger at a kerb.)
+
+The wait is twenty minutes, declared once and spread into every lifecycle so
+four cannot drift from the fifth. It is longer than the eight minutes a shop
+gets to accept, because the customer's leg involves leaving the app.
+
+**The timeout only fires while nothing has been claimed.** `StatusTimeout`
+gained a `whilePaymentStatus` field for this: a customer who sent the money and
+gave us a reference has done their part, and cancelling their order because we
+were slow to check it is not a timeout, it is a bug with a clock attached.
+Which is why `CLAIMED` is its own payment status rather than PENDING — and not
+`AUTHORIZED` either, since in payments that word means an issuer approved the
+funds and anybody can type thirteen digits into a box.
+
+A short payment is `AUTHORIZED`: money arrived, less than the total, so the
+order keeps waiting and the customer is told what is missing. Calling ₱300 on a
+₱324 order PAID leaves a shop out of pocket.
+
+### What the rider is told
+
+`cashToCollectCentavos` answers one question, and it is the most consequential
+line of UI in the feature: **is there money to collect at this door.** It is
+not "is the method cash":
+
+- A confirmed prepaid order shows **"Already paid — do not ask for money"**, or
+  a rider asks somebody to pay twice.
+- A prepaid order that was never confirmed **still collects in cash**, or a
+  rider hands over food for nothing. A customer's word is not money in the
+  account, and the rider cannot be the one who finds out.
+
+It is a band of colour above the addresses, with the amount, because a rider
+reads that screen at a kerb with a helmet on.
+
+### When an order dies
+
+`settleCancelledOrder` handles both halves of the money, and exists because the
+previous arrangement had three call sites each refunding credits and none
+noticing that a transfer-paid order has no credits to refund. The credits refund
+correctly returned zero, correctly did nothing, and the ₱324 simply stayed with
+us on every cancelled prepaid order.
+
+The cash half deliberately does **not** write a `REFUND_ISSUED` row, because
+that row means "money has been sent" and nothing here can send it. It tells the
+customer it is coming — `PAYMENT_REFUND_DUE`, separate from `PAYMENT_REFUNDED`,
+because "we owe you" and "it has been sent" are different promises — and leaves
+the order in the console's refund queue until a person has made the transfer and
+recorded it. That queue is computed from the ledger rather than from a flag, so
+it clears itself and there is no boolean to forget to set.
+
+### What is NOT built
+
+**Settlement.** Money paid in advance arrives with us, not with the shop, and
+nothing here pays a store or a rider out. That needs a bank arrangement and the
+business registration, and it is the next real piece of work behind this one.
+Each payment records which order it was for, so what is owed is computable —
+but computing it is not paying it.
+
 ## 6. Subscription tier
 
 `SubscriptionPlan` (name, `monthlyPriceCentavos`, benefits, `isActive`) and
@@ -2695,7 +2843,7 @@ sense as an undrained outbox, and says which command to run.
 
 ## Verification
 
-Database-free, in CI (`npm run verify`) — **1142 tests across 36 files**. The
+Database-free, in CI (`npm run verify`) — **1222 tests across 37 files**. The
 table below names the ones that carry a rule rather than a case; the rest cover
 a single feature each and are named for it.
 
@@ -2717,6 +2865,7 @@ a single feature each and are named for it.
 | `push-send.test.ts` | The Web Push request over a real socket; GONE versus FAILED on every status; what a browser may register |
 | `admin-access.test.ts` | Who counts as an admin, the reason rule, Manila day boundaries, and grep rules that every action is authorised, reasoned and logged |
 | `live-tracking.test.ts` | The four gates on a rider's position, the share throttle including a held fix, distance wording, and greps for the privacy boundary and the map's honesty |
+| `payments.test.ts` | The no-top-up rule per instrument and in the database, the prepaid hold across every lifecycle, event signs, the derived status including a short payment, and what the rider is told to collect |
 | `menu-options.test.ts` | Server-authoritative choice pricing, group bounds, satisfiability, and every tamper case |
 | `menu-photos.test.ts` | Magic-byte sniffing, dimension limits, and the bytes never entering a page payload |
 | `fleet-verification.test.ts` | Who may decide an application, per-service independence, and what the partner is told |
