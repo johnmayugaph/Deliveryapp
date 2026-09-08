@@ -28,6 +28,11 @@ import {
 } from '@/lib/pricing/surge-policy';
 import { MAX_REWARD_CENTAVOS, farmerMargin } from '@/lib/referrals/policy';
 import { PROGRAMME_ID } from '@/lib/referrals/programme';
+import {
+  MAX_POINTS_PER_PESO_BASIS_POINTS,
+  effectiveGivebackBasisPoints,
+} from '@/lib/loyalty/policy';
+import { PROGRAMME_ID as LOYALTY_PROGRAMME_ID } from '@/lib/loyalty/programme';
 import { centavosFromPesoInput, formatCentavos } from '@/lib/money';
 import { cancelSubscription } from '@/lib/subscriptions/enrollment';
 import {
@@ -1668,6 +1673,224 @@ export async function setStoreCommissionAction(
     return {
       ok: true,
       message: `${store.name} now pays ${(basisPoints / 100).toFixed(2)}% on food. Existing orders keep what they settled at.`,
+    };
+  });
+}
+
+// --- Loyalty points ----------------------------------------------------------
+
+/**
+ * Sets the points programme: the two rates, the block size and the expiry.
+ *
+ * The rates point in opposite directions and that is the trap — earning is
+ * points per peso spent, redemption is points per peso paid back — so the
+ * screen shows the effective giveback as a percentage, which is the number an
+ * operator actually needs and would otherwise derive wrongly by a factor of
+ * ten.
+ */
+export async function setLoyaltyProgrammeAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const reason = normaliseReason(formData.get('reason'));
+
+    const whole = (field: string): number | null => {
+      const raw = String(formData.get(field) ?? '').trim();
+      const value = Number(raw);
+      return Number.isInteger(value) && value >= 0 ? value : null;
+    };
+
+    // Entered as points per peso, stored as basis points: a decimal like 1.5
+    // has to survive, and a float column for a rate that multiplies every
+    // order is how rounding drift starts.
+    const perPesoRaw = Number(String(formData.get('pointsPerPeso') ?? '').trim());
+    if (!Number.isFinite(perPesoRaw) || perPesoRaw < 0) {
+      return { ok: false, message: 'Write the earn rate as points per peso, like 1 or 1.5.' };
+    }
+    const pointsPerPesoBasisPoints = Math.round(perPesoRaw * 10_000);
+
+    const pointsPerPesoRedeemed = whole('pointsPerPesoRedeemed');
+    const redemptionBlockPoints = whole('redemptionBlockPoints');
+    const expiryMonths = whole('expiryMonths');
+    const tierWindowMonths = whole('tierWindowMonths');
+    const isActive = String(formData.get('isActive') ?? '') === 'true';
+
+    if (
+      pointsPerPesoRedeemed === null ||
+      redemptionBlockPoints === null ||
+      expiryMonths === null ||
+      tierWindowMonths === null
+    ) {
+      return { ok: false, message: 'The rates and windows are whole numbers.' };
+    }
+    if (pointsPerPesoBasisPoints > MAX_POINTS_PER_PESO_BASIS_POINTS) {
+      return {
+        ok: false,
+        message:
+          'A hundred points per peso is a decimal point in the wrong place, and ' +
+          'one that multiplies across every order at once.',
+      };
+    }
+    if (tierWindowMonths < 1) {
+      return { ok: false, message: 'The tier window has to be at least one month.' };
+    }
+    if (
+      isActive &&
+      (pointsPerPesoBasisPoints === 0 ||
+        pointsPerPesoRedeemed === 0 ||
+        redemptionBlockPoints === 0)
+    ) {
+      return {
+        ok: false,
+        message:
+          'A live programme needs an earn rate, a redemption rate and a block ' +
+          'size. Without all three it shows a balance that can never grow or ' +
+          'never be spent.',
+      };
+    }
+    if (redemptionBlockPoints > 0 && pointsPerPesoRedeemed > 0 &&
+        redemptionBlockPoints % pointsPerPesoRedeemed !== 0) {
+      return {
+        ok: false,
+        message:
+          `A block of ${redemptionBlockPoints} at ${pointsPerPesoRedeemed} points ` +
+          'per peso is not a whole number of pesos. Pick a block that divides evenly.',
+      };
+    }
+
+    const before = await prisma.loyaltyProgramme.findUnique({
+      where: { id: LOYALTY_PROGRAMME_ID },
+    });
+
+    const data = {
+      isActive,
+      pointsPerPesoBasisPoints,
+      pointsPerPesoRedeemed,
+      redemptionBlockPoints,
+      expiryMonths,
+      tierWindowMonths,
+    };
+
+    await prisma.$transaction(async (tx) => {
+      await tx.loyaltyProgramme.upsert({
+        where: { id: LOYALTY_PROGRAMME_ID },
+        create: { id: LOYALTY_PROGRAMME_ID, ...data },
+        update: data,
+      });
+      await recordAdminAction(
+        {
+          actorId: admin.id,
+          action: AdminAction.LOYALTY_PROGRAMME_CHANGED,
+          subjectType: 'LoyaltyProgramme',
+          subjectId: LOYALTY_PROGRAMME_ID,
+          subjectLabel: isActive ? 'Points on' : 'Points off',
+          reason,
+          detail: { before, after: data },
+        },
+        tx,
+      );
+    });
+
+    revalidatePath('/admin/loyalty');
+    revalidatePath('/points');
+
+    const giveback = effectiveGivebackBasisPoints(data);
+    return {
+      ok: true,
+      message:
+        (isActive
+          ? `Points are on, giving back ${(giveback / 100).toFixed(2)}% of the food in every order.`
+          : 'Points are off. Balances already earned stay put and can still be redeemed once you switch it back on.') +
+        (isActive && expiryMonths === 0
+          ? ' Points never expire at this setting, so the outstanding balance only ever grows.'
+          : ''),
+    };
+  });
+}
+
+/** Adds or edits a tier. */
+export async function setLoyaltyTierAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const reason = normaliseReason(formData.get('reason'));
+
+    const tierId = String(formData.get('tierId') ?? '').trim();
+    const name = String(formData.get('name') ?? '').trim().slice(0, 40);
+    const blurb = String(formData.get('blurb') ?? '').trim().slice(0, 120);
+    const thresholdPoints = Number(String(formData.get('thresholdPoints') ?? '').trim());
+    const multiplierRaw = Number(String(formData.get('multiplier') ?? '').trim());
+
+    if (name.length === 0 || blurb.length === 0) {
+      return {
+        ok: false,
+        message:
+          'A tier needs a name and a line saying what it means — "you are Suki" ' +
+          'on its own tells a customer nothing.',
+      };
+    }
+    if (!Number.isInteger(thresholdPoints) || thresholdPoints < 0) {
+      return { ok: false, message: 'The threshold is a whole number of points.' };
+    }
+    if (!Number.isFinite(multiplierRaw) || multiplierRaw < 1 || multiplierRaw > 10) {
+      return {
+        ok: false,
+        message:
+          'The multiplier is between 1 and 10. Below 1 would earn slower than the ' +
+          'base rate, which is a punishment for ordering.',
+      };
+    }
+    const earnMultiplierBasisPoints = Math.round(multiplierRaw * 10_000);
+
+    const data = { name, blurb, thresholdPoints, earnMultiplierBasisPoints };
+
+    // A tier at the same threshold as another would make which one applies a
+    // coin flip; the unique index refuses it, and so does this with a sentence.
+    const clash = await prisma.loyaltyTier.findFirst({
+      where: {
+        OR: [{ thresholdPoints }, { name }],
+        ...(tierId ? { id: { not: tierId } } : {}),
+      },
+      select: { name: true, thresholdPoints: true },
+    });
+    if (clash) {
+      return {
+        ok: false,
+        message:
+          `"${clash.name}" already sits at ${clash.thresholdPoints} points, or shares ` +
+          'that name. Tiers need distinct thresholds and names.',
+      };
+    }
+
+    await prisma.$transaction(async (tx) => {
+      const tier = tierId
+        ? await tx.loyaltyTier.update({ where: { id: tierId }, data })
+        : await tx.loyaltyTier.create({
+            data: { ...data, sortOrder: thresholdPoints },
+          });
+      await recordAdminAction(
+        {
+          actorId: admin.id,
+          action: AdminAction.LOYALTY_TIER_CHANGED,
+          subjectType: 'LoyaltyTier',
+          subjectId: tier.id,
+          subjectLabel: tier.name,
+          reason,
+          detail: { after: data },
+        },
+        tx,
+      );
+    });
+
+    revalidatePath('/admin/loyalty');
+    revalidatePath('/points');
+    return {
+      ok: true,
+      message:
+        `"${name}" earns ${multiplierRaw}× from ${thresholdPoints} points. ` +
+        'Nobody is re-scored retroactively — the tier applies to orders from now on.',
     };
   });
 }

@@ -1550,6 +1550,153 @@ audited separately from amounts because *"was surge on in Manila at 6pm?"* is
 the question a complaint actually asks and it should be answerable without
 reading a diff.
 
+## Loyalty points — a fourth ledger, and why it is not a second currency
+
+### The question worth asking first
+
+This app already grants credits, and a credit-back benefit already exists. So a
+points programme could easily be a second currency doing the first one's job
+with extra steps — two balances for a customer to reason about, two liabilities
+to reconcile, and the wallet's "one write function, the ledger is the truth"
+discipline needing to hold twice.
+
+Two things make it not that.
+
+**Credits measure what you can spend; points measure what you have ordered.** A
+peso balance cannot express "you are two orders from Tapat", and a status band
+cannot be paid out. That distinction is what the second ledger earns.
+
+**And credit-back is a Plus benefit.** Plus is priced but still cannot be sold,
+because a subscription needs a recurring charge and a bank transfer somebody
+makes by hand is not one. So today a customer who orders every week and is not
+paying earns nothing at all for it. Points fill exactly that gap, with no
+payment rail.
+
+### Points are not spendable
+
+The decision that keeps this from confusing anybody: **points buy credits, and
+credits buy food.** There is exactly one balance a customer can spend, and it is
+the one that was already there. Points are a thing you convert, not a second
+wallet to reason about at the checkout — and nothing loyalty-shaped appears in
+`place-order.ts` or `checkout.ts` at all, which a test asserts.
+
+### What a tier changes, and what it must not
+
+A tier changes the earn rate. Nothing else.
+
+The temptation is to make Tapat waive delivery. This app already has three ways
+to reduce a bill — the fee rule's own free-delivery threshold, Plus benefits,
+and promo discounts — and each interacts with the others inside
+`applyBenefits`. A fourth would have to interact with all three, and would put
+loyalty arithmetic in the checkout path where a bug costs somebody the wrong
+price. A tier that earns faster compounds the thing the programme is for and
+touches nothing near a bill.
+
+Tiers are calculated from points **earned in a rolling window**, not from the
+balance and not from lifetime totals. Not the balance, because redeeming must
+not demote somebody — spending points is the behaviour the programme rewards,
+and punishing it teaches people to hoard and then teaches them the programme is
+a trick. Not lifetime, because a tier nobody can lose is not a reason to order
+again.
+
+### Earning: the food only
+
+Points accrue on the **subtotal** — never the delivery fee, surge or tip, which
+are the rider's money. Rewarding a customer in proportion to what we paid
+somebody else is both odd and gameable: a distant address would earn more than a
+near one for the same food. It is also what a customer means when they say what
+they spent.
+
+Rounded **down**. A customer a point short never notices; one given a point they
+had not earned makes the balance disagree with the rule that produced it, and
+rounding up across a million orders is a cost nobody chose.
+
+Earning happens on completion, inside the same transaction as the settlement
+accrual and the referral reward, keyed `loyalty-earn:<order id>` so a retried
+completion earns once. The tier is read at that moment and never again — the
+lesson `settlement/earnings.ts` learned about rider pay: a derived figure
+recomputed on read is one that rewrites itself whenever the formula changes.
+
+### Redemption: the only place a customer causes credits to exist
+
+A referral needs somebody else to sign up and order. A promo needs an
+administrator to type a reason. A refund needs an order that went wrong. This
+needs one tap by the person who benefits, which makes it the sharpest version of
+that risk in the app.
+
+So it is written to be exact:
+
+- **One transaction at SERIALIZABLE**, with the points balance read from the
+  ledger inside it. Two taps racing at a balance of 500 must not both succeed —
+  and a live-database check runs exactly that race and asserts one winner.
+- **`loyalty_account_balance_non_negative`** underneath, as the backstop that
+  does not depend on the application being right.
+- **The two rows name each other.** `loyalty_entry_redeemed_names_its_credit`
+  requires the link, and `loyalty_entry_only_redemption_has_credit` stops
+  anything else claiming one — an EARNED row pointing at a credits transaction
+  would mean points had been paid out twice.
+- **Credits through `recordWalletTransaction`**, the wallet's own write
+  function. Not a second path, not a balance field.
+- A serialization failure re-reads rather than guessing: answering "not enough
+  points" to somebody who still has some would be a lie.
+
+**Whole blocks only.** Without them a customer with 1,437 points at 100 points
+to the peso redeems ₱14.37 and holds 37 points that will never be worth a
+centavo — dust, which every loyalty programme accumulates and nobody enjoys. A
+part-block is refused explicitly rather than silently floored: somebody asking
+for 700 of a 500-point block should be told, not quietly given 500 and left
+wondering.
+
+The console shows how many accounts hold a **stranded** balance below one block,
+because a large total there means the block size is too high and the programme
+is quietly not paying out — which customers notice long before a dashboard does.
+
+### Expiry: the one thing credits do not do
+
+Credits, by design, never expire. Points do, and that is the only mechanism
+bounding what this programme can come to owe — a liability that grows fastest
+among the customers who have stopped ordering, which is the worst possible shape
+for it.
+
+The hard part is that redemptions are not attributed to particular earnings. A
+customer who earned 300 in January and 300 in March, then redeemed 500, holds
+100 — but *which* 100? It has to be the newest, because the alternative punishes
+prompt redemption: their remainder would expire on January's clock. So spending
+consumes the **oldest** earnings first, and only what is left below the cut-off
+expires. `livePortions` walks that netting, in one place — an earlier version
+had the loop written out twice, once for "what has expired" and once for "what
+expires next", which is two chances to net differently and no way to notice.
+
+The customer is warned **before** it happens. A balance that quietly shrank is
+indistinguishable from a bug; one that was flagged can be spent.
+
+### The number the console exists for
+
+`liabilityCentavos`: what the outstanding points would cost if everybody
+redeemed tomorrow. Points are an obligation denominated in the operator's money,
+and that figure is two rates away from the point count — earning is points per
+peso spent, redemption is points per peso back — so it is easy to get wrong by a
+factor of ten and invisible until somebody adds up the ledger. The screen also
+states the **effective giveback** as a percentage, for the same reason, and warns
+when no expiry is configured that the figure can only go up.
+
+### Two bugs worth recording
+
+**The tier holder counts were the same wrong number, repeated.** The console
+counted holders with a query per tier, and a spread that duplicated the
+`entries` key made every query identical — so the column showed one figure down
+its whole length, which reads as data rather than as a bug. It is now one
+`groupBy` over the window's earnings, bucketed through the same `tierFor` the
+customer's own screen uses, so the two cannot disagree about who is what.
+
+**Redeeming told the customer nothing.** The redeem control rendered only when a
+redemption was available, with the page showing a "you need 300 more points"
+line otherwise. So a successful tap dropped the balance below one block, the
+refresh replaced the control with that line, and **the success message went with
+it** — points moved, credits moved, and the screen said nothing, which is
+indistinguishable from a tap that failed. Found in a browser. One component now
+owns both states, so its confirmation survives the thing it is confirming.
+
 ## Referrals — the only credits a user can cause
 
 Every other credit in this app is granted because an order completed or because
@@ -3441,7 +3588,7 @@ sense as an undrained outbox, and says which command to run.
 
 ## Verification
 
-Database-free, in CI (`npm run verify`) — **1471 tests across 41 files**. The
+Database-free, in CI (`npm run verify`) — **1544 tests across 42 files**. The
 table below names the ones that carry a rule rather than a case; the rest cover
 a single feature each and are named for it.
 
@@ -3465,6 +3612,7 @@ a single feature each and are named for it.
 | `live-tracking.test.ts` | The four gates on a rider's position, the share throttle including a held fix, distance wording, and greps for the privacy boundary and the map's honesty |
 | `payments.test.ts` | The no-top-up rule per instrument and in the database, the prepaid hold across every lifecycle, event signs, the derived status including a short payment, and what the rider is told to collect |
 | `settlement.test.ts` | The order-value split proved exhaustive over every combination of fees, tips and commission; who holds the money per payment method; the cash round trip netting to zero; and the payout ceiling |
+| `loyalty.test.ts` | Points earned on the food only and rounded down; the sign forced by type so an added redemption is unrepresentable; whole-block redemption leaving no fraction of a centavo at any rate; oldest-first expiry netting; and that nothing loyalty-shaped reaches the checkout |
 | `referrals.test.ts` | Self-referral and re-attribution refused at every layer; the code alphabet excluding both members of each confusable pair; whether a given pair of amounts makes farming profitable; the Manila month boundary a cap resets on; and that no path exists from a referral to cash |
 | `surge-alerts.test.ts` | Only a step up counts as news, proved over an hour of simulated measurements; the perishable rule dropping rather than deferring; the sustained-run clock arithmetic; and that no self-detecting stall alert exists |
 | `surge-pricing.test.ts` | The step ladder proved monotonic across the whole ratio range on a mistyped ladder as well as a good one, the ceiling agreeing with the SQL guard, every uncertainty resolving to ₱0, a free-delivery benefit not reaching the rider's surge, and greps that the sweep measures after the timeout pass and the screen sends the figure it displayed |

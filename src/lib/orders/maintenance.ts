@@ -12,6 +12,8 @@ import { grantCredit, refundToCredits } from '@/lib/wallet/ledger';
 import { recordCashCollected } from '@/lib/payments/manual';
 import { accrueOrderSettlement } from '@/lib/settlement/accrual';
 import { payReferrerForOrder } from '@/lib/referrals/rewards';
+import { earnPointsForOrder } from '@/lib/loyalty/earning';
+import { expireLoyaltyPoints, type ExpiryPassResult } from '@/lib/loyalty/expiry';
 import {
   recordSurgeSnapshots,
   type SnapshotPassResult,
@@ -425,6 +427,11 @@ export async function completeOrder(input: {
     // referral in a separate step could pay it twice or not at all.
     await payReferrerForOrder(order, tx);
 
+    // And the points the order earned. Same transaction, same reasoning: a
+    // completion that awarded points in a separate step could award them twice
+    // or not at all. Keyed on the order, so a retried completion earns once.
+    await earnPointsForOrder(order, tx);
+
     return { order, creditBackCentavos };
   });
 }
@@ -764,6 +771,7 @@ export async function runMaintenance(): Promise<{
   expired: ExpiredOrderResult[];
   surge: SnapshotPassResult;
   surgeAlerts: AlertPassResult;
+  loyaltyExpiry: ExpiryPassResult;
   subscriptions: RenewalOutcome[];
   launchAnnouncements: LaunchAnnouncementResult;
   errorAlerts: ErrorAlertResult;
@@ -801,6 +809,10 @@ export async function runMaintenance(): Promise<{
   // grants nothing (the pricing engine checks `renewsAt`), so this is
   // record-keeping and can wait behind anything a customer is watching.
   const subscriptions = await sweepDueSubscriptions();
+  // Points that ran out of time. Housekeeping in the same sense as the
+  // subscription sweep — nothing is waiting on it, and it is the only thing
+  // that stops the outstanding points liability growing forever.
+  const loyaltyExpiry = await expireLoyaltyPoints();
   // Before the delivery pass, so a launch announcement enqueued here goes out
   // in the same run rather than waiting a minute for the next one.
   const launchAnnouncements = await announceLaunchedServices();
@@ -840,6 +852,7 @@ export async function runMaintenance(): Promise<{
     surge,
     surgeAlerts,
     subscriptions,
+    loyaltyExpiry,
     launchAnnouncements,
     errorAlerts,
     supportChases,

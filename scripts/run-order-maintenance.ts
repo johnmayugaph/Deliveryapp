@@ -31,6 +31,7 @@ async function main() {
     surge,
     surgeAlerts,
     subscriptions,
+    loyaltyExpiry,
     launchAnnouncements,
     errorAlerts,
     supportChases,
@@ -69,6 +70,13 @@ async function main() {
           ? `; ${surgeAlerts.sustained} market(s) reported as short-staffed`
           : '') +
         '.',
+    );
+  }
+
+  if (loyaltyExpiry.pointsExpired > 0) {
+    console.log(
+      `Loyalty: ${loyaltyExpiry.pointsExpired} point(s) expired across ` +
+        `${loyaltyExpiry.accounts} account(s).`,
     );
   }
 

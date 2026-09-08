@@ -477,6 +477,8 @@ model User {
   resolvedErrorReports    ErrorReport[]                     @relation("ErrorResolver")
   referralsMade           Referral[]                        @relation("ReferrerReferrals")
   referralReceived        Referral?                         @relation("RefereeReferral")
+  loyaltyAccount          LoyaltyAccount?
+  loyaltyAdjustments      LoyaltyEntry[]                    @relation("LoyaltyAdjustmentActor")
 
   @@index([roles], type: Gin)
   @@index([preferredCityId])
@@ -1225,6 +1227,7 @@ model Order {
   appliedBenefits    OrderAppliedBenefit[]
   notifications      Notification[]
   Referral           Referral[]
+  LoyaltyEntry       LoyaltyEntry[]
 
   /// Powers the unified cross-service order history: one chronological list,
   /// every vertical, no per-service queries.
@@ -1360,6 +1363,7 @@ model FleetPartner {
   dispatchOffers       DispatchOffer[]
   settlementEntries    SettlementEntry[]
   referralsQualified   Referral[]
+  loyaltyEntries       LoyaltyEntry[]
 
   @@index([isOnline, isSuspended, homeCityId])
   @@index([enabledServices], type: Gin)
@@ -1510,6 +1514,11 @@ model WalletTransaction {
   metadata Json?
 
   createdAt DateTime @default(now())
+
+  /// The points redemption this row came from, when it did. Back-reference to
+  /// the loyalty ledger, so a credit granted from points can be traced to the
+  /// points it consumed without a join through metadata.
+  loyaltyRedemption LoyaltyEntry?
 
   /// Note the absence of `updatedAt`. This table is not updated.
   @@index([walletId, createdAt(sort: Desc)])
@@ -2347,6 +2356,18 @@ enum AdminAction {
   SURGE_BAND_CREATED
   /// A surge step's threshold, amount or name was changed.
   SURGE_BAND_CHANGED
+  /// The loyalty programme's rates, expiry or on/off state were changed.
+  /// Audited for the same reason as the referral programme: it is a standing
+  /// liability against every account at once, denominated in points that
+  /// convert to money.
+  LOYALTY_PROGRAMME_CHANGED
+  /// A loyalty tier was added, changed or removed. Separate from the rates
+  /// because a tier changes how fast points are earned, which is a different
+  /// decision from what a point is worth.
+  LOYALTY_TIER_CHANGED
+  /// A signed correction to somebody's points, with a reason. The loyalty
+  /// ledger's equivalent of a credits ADJUSTMENT.
+  LOYALTY_POINTS_ADJUSTED
   /// The referral programme's amounts, caps or on/off state were changed.
   /// Audited because it is the only control in the console that creates a
   /// standing liability against every account at once — and because the
@@ -2766,4 +2787,168 @@ enum ReferralStatus {
   /// too small. A terminal state rather than a silent nothing, so the referrer
   /// can be told and an operator can count how often it happens.
   NOT_REWARDED
+}
+
+// -----------------------------------------------------------------------------
+// Loyalty points
+// -----------------------------------------------------------------------------
+
+/// The fourth append-only ledger, and the only one denominated in something
+/// other than money.
+///
+/// Points measure what somebody has ORDERED. Credits measure what they can
+/// SPEND. Keeping them apart is the whole reason this table exists rather than
+/// crediting a few centavos per order straight into the wallet: a peso balance
+/// cannot express "you are close to Gold", and a tier cannot be paid out.
+///
+/// Same discipline as the other three ledgers — append-only trigger, sign
+/// forced by type, one write function, balance derived from the sum and never
+/// set — because the moment a points balance can be written directly, points
+/// become a thing anybody with database access can mint.
+model LoyaltyAccount {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Derived: sum(entries.points). Never assigned; see `loyalty/ledger.ts`.
+  pointsBalance Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  entries LoyaltyEntry[]
+}
+
+model LoyaltyEntry {
+  id        String         @id @default(cuid())
+  accountId String
+  account   LoyaltyAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  type LoyaltyEntryType
+
+  /// Signed, and the sign is forced by type in `prisma/sql/loyalty.sql`:
+  /// EARNED is positive, REDEEMED and EXPIRED are negative, ADJUSTED is either
+  /// and needs an administrator against it.
+  points Int
+
+  /// What the customer reads in their history. Written once, at the time, so
+  /// an edited template cannot rewrite what somebody was told they earned.
+  description String
+
+  /// The order that earned them. Required for EARNED — points come from
+  /// orders, and a row that cannot name one is points from nowhere.
+  relatedOrderId String?
+  relatedOrder   Order?  @relation(fields: [relatedOrderId], references: [id], onDelete: SetNull)
+
+  /// For REDEEMED: the credits ledger row this became. The join between the
+  /// two ledgers, and the only place points turn into money.
+  walletTransactionId String?            @unique
+  walletTransaction   WalletTransaction? @relation(fields: [walletTransactionId], references: [id], onDelete: SetNull)
+
+  /// Required for ADJUSTED: which administrator, and their reason lives in the
+  /// audit log against the same subject.
+  adminUserId String?
+  adminUser   User?   @relation("LoyaltyAdjustmentActor", fields: [adminUserId], references: [id], onDelete: SetNull)
+
+  /// Makes earning idempotent: one key per order, so a retried completion
+  /// cannot earn twice.
+  idempotencyKey String? @unique
+
+  /// When these points stop counting. Set on EARNED only, from the
+  /// programme's expiry window. Null means they never expire, which is what an
+  /// unconfigured expiry means.
+  expiresAt DateTime?
+
+  createdAt      DateTime      @default(now())
+  FleetPartner   FleetPartner? @relation(fields: [fleetPartnerId], references: [id])
+  fleetPartnerId String?
+
+  @@index([accountId, createdAt])
+  @@index([type, expiresAt])
+}
+
+enum LoyaltyEntryType {
+  /// Earned by completing an order.
+  EARNED
+  /// Turned into credits, at the programme's rate.
+  REDEEMED
+  /// Timed out unredeemed. The one thing credits deliberately never do, and
+  /// the only mechanism that bounds what this programme can come to owe.
+  EXPIRED
+  /// A signed correction by an administrator, with a reason in the audit log.
+  ADJUSTED
+}
+
+/// What a point is worth, and how fast one is earned.
+///
+/// Data with no rows by default, the same posture as commission at zero, surge
+/// with no bands and referrals off. Here the reason is that a points programme
+/// is a liability denominated in somebody else's money: at 1 point per peso and
+/// 100 points to the peso, a million pesos of orders creates ten thousand pesos
+/// of obligation. That is a decision about a business, not a default.
+///
+/// One row, ever — `loyalty_programme_singleton`.
+model LoyaltyProgramme {
+  id String @id @default("default")
+
+  isActive Boolean @default(false)
+
+  /// Points earned per whole peso of an order's SUBTOTAL. Basis points rather
+  /// than a float so the arithmetic is exact: 10000 is one point per peso.
+  pointsPerPesoBasisPoints Int @default(0)
+
+  /// How many points buy one peso of credits. Higher means points are worth
+  /// less. Kept as points-per-peso rather than centavos-per-point because that
+  /// is the direction a customer reads it: "100 points = ₱1".
+  pointsPerPesoRedeemed Int @default(0)
+
+  /// Redemption happens in whole blocks of this many points, so a balance is
+  /// never stranded as dust nobody can spend and every redemption is a round
+  /// number of pesos.
+  redemptionBlockPoints Int @default(0)
+
+  /// How long points last before expiring, in months. Zero means they never
+  /// expire — which is a choice, and the one that makes the liability
+  /// unbounded, so the console says so.
+  expiryMonths Int @default(0)
+
+  /// The window a tier is calculated over, in months. Rolling rather than
+  /// lifetime: a tier nobody can lose is not a reason to order again.
+  tierWindowMonths Int @default(12)
+
+  updatedAt DateTime @default(now()) @updatedAt
+  createdAt DateTime @default(now())
+}
+
+/// A status band, earned by ordering.
+///
+/// Tiers change ONE thing: how fast points are earned. Deliberately not a
+/// fourth discount mechanism — this app already has three ways to reduce a bill
+/// (the fee rule's own free-delivery threshold, Plus benefits, and promo
+/// discounts), and a tier that waived delivery would be a fourth with its own
+/// interaction with the other three. A tier that earns faster compounds the
+/// thing the programme is actually for, and needs no arithmetic anywhere near
+/// the checkout.
+model LoyaltyTier {
+  id String @id @default(cuid())
+
+  /// What the customer is called. "Suki" — the Filipino word for a regular
+  /// customer, which is the whole idea and better than a metal.
+  name String @unique
+
+  /// Points earned inside the rolling window at or above which this tier
+  /// applies. The base tier is threshold zero and everybody has it.
+  thresholdPoints Int @unique
+
+  /// Multiplies the earn rate, in basis points. 10000 is no change; 15000
+  /// earns half again as fast.
+  earnMultiplierBasisPoints Int @default(10000)
+
+  /// Shown beside the tier name, so "why am I Suki" has an answer on screen.
+  blurb String
+
+  sortOrder Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

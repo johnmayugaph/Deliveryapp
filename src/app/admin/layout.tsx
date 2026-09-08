@@ -72,6 +72,9 @@ export default async function AdminLayout({
             <Link href="/admin/referrals" className="hover:text-brand-700">
               Referrals
             </Link>
+            <Link href="/admin/loyalty" className="hover:text-brand-700">
+              Points
+            </Link>
             <Link href="/admin/support" className="hover:text-brand-700">
               Support
             </Link>

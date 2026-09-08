@@ -2959,3 +2959,143 @@ in their ledger and the cookie cleared, while the inviter's screen shows them
 waiting on a first order.
 
 1471 tests pass; typecheck, lint and build clean.
+
+## Phase 38 — Loyalty points
+
+### The question I asked before building anything
+
+This app already grants credits, and credit-back already exists as a Plus
+benefit. A points programme could therefore be a second currency doing the
+first one's job with extra steps: two balances for a customer to hold in their
+head, two liabilities to reconcile, and the wallet's own discipline needing to
+hold twice.
+
+Two things made it worth building anyway.
+
+**Credits measure what you can spend; points measure what you have ordered.** A
+peso balance cannot say "you are two orders from Tapat", and a status band
+cannot be paid out.
+
+**And Plus still cannot be sold**, because a subscription needs a recurring
+charge and a bank transfer somebody makes by hand is not one. So today a
+customer who orders every week and is not paying earns nothing for it at all.
+Points fill exactly that gap and need no payment rail.
+
+### The decision that keeps it from being confusing
+
+**Points are not spendable.** Points buy credits; credits buy food. There is
+one balance a customer can spend and it is the one that was already there —
+nothing loyalty-shaped appears in `place-order.ts` or `checkout.ts`, which a
+test asserts rather than assumes.
+
+### The boundary I held
+
+A tier changes the earn rate and nothing else. The temptation is to make the top
+tier waive delivery, and the reason not to is concrete: this app has three ways
+to reduce a bill already, each interacting with the others inside
+`applyBenefits`, and a fourth would put loyalty arithmetic in the checkout path
+where a bug costs somebody the wrong price. A tier that earns faster compounds
+the thing the programme is for and touches nothing near a bill.
+
+Tiers come from points earned in a **rolling window** — not the balance, because
+redeeming must not demote anybody, and not lifetime, because a tier nobody can
+lose is not a reason to order again.
+
+### Earning, and what it excludes
+
+On the **subtotal** only. Never the delivery fee, surge or tip: those are the
+rider's money, and rewarding a customer in proportion to what we paid somebody
+else is both odd and gameable — a distant address would earn more than a near
+one for the same food.
+
+Rounded down. A customer a point short never notices; one given a point they had
+not earned makes the balance disagree with the rule that produced it.
+
+### Redemption is the sharpest risk in the app
+
+A referral needs somebody else to sign up and order. A promo needs an
+administrator. This needs one tap by the person who benefits — the only place a
+**customer** causes credits to come into existence. So: one serializable
+transaction, the balance read from the ledger inside it, a non-negative
+constraint underneath, the two ledger rows required to name each other by CHECK
+constraints, and credits granted only through the wallet's own write function.
+
+A live-database check runs two concurrent redemptions against a balance of
+exactly one block and asserts **one winner**.
+
+Whole blocks only, because 37 points that can never be worth a centavo is dust
+every loyalty programme accumulates and nobody enjoys — and the console shows
+how many accounts are stranded below a block, since a large number there means
+the block is too big and the programme is quietly not paying out.
+
+### Expiry, and the netting nobody sees
+
+The one thing credits deliberately never do, and the only mechanism bounding
+what this can come to owe — a liability that grows fastest among customers who
+have stopped ordering.
+
+Redemptions are not attributed to particular earnings, so a customer who earned
+300 in January and 300 in March then redeemed 500 holds 100 — but *which* 100?
+It has to be the newest, or prompt redemption is punished by having the
+remainder expire on January's clock. Spending consumes the oldest first.
+
+### Three bugs
+
+**The console's tier holder counts were one wrong number repeated.** A query per
+tier with a duplicated object key made every query identical, so the column
+showed the same figure down its whole length — which reads as data, not as a
+bug. Now one `groupBy` bucketed through the same `tierFor` the customer's screen
+uses, so the two cannot disagree.
+
+**The earning code guessed at replays from a timestamp.** It compared the row's
+`createdAt` against the clock to decide whether the idempotency key had matched,
+which is wrong under clock skew and wrong in the direction that double-counts.
+The ledger now reports it.
+
+**Redeeming told the customer nothing.** The redeem control rendered only when a
+redemption was available; the page showed a "you need 300 more points" line
+otherwise. A successful tap dropped the balance below a block, the refresh
+replaced the control with that line, and **the success message went with it** —
+the points moved, the credits moved, and the screen said nothing at all, which
+is indistinguishable from a tap that failed. Found in a browser. One component
+now owns both states.
+
+Two fixture mistakes are worth recording too, for the same reason as last
+phase: a guard check that fired on `loyalty_entry_redeemed_names_its_credit`
+rather than the sign constraint it named, and an expiry check that reported a
+defect which was the netting working correctly — the account's earlier
+redemptions had already consumed every aged point. Both were the check being
+wrong, and both are now split so they test what they claim.
+
+### Verified in three places
+
+**73 unit tests**: earning on the food only and rounded down, the sign derived
+from the type so an added redemption is unrepresentable, whole-block redemption
+leaving no fraction of a centavo at any rate or block size, tier promotion at
+exactly the threshold, the rolling window, oldest-first netting in one place,
+and that nothing loyalty-shaped reaches the checkout. Six seams were mutated to
+confirm the checks fail.
+
+**Sixteen SQL-guard checks** against the live database: an update, a delete, a
+delete with the escape hatch, a negative earning, a positive redemption, points
+with no order, a redemption with no credits row, an EARNED row claiming one, an
+adjustment with no administrator, an expiry on a redemption, a negative balance,
+two programmes, a live programme that can never be redeemed, a hundred points
+per peso, and a tier that earns slower than base.
+
+**Twenty-three more against the live database**: a ₱600 order earning 600 points
+and not 689, a retried completion earning once, a tier promotion changing the
+next order's earning, redemption moving both ledgers by matching amounts with
+the rows linked, **two concurrent taps at one block producing exactly one
+winner**, expiry taking the oldest first in both directions, and the derived
+balance equalling the ledger sum after all of it.
+
+**Twenty-five in a real browser**: the screen saying points are off, a block
+that is not a whole number of pesos refused with a sentence and nothing saved,
+the giveback stated as 1.00%, the never-expires warning, a ₱1,200 order earning
+1,200 points, the balance shown in points *and* pesos, one tap converting
+1,000 into ₱10.00 with the confirmation surviving, the credits screen showing
+"1000 points redeemed" in its own history, and switching the programme off
+leaving the balance untouched.
+
+1544 tests pass; typecheck, lint and build clean.
