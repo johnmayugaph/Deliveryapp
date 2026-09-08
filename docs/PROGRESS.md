@@ -3945,3 +3945,121 @@ carries the same information — so the sentence is asserted in the unit test
 instead, and the script says why.
 
 1828 tests pass; typecheck, lint and build clean.
+
+## Phase 44 — Loyalty tiers that confer something
+
+Tiers existed as data from the loyalty phase: a name, a threshold, a blurb and
+an earn multiplier. The multiplier was wired and worked. Everything else about
+a tier was a word.
+
+And in this database there were **zero tier rows** — the console could add one
+and nothing ever had, so `tierFor` returned null on every call and the
+multiplier was 1.0 for everybody. A status band nobody can price, that nobody
+has, is a status band nobody works towards.
+
+### Reversing a decision, precisely
+
+The earlier phase argued at length against letting a tier touch a bill: this
+app already has three ways to reduce one, each interacting with the others
+inside `applyBenefits`, so a fourth would have to interact with all three and
+would put loyalty arithmetic in the checkout path.
+
+That argument was about a fourth MECHANISM, and it holds. What a tier gets
+instead is a second way to qualify for the mechanism that already exists. A
+`LoyaltyTierBenefit` of a bill type carries the same columns as a
+`SubscriptionBenefit` of that type and is priced by the same function, so there
+is one implementation of "free delivery over ₱300, four times a month". A test
+counts the code paths in the engine — one `deliveryWaived = true`, one
+DISCOUNT_PERCENT loop, one CREDIT_BACK loop — and asserts the engine still has
+no idea which of the two things conferred a benefit: it reads a `source` it was
+handed.
+
+Widening `applyBenefits` from `SubscriptionBenefit[]` to a tagged structural
+type was worth it for what the compiler then found on its own, below.
+
+### And three benefits that touch no bill
+
+`DISPATCH_PRIORITY`, `SUPPORT_PRIORITY` and `POINTS_NEVER_EXPIRE`, read at one
+seam each.
+
+The two priority perks are **minutes of apparent age**, and that shape is the
+whole of what makes them safe. A boolean that sorted every suki above every
+stranger would mean, on a busy Friday, an order that is never offered at all
+while loyal customers keep arriving — and nobody would see it happen, because a
+starved order looks exactly like an order waiting for a rider. A few minutes
+cannot starve anybody: a stranger who has waited longer than the window still
+goes first, and the window is capped at 100 minutes in the policy and again in
+SQL. In support the boost is a tie-break inside a priority band and never
+across one, so an URGENT ticket from somebody who has never ordered still
+outranks a NORMAL one from the platform's most loyal customer.
+
+`POINTS_NEVER_EXPIRE` needed no new representation: null in `expiresAt` already
+meant never, and the sweep already filters those out.
+
+### The hole the compiler found
+
+`commitBenefitUsage` gained a required `customerId`, and that broke the one
+call site — which turned out to read:
+
+```ts
+if (quote.price.subscriptionId && quote.price.appliedBenefits.length > 0) {
+```
+
+Correct while a subscription was the only thing that conferred a benefit. A
+silent hole the moment a tier could: a customer with a tier and no plan would
+have had no usage row written and no receipt line, so their monthly allowance
+would never have been spent and their free deliveries would never have run out.
+Nobody would have noticed for months.
+
+### Two tests that had to be rewritten rather than kept
+
+`loyalty.test.ts` asserted "a tier changes only the earn rate, never a bill" by
+matching `/loyalty|tier/i` against the pricing modules, and "points never pay
+for an order directly" by matching `/loyalty|points/i` against `place-order.ts`.
+Both were source-regex proxies. The first was asserting the decision the user
+had just reversed; the second broke on the word `loyaltyDiscountCentavos`,
+which is a column on an order rather than points being spent. Both were
+replaced with the narrower thing that still has to be true — one implementation
+per bill mechanism, and neither file touching the points ledger at all.
+
+### Verified in four places
+
+**Fifty new unit tests** (1886 total): every type classified and named, the
+column map checked arm by arm against the SQL guard, a perk never mapped to a
+zero-percent discount, the priority clamp in both directions, the sentence
+under every benefit generated from its numbers and never from the operator's
+label, the giveback arithmetic including "unbounded" rather than a big number,
+a tier's discount landing in its own column, one waiver when both a plan and a
+tier would, and the tier's allowance spent before the paid one.
+
+**Ten seams were mutated, and two survived the first pass** — both real gaps.
+One was the ordering decision, which lived in a private function nothing tested;
+it is exported now. The other is the more interesting: the dispatch bound was
+guarded by matching `* 60_000` in the source, which happily matched a mutant
+that had made it `* 60_000_000_000` — the difference between a head start and a
+separate queue for loyal customers. The arithmetic is now a pure exported
+`effectiveQueueTime` and the bound is checked numerically.
+
+**Twenty-five SQL-guard checks** against the live database, each naming its own
+constraint, every bad row one field from a control that inserts — including one
+arm per benefit type, and the stale-column case: a row edited from a priority
+benefit to a discount with the old weight left on it.
+
+**Twenty-four against the live database**: a real quote putting a tier's waiver
+in its own column, a real placement writing the usage row and the receipt line,
+the shop still owed its subtotal in full, a plan and a tier together waiving
+once with the tier's allowance going first and the customer paying the same
+either way, the fan-out offering a suki ahead of a newer order and behind an
+hour-old one, the support queue doing the same inside a band and not across
+one, and points at the top tier stamped with no expiry while the base tier's
+still expire. The two ordering checks were mutation-tested against the live
+database to confirm they discriminate.
+
+**Fourteen in a real browser**: the console building the whole ladder from
+empty, refusing a head start beyond the ceiling with the sentence about why the
+bound exists, showing what each tier confers marked money-or-perk, working out
+the monthly ceiling, warning that a tier is giving away what Plus is priced on,
+and the customer's own screen naming their tier, describing the free delivery
+from its numbers rather than the label, and marking a perk as not a discount.
+
+1886 tests pass; typecheck, lint and build clean.

@@ -4,6 +4,7 @@ import { requireOnboardedUser } from '@/lib/auth/session';
 import { pointsSummary } from '@/lib/loyalty/summary';
 import { formatCentavos } from '@/lib/money';
 import { RedeemPoints } from '@/components/loyalty/RedeemPoints';
+import { TierBenefits } from '@/components/loyalty/TierBenefits';
 
 export const dynamic = 'force-dynamic';
 
@@ -86,6 +87,32 @@ export default async function PointsPage() {
           </div>
         ) : null}
       </section>
+
+      {/* What the tier is actually worth, directly under the tier's name.
+          Until this existed a tier was a word and a blurb: the multiplier was
+          real but invisible, and every other benefit was unbuilt. A status
+          band nobody can price is a status band nobody works towards. */}
+      {summary.current ? (
+        <TierBenefits
+          benefits={summary.currentBenefits}
+          heading={`What ${summary.current.name} gets you`}
+          emptyText={
+            summary.current.earnMultiplierBasisPoints > 10_000
+              ? `${summary.current.name} earns points ${(
+                  summary.current.earnMultiplierBasisPoints / 10_000
+                ).toFixed(2)}× as fast. Nothing else is attached to it yet.`
+              : `Nothing is attached to ${summary.current.name} yet.`
+          }
+        />
+      ) : null}
+
+      {summary.next && summary.nextBenefits.length > 0 ? (
+        <TierBenefits
+          benefits={summary.nextBenefits}
+          heading={`What ${summary.next.name} would add`}
+          alreadyHave={summary.currentBenefits.map((benefit) => benefit.type)}
+        />
+      ) : null}
 
       {/* One component owns both the offer and the "not yet" line. Splitting
           them meant redeeming unmounted the control and took its own success

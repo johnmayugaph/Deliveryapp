@@ -1,17 +1,32 @@
 import { describe, expect, it } from 'vitest';
-import { BenefitType, ServiceKey, type SubscriptionBenefit } from '@prisma/client';
+import {
+  BenefitSource,
+  BenefitType,
+  ServiceKey,
+  type SubscriptionBenefit,
+} from '@prisma/client';
 import {
   applyBenefits,
   benefitCoversService,
   isBenefitUsable,
   type BenefitUsageSnapshot,
   type FeeInputs,
+  type SourcedBenefit,
 } from '@/lib/pricing/benefits';
 import { applyBasisPoints } from '@/lib/money';
 
-/** A benefit row with sane defaults, so each test states only what it cares about. */
-function benefit(overrides: Partial<SubscriptionBenefit> & { type: BenefitType }): SubscriptionBenefit {
-  return {
+/**
+ * One of a plan's benefits, tagged with its source.
+ *
+ * `applyBenefits` now prices a plan's benefits and a loyalty tier's through
+ * the same path, so every row carries which conferred it. Everything in this
+ * file is about a subscription, so SUBSCRIPTION is the default here and the
+ * tier cases live in `loyalty-tier-benefits.test.ts`.
+ */
+function benefit(
+  overrides: Partial<SubscriptionBenefit> & { type: BenefitType },
+): SourcedBenefit & { id: string } {
+  const row: SubscriptionBenefit = {
     id: overrides.id ?? `benefit_${overrides.type}`,
     planId: 'plan_plus',
     type: overrides.type,
@@ -26,6 +41,8 @@ function benefit(overrides: Partial<SubscriptionBenefit> & { type: BenefitType }
     createdAt: new Date(),
     updatedAt: new Date(),
   };
+  // `id` is lifted so the usage-map assertions below read as they did.
+  return { benefit: row, source: BenefitSource.SUBSCRIPTION, id: row.id };
 }
 
 function fees(overrides: Partial<FeeInputs> = {}): FeeInputs {
@@ -288,7 +305,7 @@ describe('CREDIT_BACK_PERCENT', () => {
           minimumOrderCentavos: 0,
           sortOrder: 0,
         }),
-        { ...creditBack, sortOrder: 1 },
+        { ...creditBack, benefit: { ...creditBack.benefit, sortOrder: 1 } },
       ],
       usageByBenefitId: NO_USAGE,
     });
@@ -323,13 +340,19 @@ describe('discounts never produce a negative bill', () => {
 
 describe('misconfigured benefit rows are skipped, not thrown on', () => {
   it('ignores a FREE_DELIVERY with no minimum set', () => {
-    expect(isBenefitUsable(benefit({ type: BenefitType.FREE_DELIVERY }))).toBe(false);
+    expect(isBenefitUsable(benefit({ type: BenefitType.FREE_DELIVERY }).benefit)).toBe(
+      false,
+    );
   });
 
   it('ignores a percentage benefit with no percentage', () => {
-    expect(isBenefitUsable(benefit({ type: BenefitType.DISCOUNT_PERCENT }))).toBe(false);
     expect(
-      isBenefitUsable(benefit({ type: BenefitType.DISCOUNT_PERCENT, percentBasisPoints: 0 })),
+      isBenefitUsable(benefit({ type: BenefitType.DISCOUNT_PERCENT }).benefit),
+    ).toBe(false);
+    expect(
+      isBenefitUsable(
+        benefit({ type: BenefitType.DISCOUNT_PERCENT, percentBasisPoints: 0 }).benefit,
+      ),
     ).toBe(false);
   });
 

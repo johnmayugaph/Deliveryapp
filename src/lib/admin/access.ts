@@ -179,6 +179,8 @@ export const ADMIN_ACTION_LABEL: Readonly<Record<AdminAction, string>> = {
   [AdminAction.STORE_COMMISSION_CHANGED]: 'Store commission rate changed',
   [AdminAction.LOYALTY_PROGRAMME_CHANGED]: 'Loyalty programme changed',
   [AdminAction.LOYALTY_TIER_CHANGED]: 'Loyalty tier added, changed or removed',
+  [AdminAction.LOYALTY_TIER_BENEFIT_CHANGED]: 'Loyalty tier benefit added or changed',
+  [AdminAction.LOYALTY_TIER_BENEFIT_REMOVED]: 'Loyalty tier benefit removed',
   [AdminAction.LOYALTY_POINTS_ADJUSTED]: "Somebody's points corrected",
   [AdminAction.REFERRAL_PROGRAMME_CHANGED]: 'Referral programme changed',
   [AdminAction.PARTNER_REFERRAL_PROGRAMME_CHANGED]: 'Rider-invite programme changed',

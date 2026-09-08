@@ -1,8 +1,13 @@
 import { LoyaltyEntryType, type Order } from '@prisma/client';
 import { prisma, type PrismaTransactionClient } from '@/lib/prisma';
 import { ensureLoyaltyAccount, recordLoyaltyEntry } from '@/lib/loyalty/ledger';
-import { getProgramme, getTiers, pointsEarnedInWindow } from '@/lib/loyalty/programme';
+import {
+  getProgramme,
+  getTiersWithBenefits,
+  pointsEarnedInWindow,
+} from '@/lib/loyalty/programme';
 import { expiryFor, pointsForOrder, tierFor } from '@/lib/loyalty/policy';
+import { pointsNeverExpireAt } from '@/lib/loyalty/tier-benefits';
 
 /**
  * Earning points, at the moment an order completes.
@@ -18,6 +23,14 @@ import { expiryFor, pointsForOrder, tierFor } from '@/lib/loyalty/policy';
  * orders — which is the same lesson `settlement/earnings.ts` learned the hard
  * way about rider pay: a derived money figure recomputed on read is a figure
  * that rewrites itself whenever the formula changes.
+ *
+ * The same rule now decides EXPIRY. A tier conferring POINTS_NEVER_EXPIRE
+ * stamps the points earned while the customer is at that tier with no expiry
+ * date, and those points keep it forever: dropping back to Suki next year does
+ * not retroactively put a clock on points already earned. Which is the honest
+ * reading of the promise — "points you earn while you are at this tier never
+ * expire" is what the screen says, and it is a promise about the earning
+ * rather than about the customer.
  */
 
 export interface EarningOutcome {
@@ -26,9 +39,16 @@ export interface EarningOutcome {
   tierName: string | null;
   /** True when this call is what wrote the row. */
   earned: boolean;
+  /** True when the tier's perk meant these points were stamped with no expiry. */
+  neverExpires: boolean;
 }
 
-const NOTHING: EarningOutcome = { pointsEarned: 0, tierName: null, earned: false };
+const NOTHING: EarningOutcome = {
+  pointsEarned: 0,
+  tierName: null,
+  earned: false,
+  neverExpires: false,
+};
 
 export async function earnPointsForOrder(
   order: Pick<Order, 'id' | 'customerId' | 'subtotalCentavos' | 'orderNumber'>,
@@ -43,13 +63,20 @@ export async function earnPointsForOrder(
   if (!programme.isActive) return NOTHING;
 
   const [tiers, earnedInWindow] = await Promise.all([
-    getTiers(db),
+    getTiersWithBenefits(db),
     pointsEarnedInWindow(order.customerId, programme, now, db),
   ]);
   const { current } = tierFor(tiers, earnedInWindow);
 
   const points = pointsForOrder(programme, order, current);
   if (points <= 0) return NOTHING;
+
+  // The tier's own benefits, from the row `tierFor` picked out of this list.
+  const tierBenefits =
+    current === null
+      ? []
+      : tiers.find((tier) => tier.id === current.id)?.benefits ?? [];
+  const neverExpires = pointsNeverExpireAt(tierBenefits);
 
   const account = await ensureLoyaltyAccount(order.customerId, db);
 
@@ -63,7 +90,9 @@ export async function earnPointsForOrder(
       // One earning per order, ever. A retried completion re-enters here and
       // gets the existing row back rather than a second one.
       idempotencyKey: `loyalty-earn:${order.id}`,
-      expiresAt: expiryFor(programme, now),
+      // Null is what "never" already means in this column, so the perk needs
+      // no new representation — see `LoyaltyEntry.expiresAt`.
+      expiresAt: neverExpires ? null : expiryFor(programme, now),
     },
     db,
   );
@@ -71,6 +100,7 @@ export async function earnPointsForOrder(
   return {
     pointsEarned: result.entry.points,
     tierName: current?.name ?? null,
+    neverExpires,
     // Reported by the ledger, not guessed from a timestamp: a replay landing
     // in the same second would otherwise read as a fresh earning, and the
     // caller uses this to decide whether to tell the customer.

@@ -1,5 +1,6 @@
 import {
   DispatchOfferStatus,
+  LoyaltyEntryType,
   NotificationKind,
   OrderStatus,
   type DispatchOffer,
@@ -19,6 +20,12 @@ import {
   partnerEarningsCentavos,
   REFANOUT_AFTER_SECONDS,
 } from '@/lib/fleet/offer-policy';
+import { getProgramme, getTiersWithBenefits } from '@/lib/loyalty/programme';
+import { tierFor, tierWindowStart } from '@/lib/loyalty/policy';
+import {
+  dispatchPriorityFor,
+  effectiveQueueTime,
+} from '@/lib/loyalty/tier-benefits';
 
 /**
  * The dispatch loop.
@@ -50,6 +57,25 @@ export interface FanOutResult {
  * batches. Partners who already declined, or whose offer lapsed, are not asked
  * again for the same order — re-offering the same job to the same person is how
  * an acceptance rate gets quietly destroyed.
+ *
+ * ### The order they are worked in, and the loyalty perk that changes it
+ *
+ * Oldest first, always — with one adjustment. A customer whose loyalty tier
+ * confers DISPATCH_PRIORITY has their order treated as if it were placed a few
+ * minutes earlier than it was, so it is offered ahead of things placed inside
+ * that window and BEHIND anything older.
+ *
+ * That shape is the whole point. A boolean that sorted every suki above every
+ * stranger would mean, on a busy Friday, an order that is never offered at all
+ * while loyal customers keep arriving — and nobody would see it happen,
+ * because the starved order looks exactly like an order waiting for a rider.
+ * A few minutes of apparent age cannot do that: a stranger who has waited
+ * longer than the window still goes first, and the window is capped at
+ * `MAX_TIER_PRIORITY_WEIGHT` in the pure policy and again in SQL.
+ *
+ * It only bites when riders are scarce, which is the only time it is worth
+ * anything: with a rider free for every order, everybody is offered on the
+ * same sweep and the ordering changes nothing.
  */
 export async function fanOutDispatchOffers(
   options: { now?: Date; maxOrders?: number } = {},
@@ -57,15 +83,34 @@ export async function fanOutDispatchOffers(
   const now = options.now ?? new Date();
   const results: FanOutResult[] = [];
 
-  const waiting = await prisma.order.findMany({
+  // A wider slice than we will work, then re-sorted by effective age: taking
+  // 50 by `placedAt` and re-sorting them would let a priority order sitting at
+  // position 51 stay invisible however long it waited.
+  const take = options.maxOrders ?? 50;
+  const candidateOrders = await prisma.order.findMany({
     where: { status: OrderStatus.AWAITING_RIDER_ASSIGNMENT, assignedRiderId: null },
     orderBy: { placedAt: 'asc' },
-    take: options.maxOrders ?? 50,
+    take: take * 2,
     include: {
       addresses: { where: { role: 'PICKUP' } },
       dispatchOffers: true,
     },
   });
+
+  const boostByCustomer = await dispatchBoostsFor(
+    candidateOrders.map((order) => order.customerId),
+    now,
+  );
+
+  const effectiveAge = (order: (typeof candidateOrders)[number]): number =>
+    effectiveQueueTime(
+      order.placedAt ?? order.createdAt,
+      boostByCustomer.get(order.customerId) ?? 0,
+    );
+
+  const waiting = [...candidateOrders]
+    .sort((a, b) => effectiveAge(a) - effectiveAge(b))
+    .slice(0, take);
 
   for (const order of waiting) {
     const pickup = order.addresses[0];
@@ -293,3 +338,63 @@ export async function listPartnerOffers(
 }
 
 export { CLOSED_OFFER_STATUSES };
+
+/**
+ * How many minutes of apparent age each of these customers is owed.
+ *
+ * One query for the ladder and one aggregate per customer, rather than
+ * `tierBenefitsForUser` per order — the fan-out runs every minute over up to a
+ * hundred orders, and a round trip each would make the sweep the slowest thing
+ * in the app for a perk worth a few minutes.
+ *
+ * Absent from the map means zero, which is what everybody gets when the
+ * programme is off, when no tier confers the perk, or when a customer has not
+ * reached the tier that does.
+ */
+async function dispatchBoostsFor(
+  customerIds: readonly string[],
+  now: Date,
+): Promise<Map<string, number>> {
+  const boosts = new Map<string, number>();
+  if (customerIds.length === 0) return boosts;
+
+  const programme = await getProgramme();
+  if (!programme.isActive) return boosts;
+
+  const tiers = await getTiersWithBenefits();
+  // Nothing to do unless some tier actually confers it — the ordinary case,
+  // and one lookup rather than an aggregate per customer.
+  if (tiers.every((tier) => dispatchPriorityFor(tier.benefits) === 0)) {
+    return boosts;
+  }
+
+  const unique = [...new Set(customerIds)];
+  const accounts = await prisma.loyaltyAccount.findMany({
+    where: { userId: { in: unique } },
+    select: { id: true, userId: true },
+  });
+  if (accounts.length === 0) return boosts;
+
+  const earned = await prisma.loyaltyEntry.groupBy({
+    by: ['accountId'],
+    where: {
+      accountId: { in: accounts.map((account) => account.id) },
+      type: LoyaltyEntryType.EARNED,
+      createdAt: { gte: tierWindowStart(programme, now) },
+    },
+    _sum: { points: true },
+  });
+  const pointsByAccount = new Map(
+    earned.map((row) => [row.accountId, row._sum.points ?? 0]),
+  );
+
+  for (const account of accounts) {
+    const { current } = tierFor(tiers, pointsByAccount.get(account.id) ?? 0);
+    if (current === null) continue;
+    const tier = tiers.find((row) => row.id === current.id);
+    const minutes = tier ? dispatchPriorityFor(tier.benefits) : 0;
+    if (minutes > 0) boosts.set(account.userId, minutes);
+  }
+
+  return boosts;
+}

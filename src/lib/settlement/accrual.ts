@@ -69,6 +69,7 @@ export async function accrueOrderSettlement(
     | 'tipCentavos'
     | 'promoDiscountCentavos'
     | 'subscriptionDiscountCentavos'
+    | 'loyaltyDiscountCentavos'
     | 'walletCreditAppliedCentavos'
     | 'totalCentavos'
   >,
@@ -95,9 +96,14 @@ export async function accrueOrderSettlement(
     order,
     riderCentavos,
     commissionBasisPoints: store?.commissionBasisPoints ?? 0,
+    // Every way the customer paid less than the gross, whoever gave it to
+    // them. A loyalty tier's discount is the platform's cost exactly as a
+    // plan's is: the shop still gets its subtotal and the rider still gets the
+    // fee nobody was charged.
     discountedCentavos:
       order.promoDiscountCentavos +
       order.subscriptionDiscountCentavos +
+      order.loyaltyDiscountCentavos +
       order.walletCreditAppliedCentavos,
   });
 

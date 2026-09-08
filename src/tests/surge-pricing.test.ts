@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { AdminAction, BenefitType, ServiceKey } from '@prisma/client';
+import { AdminAction, BenefitSource, BenefitType, ServiceKey } from '@prisma/client';
 import { applyBenefits } from '@/lib/pricing/benefits';
 import { ADMIN_ACTION_LABEL } from '@/lib/admin/access';
 import { partnerEarningsCentavos } from '@/lib/fleet/offer-policy';
@@ -418,8 +418,9 @@ describe('the surge belongs to the rider, and nothing takes it away', () => {
       fees: BUSY_ORDER,
       benefits: [
         {
+          source: BenefitSource.SUBSCRIPTION,
+          benefit: {
           id: 'free_delivery',
-          planId: 'plan_plus',
           type: BenefitType.FREE_DELIVERY,
           serviceKeys: [],
           percentBasisPoints: null,
@@ -429,8 +430,7 @@ describe('the surge belongs to the rider, and nothing takes it away', () => {
           monthlyCeilingCentavos: null,
           displayLabel: 'Plus free delivery',
           sortOrder: 0,
-          createdAt: new Date(),
-          updatedAt: new Date(),
+          },
         },
       ],
       usageByBenefitId: new Map(),

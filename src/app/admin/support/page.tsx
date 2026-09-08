@@ -167,6 +167,15 @@ export default async function AdminSupportPage({
                           never answered
                         </span>
                       ) : null}
+                      {/* Said out loud, because the queue is sorted by it. An
+                          agent looking at a list ordered by something they
+                          cannot see is an agent who assumes it is broken. */}
+                      {ticket.tierBoostMinutes > 0 ? (
+                        <span className="block text-[11px] text-ink-faint">
+                          {ticket.tierName} · sorted as +
+                          {ticket.tierBoostMinutes} min
+                        </span>
+                      ) : null}
                     </Td>
                     <Td>
                       {ticket.assignedAgent

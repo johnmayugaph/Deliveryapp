@@ -1,5 +1,8 @@
-import type { SupportTicket, User } from '@prisma/client';
+import { LoyaltyEntryType, type SupportTicket, type User } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { getProgramme, getTiersWithBenefits } from '@/lib/loyalty/programme';
+import { tierFor, tierWindowStart } from '@/lib/loyalty/policy';
+import { supportPriorityFor } from '@/lib/loyalty/tier-benefits';
 import {
   PRIORITY_RANK,
   QUEUE_STATUSES,
@@ -23,6 +26,15 @@ export type QueueRow = SupportTicket & {
   _count: { messages: number };
   /** Minutes since the last thing happened on the thread. */
   waitedMinutes: number;
+  /**
+   * Minutes of apparent wait added by the customer's loyalty tier, and zero
+   * for almost everybody. Carried on the row so the console can SHOW it —
+   * an agent looking at a queue reordered by something invisible is an agent
+   * who thinks the queue is broken.
+   */
+  tierBoostMinutes: number;
+  /** The tier that granted it, for the badge beside the ticket. */
+  tierName: string | null;
 };
 
 /**
@@ -34,6 +46,18 @@ export type QueueRow = SupportTicket & {
  * somebody tidies the enum. `PRIORITY_RANK` says the order out loud instead.
  * The cost is fetching the window before sorting it, which for a queue measured
  * in tens of rows is nothing.
+ *
+ * ### Where a loyalty tier fits, and where it does not
+ *
+ * SUPPORT_PRIORITY adds minutes of apparent wait, so a suki's ticket sorts
+ * ahead of ones sent inside that window and behind anything older. It is a
+ * tie-break inside a priority band and **never crosses one**: an URGENT ticket
+ * from somebody who has never ordered still outranks a NORMAL one from the
+ * most loyal customer on the platform, because urgency is about what has
+ * happened to them and loyalty is about what they have spent.
+ *
+ * The boost is also visible on the row. A queue that reorders itself for a
+ * reason the agent cannot see is one they will assume is broken.
  */
 export async function supportQueue(
   options: { includeFinished?: boolean; limit?: number } = {},
@@ -54,17 +78,84 @@ export async function supportQueue(
   });
 
   const now = new Date();
+  const boosts = await supportBoostsFor(
+    rows.map((row) => row.userId),
+    now,
+  );
+
   return rows
-    .map((row) => ({
-      ...row,
-      waitedMinutes: waitingMinutes({ since: row.lastMessageAt, now }),
-    }))
+    .map((row) => {
+      const boost = boosts.get(row.userId);
+      return {
+        ...row,
+        waitedMinutes: waitingMinutes({ since: row.lastMessageAt, now }),
+        tierBoostMinutes: boost?.minutes ?? 0,
+        tierName: boost?.tierName ?? null,
+      };
+    })
     .sort((left, right) => {
       const byPriority = PRIORITY_RANK[left.priority] - PRIORITY_RANK[right.priority];
       if (byPriority !== 0) return byPriority;
-      // Longest ignored first, within a priority.
-      return right.waitedMinutes - left.waitedMinutes;
+      // Longest ignored first, within a priority — plus whatever the
+      // customer's tier is worth, which cannot lift them out of the band.
+      const leftWait = left.waitedMinutes + left.tierBoostMinutes;
+      const rightWait = right.waitedMinutes + right.tierBoostMinutes;
+      return rightWait - leftWait;
     });
+}
+
+/**
+ * The support boost for each of these customers, and which tier granted it.
+ *
+ * Same shape and same reasoning as `dispatchBoostsFor`: one read of the ladder
+ * and one grouped aggregate, rather than a round trip per ticket. Returns an
+ * empty map — so everybody sorts on real waiting time alone — when the
+ * programme is off or no tier confers the perk, which is the shipped state.
+ */
+async function supportBoostsFor(
+  userIds: readonly string[],
+  now: Date,
+): Promise<Map<string, { minutes: number; tierName: string }>> {
+  const boosts = new Map<string, { minutes: number; tierName: string }>();
+  if (userIds.length === 0) return boosts;
+
+  const programme = await getProgramme();
+  if (!programme.isActive) return boosts;
+
+  const tiers = await getTiersWithBenefits();
+  if (tiers.every((tier) => supportPriorityFor(tier.benefits) === 0)) {
+    return boosts;
+  }
+
+  const accounts = await prisma.loyaltyAccount.findMany({
+    where: { userId: { in: [...new Set(userIds)] } },
+    select: { id: true, userId: true },
+  });
+  if (accounts.length === 0) return boosts;
+
+  const earned = await prisma.loyaltyEntry.groupBy({
+    by: ['accountId'],
+    where: {
+      accountId: { in: accounts.map((account) => account.id) },
+      type: LoyaltyEntryType.EARNED,
+      createdAt: { gte: tierWindowStart(programme, now) },
+    },
+    _sum: { points: true },
+  });
+  const pointsByAccount = new Map(
+    earned.map((row) => [row.accountId, row._sum.points ?? 0]),
+  );
+
+  for (const account of accounts) {
+    const { current } = tierFor(tiers, pointsByAccount.get(account.id) ?? 0);
+    if (current === null) continue;
+    const tier = tiers.find((row) => row.id === current.id);
+    if (!tier) continue;
+    const minutes = supportPriorityFor(tier.benefits);
+    if (minutes > 0) boosts.set(account.userId, { minutes, tierName: tier.name });
+  }
+
+  return boosts;
 }
 
 export type AgentTicket = SupportTicket & {

@@ -1,10 +1,19 @@
 import { requireAdmin } from '@/lib/admin/access';
 import { loyaltyOverview } from '@/lib/admin/loyalty';
 import { formatCentavos } from '@/lib/money';
+import { TierBenefitType } from '@prisma/client';
 import { ReasonForm } from '@/components/admin/ReasonForm';
 import {
+  MAX_TIER_PRIORITY_WEIGHT,
+  TIER_BENEFIT_NAME,
+  describeTierBenefit,
+  isBillBenefit,
+} from '@/lib/loyalty/tier-benefits';
+import {
   setLoyaltyProgrammeAction,
+  removeLoyaltyTierBenefitAction,
   setLoyaltyTierAction,
+  setLoyaltyTierBenefitAction,
 } from '@/lib/actions/admin-actions';
 import {
   Empty,
@@ -162,7 +171,7 @@ export default async function AdminLoyaltyPage() {
 
       <Panel
         title="Tiers"
-        description="A tier changes ONE thing: how fast points are earned. Deliberately not a fourth way to discount a bill — this app already has three, and each interacts with the others at the checkout."
+        description="What each tier earns, what it confers, and the most one customer at it can cost you in a month."
       >
         {overview.tiers.length === 0 ? (
           <Empty>
@@ -176,7 +185,8 @@ export default async function AdminLoyaltyPage() {
                 <Th numeric>From (points)</Th>
                 <Th numeric>Earns</Th>
                 <Th numeric>Customers</Th>
-                <Th>What it says</Th>
+                <Th>Confers</Th>
+                <Th numeric>Ceiling / month</Th>
               </tr>
             </thead>
             <tbody>
@@ -190,7 +200,68 @@ export default async function AdminLoyaltyPage() {
                     {(tier.earnMultiplierBasisPoints / 10_000).toFixed(2)}×
                   </Td>
                   <Td numeric>{tier.holders}</Td>
-                  <Td muted>{tier.blurb}</Td>
+                  <Td>
+                    {tier.benefits.length === 0 ? (
+                      <span className="text-ink-faint">
+                        the earn rate only
+                      </span>
+                    ) : (
+                      <ul className="space-y-1">
+                        {tier.benefits.map((benefit) => (
+                          <li key={benefit.id} className="flex flex-wrap items-baseline gap-1.5">
+                            <span className="text-[12px] font-medium">
+                              {TIER_BENEFIT_NAME[benefit.type]}
+                            </span>
+                            <Pill tone={isBillBenefit(benefit.type) ? 'warn' : 'neutral'}>
+                              {isBillBenefit(benefit.type) ? 'costs money' : 'perk'}
+                            </Pill>
+                            <span className="block w-full text-[11px] leading-snug text-ink-faint">
+                              {describeTierBenefit(benefit, formatCentavos)}
+                            </span>
+                            <div className="w-full max-w-[15rem]">
+                              <ReasonForm
+                                action={removeLoyaltyTierBenefitAction}
+                                hidden={{ benefitId: benefit.id }}
+                                submitLabel="Remove"
+                                tone="danger"
+                                placeholder="Why this stops"
+                              >
+                                Receipts for orders it already priced still name it.
+                              </ReasonForm>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <span className="mt-1 block text-[11px] leading-snug text-ink-faint">
+                      {tier.blurb}
+                    </span>
+                  </Td>
+                  <Td numeric>
+                    {tier.benefits.length === 0 ? (
+                      <span className="text-ink-faint">—</span>
+                    ) : tier.monthlyCeilingCentavos === null ? (
+                      <>
+                        <Pill tone="warn">unbounded</Pill>
+                        <span className="mt-0.5 block text-[11px] font-normal text-ink-faint">
+                          {formatCentavos(tier.perOrderCeilingCentavos)} an order,
+                          and nothing caps the orders
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        {formatCentavos(tier.monthlyCeilingCentavos)}
+                        <span className="mt-0.5 block text-[11px] font-normal text-ink-faint">
+                          {formatCentavos(tier.perOrderCeilingCentavos)} an order
+                          {tier.perkCount > 0
+                            ? `, plus ${tier.perkCount} ${
+                                tier.perkCount === 1 ? 'perk' : 'perks'
+                              } that cost nothing`
+                            : ''}
+                        </span>
+                      </>
+                    )}
+                  </Td>
                 </tr>
               ))}
             </tbody>
@@ -227,6 +298,129 @@ export default async function AdminLoyaltyPage() {
             moment it exists, the same way a rider&rsquo;s settled earnings keep
             the rate they were paid at.
           </ReasonForm>
+        </div>
+      </Panel>
+
+      <Panel
+        title="Give a tier a benefit"
+        description={`Pick the tier and what it confers. Only the fields that type uses are read — the rest are cleared, so changing a benefit's type never leaves a stale number behind.`}
+      >
+        <div className="space-y-3 px-4 py-3">
+          {overview.tiers.length === 0 ? (
+            <Empty>
+              Build the ladder first. A benefit with no tier to hang on is a
+              benefit nobody can reach.
+            </Empty>
+          ) : (
+            <ReasonForm
+              action={setLoyaltyTierBenefitAction}
+              hidden={{}}
+              submitLabel="Give it to the tier"
+              extraFields={
+                <div className="space-y-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <label className="block">
+                      <span className="text-[11px] font-semibold text-ink-muted">
+                        Tier
+                      </span>
+                      <select
+                        name="tierId"
+                        required
+                        defaultValue=""
+                        className="mt-0.5 w-full rounded-lg bg-surface px-2.5 py-1.5 text-[13px] font-semibold ring-1 ring-black/5"
+                      >
+                        <option value="" disabled>
+                          Pick a tier
+                        </option>
+                        {overview.tiers.map((tier) => (
+                          <option key={tier.id} value={tier.id}>
+                            {tier.name} (from {tier.thresholdPoints})
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="text-[11px] font-semibold text-ink-muted">
+                        What it confers
+                      </span>
+                      <select
+                        name="type"
+                        required
+                        defaultValue=""
+                        className="mt-0.5 w-full rounded-lg bg-surface px-2.5 py-1.5 text-[13px] font-semibold ring-1 ring-black/5"
+                      >
+                        <option value="" disabled>
+                          Pick one
+                        </option>
+                        {Object.values(TierBenefitType).map((type) => (
+                          <option key={type} value={type}>
+                            {TIER_BENEFIT_NAME[type]}
+                            {isBillBenefit(type) ? ' — costs money' : ' — a perk'}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+
+                  <Field
+                    name="displayLabel"
+                    label="The line the customer reads"
+                    value=""
+                  />
+
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    <Field name="minimumPesos" label="Free delivery: minimum order (₱)" value="" />
+                    <Field name="monthlyCap" label="Free delivery: times / month" value="" />
+                    <Field name="percent" label="Discount or credit-back (%)" value="" />
+                    <Field name="maxDiscountPesos" label="Discount: cap / order (₱)" value="" />
+                    <Field name="monthlyCeilingPesos" label="Credit-back: cap / month (₱)" value="" />
+                    <Field
+                      name="priorityMinutes"
+                      label={`Priority: minutes (max ${MAX_TIER_PRIORITY_WEIGHT})`}
+                      value=""
+                    />
+                  </div>
+                </div>
+              }
+            >
+              <span className="block">
+                Leave every field a type does not use blank. A tier already
+                carrying this benefit is UPDATED rather than given a second one
+                &mdash; two free-delivery rows would not be two free deliveries,
+                because the checkout takes the first that applies.
+              </span>
+              <span className="mt-1.5 block">
+                <strong className="text-ink">
+                  The two priority benefits are minutes of a head start, not a
+                  separate queue.
+                </strong>{' '}
+                A customer who has waited longer than that still goes first, in
+                dispatch and in support alike. That bound is what stops a busy
+                Friday starving somebody&rsquo;s dinner while sukis keep
+                arriving &mdash; and nobody would see it happen, because a
+                starved order looks exactly like an order waiting for a rider.
+              </span>
+            </ReasonForm>
+          )}
+
+          {overview.tiers.some((tier) => tier.waivesDelivery) ? (
+            <p
+              role="alert"
+              className="rounded-xl bg-amber-50 px-4 py-3 text-xs leading-relaxed text-amber-900 ring-1 ring-amber-200"
+            >
+              <span className="font-semibold">
+                A tier is giving away the thing Plus is priced on.
+              </span>{' '}
+              Free delivery is the headline benefit of the subscription you are
+              trying to sell, and a customer who gets it for ordering often has
+              one less reason to pay for it. That can be the right trade &mdash;
+              a tier costs you nothing to run and a subscription needs a
+              collection every month &mdash; but it is a decision about the
+              plan, not just about the tier. A customer with both gets one
+              waiver, and the tier&rsquo;s allowance is spent first so the
+              subscription they paid for keeps its own.
+            </p>
+          ) : null}
         </div>
       </Panel>
 

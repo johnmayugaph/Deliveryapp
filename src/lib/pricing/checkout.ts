@@ -1,8 +1,4 @@
-import {
-  SubscriptionStatus,
-  type ServiceKey,
-  type SubscriptionBenefit,
-} from '@prisma/client';
+import { BenefitSource, SubscriptionStatus, type ServiceKey } from '@prisma/client';
 import { prisma, type PrismaTransactionClient } from '@/lib/prisma';
 import { assertNonNegativeInteger, CURRENCY } from '@/lib/money';
 import { assertServiceOrderable } from '@/lib/services/registry';
@@ -13,7 +9,10 @@ import {
   type BenefitOutcome,
   type BenefitUsageSnapshot,
   type FeeInputs,
+  type SourcedBenefit,
 } from '@/lib/pricing/benefits';
+import { tierBenefitsForUser } from '@/lib/loyalty/programme';
+import { billBenefitsOf } from '@/lib/loyalty/tier-benefits';
 
 export type { AppliedBenefitLine } from '@/lib/pricing/benefits';
 
@@ -21,11 +20,19 @@ export type { AppliedBenefitLine } from '@/lib/pricing/benefits';
  * Checkout pricing.
  *
  * Orchestration only: it reads the Service registry, the customer's active
- * subscription and their credits balance, then hands the arithmetic to the pure
- * `applyBenefits`. Splitting it this way is what lets the benefit rules be
- * tested exhaustively without a database.
+ * subscription, their loyalty tier and their credits balance, then hands the
+ * arithmetic to the pure `applyBenefits`. Splitting it this way is what lets
+ * the benefit rules be tested exhaustively without a database.
  *
  * No service-key branch appears here or in `benefits.ts`. Scoping is data.
+ *
+ * ### Two things confer benefits, and one engine prices them
+ *
+ * A subscription plan and a loyalty tier both carry benefit rows of the same
+ * three types with the same columns, and both come through `applyBenefits`
+ * tagged with their source. What this module decides is the ORDER they are
+ * offered in, which matters in exactly one case and is documented at
+ * `sourcedBenefitsFor`.
  */
 
 export interface PriceQuoteInput {
@@ -62,6 +69,8 @@ export interface PriceQuote {
   tipCentavos: number;
   promoDiscountCentavos: number;
   subscriptionDiscountCentavos: number;
+  /** Taken off by a loyalty tier's benefits, never mixed with the line above. */
+  loyaltyDiscountCentavos: number;
   walletCreditAppliedCentavos: number;
   totalCentavos: number;
   /** Credits to grant once the order completes. Not deducted from the total. */
@@ -69,6 +78,8 @@ export interface PriceQuote {
   appliedBenefits: AppliedBenefitLine[];
   /** Which subscription produced the benefits, for the receipt. */
   subscriptionId: string | null;
+  /** The tier that produced any loyalty benefits, for the checkout screen. */
+  loyaltyTierName: string | null;
   /**
    * True when a non-stacking promo code beat the customer's plan and their
    * benefits were set aside for this order. The checkout screen says so —
@@ -125,15 +136,16 @@ export async function quoteOrderPrice(input: PriceQuoteInput): Promise<PriceQuot
     promoDiscountCentavos: input.promoDiscountCentavos ?? 0,
   };
 
-  const subscription = await getActiveSubscription(input.customerId);
+  const periodStart = currentPeriodStart();
+  const [subscription, loyalty] = await Promise.all([
+    getActiveSubscription(input.customerId),
+    tierBenefitsForUser(input.customerId),
+  ]);
 
   const usageByBenefitId = new Map<string, BenefitUsageSnapshot>();
   if (subscription) {
     const usageRows = await prisma.subscriptionBenefitUsage.findMany({
-      where: {
-        userSubscriptionId: subscription.id,
-        periodStart: currentPeriodStart(),
-      },
+      where: { userSubscriptionId: subscription.id, periodStart },
     });
     for (const row of usageRows) {
       usageByBenefitId.set(row.benefitId, {
@@ -143,10 +155,35 @@ export async function quoteOrderPrice(input: PriceQuoteInput): Promise<PriceQuot
     }
   }
 
+  const tierBillBenefits = billBenefitsOf(loyalty.benefits);
+  if (tierBillBenefits.length > 0) {
+    // The tier's own caps, counted against the PERSON — a tier is not a row
+    // somebody pays for, so there is no subscription to hang the month on.
+    const usageRows = await prisma.loyaltyBenefitUsage.findMany({
+      where: {
+        userId: input.customerId,
+        tierBenefitId: { in: tierBillBenefits.map((benefit) => benefit.id) },
+        periodStart,
+      },
+    });
+    for (const row of usageRows) {
+      // One map keyed by benefit id, shared by both kinds. Ids are cuids from
+      // two tables and cannot collide; if they ever could, this map would
+      // silently give one benefit another's allowance.
+      usageByBenefitId.set(row.tierBenefitId, {
+        usageCount: row.usageCount,
+        creditedCentavos: row.creditedCentavos,
+      });
+    }
+  }
+
   const { outcome, subscriptionBenefitsDropped } = bestOutcome({
     serviceType: input.serviceType,
     fees,
-    benefits: subscription?.plan.benefits ?? [],
+    benefits: sourcedBenefitsFor({
+      planBenefits: subscription?.plan.benefits ?? [],
+      tierBenefits: tierBillBenefits,
+    }),
     usageByBenefitId,
     stacks: input.promoStacksWithSubscription ?? true,
   });
@@ -172,14 +209,55 @@ export async function quoteOrderPrice(input: PriceQuoteInput): Promise<PriceQuot
     tipCentavos: fees.tipCentavos,
     promoDiscountCentavos: outcome.promoDiscountCentavos,
     subscriptionDiscountCentavos: outcome.subscriptionDiscountCentavos,
+    loyaltyDiscountCentavos: outcome.loyaltyDiscountCentavos,
     walletCreditAppliedCentavos,
     totalCentavos: outcome.payableCentavos - walletCreditAppliedCentavos,
     creditBackCentavos: outcome.creditBackCentavos,
     appliedBenefits: outcome.appliedBenefits,
     subscriptionId: subscription?.id ?? null,
+    loyaltyTierName: outcome.loyaltyDiscountCentavos > 0 || outcome.appliedBenefits.some(
+      (line) => line.source === BenefitSource.LOYALTY_TIER,
+    )
+      ? loyalty.tier?.name ?? null
+      : null,
     subscriptionBenefitsDropped,
     spendableCreditsCentavos,
   };
+}
+
+/**
+ * Both sets of benefits, in the order they should be offered.
+ *
+ * **The tier's go first, and that is the only thing this order decides.**
+ * `applyBenefits` waives delivery once, taking the first benefit that
+ * applies — so a customer who is both a Plus subscriber and a Tapat gets one
+ * waiver and only one monthly allowance is spent. Whose it is is this
+ * function's choice.
+ *
+ * It spends the TIER's. The subscriber PAID for their four free deliveries a
+ * month; the tier's are a gift. Spending the gift first leaves the thing they
+ * bought intact for later in the month, which is the outcome a customer would
+ * choose if anybody asked them. Spending the paid allowance first would mean a
+ * subscriber's own benefit quietly subsidising a benefit they would have had
+ * anyway.
+ *
+ * Note it changes no total. Both waive the same fee; only the allowance
+ * consumed differs, and only later in the month does that show up.
+ */
+export function sourcedBenefitsFor(input: {
+  planBenefits: readonly SourcedBenefit['benefit'][];
+  tierBenefits: readonly SourcedBenefit['benefit'][];
+}): SourcedBenefit[] {
+  return [
+    ...input.tierBenefits.map((benefit) => ({
+      benefit,
+      source: BenefitSource.LOYALTY_TIER,
+    })),
+    ...input.planBenefits.map((benefit) => ({
+      benefit,
+      source: BenefitSource.SUBSCRIPTION,
+    })),
+  ];
 }
 
 /**
@@ -205,11 +283,22 @@ export async function quoteOrderPrice(input: PriceQuoteInput): Promise<PriceQuot
  *
  * A tie goes to the subscription, for the same reason: it leaves the code
  * unspent.
+ *
+ * **A loyalty tier's benefits are in the same comparison and set aside
+ * together with the plan's.** A non-stacking code says "not with your
+ * benefits", and a customer's tier benefits are benefits — pricing them
+ * alongside the code would be reading the code's own condition selectively.
+ * The customer still gets whichever bill is cheaper, which is the point of
+ * the comparison; `subscriptionBenefitsDropped` is what the screen says, and
+ * it is accurate for a subscriber and a shade broad for somebody who only has
+ * a tier. Naming that: it is the price of one flag rather than two, and the
+ * sentence it produces ("your benefits were set aside for this order") is
+ * true either way.
  */
 function bestOutcome(input: {
   serviceType: ServiceKey;
   fees: FeeInputs;
-  benefits: readonly SubscriptionBenefit[];
+  benefits: readonly SourcedBenefit[];
   usageByBenefitId: ReadonlyMap<string, BenefitUsageSnapshot>;
   stacks: boolean;
 }): { outcome: BenefitOutcome; subscriptionBenefitsDropped: boolean } {
@@ -250,10 +339,22 @@ function bestOutcome(input: {
  *
  * Split out from `quoteOrderPrice` on purpose: quoting happens on every
  * keystroke in checkout, and a quote must never burn a monthly allowance.
+ *
+ * Writes to one of two usage tables per line, chosen by the line's source. A
+ * tier benefit's allowance is counted against the USER because a tier is not a
+ * row anybody pays for — see `LoyaltyBenefitUsage` in the schema.
  */
 export async function commitBenefitUsage(
   input: {
-    subscriptionId: string;
+    /**
+     * Null when the customer has no plan and every applied line came from
+     * their tier. Required as soon as one SUBSCRIPTION line is present, and a
+     * missing one then is a programming error rather than a state to absorb:
+     * silently skipping it would let a subscriber's monthly allowance never be
+     * spent, which nobody would notice until the free deliveries never ran out.
+     */
+    subscriptionId: string | null;
+    customerId: string;
     orderId: string;
     appliedBenefits: readonly AppliedBenefitLine[];
   },
@@ -266,33 +367,72 @@ export async function commitBenefitUsage(
 
   const run = async (tx: PrismaTransactionClient) => {
     for (const line of input.appliedBenefits) {
-      await tx.subscriptionBenefitUsage.upsert({
-        where: {
-          userSubscriptionId_benefitId_periodStart: {
+      if (line.source === BenefitSource.LOYALTY_TIER) {
+        await tx.loyaltyBenefitUsage.upsert({
+          where: {
+            userId_tierBenefitId_periodStart: {
+              userId: input.customerId,
+              tierBenefitId: line.benefitId,
+              periodStart,
+            },
+          },
+          create: {
+            userId: input.customerId,
+            tierBenefitId: line.benefitId,
+            periodStart,
+            usageCount: 1,
+            creditedCentavos: line.creditBackCentavos,
+            discountedCentavos: line.amountCentavos,
+          },
+          update: {
+            usageCount: { increment: 1 },
+            creditedCentavos: { increment: line.creditBackCentavos },
+            discountedCentavos: { increment: line.amountCentavos },
+          },
+        });
+      } else {
+        if (input.subscriptionId === null) {
+          throw new Error(
+            'commitBenefitUsage: a SUBSCRIPTION benefit line arrived with no ' +
+              'subscription id. The quote and the commit disagree about where ' +
+              "this order's benefits came from.",
+          );
+        }
+        await tx.subscriptionBenefitUsage.upsert({
+          where: {
+            userSubscriptionId_benefitId_periodStart: {
+              userSubscriptionId: input.subscriptionId,
+              benefitId: line.benefitId,
+              periodStart,
+            },
+          },
+          create: {
             userSubscriptionId: input.subscriptionId,
             benefitId: line.benefitId,
             periodStart,
+            usageCount: 1,
+            creditedCentavos: line.creditBackCentavos,
+            discountedCentavos: line.amountCentavos,
           },
-        },
-        create: {
-          userSubscriptionId: input.subscriptionId,
-          benefitId: line.benefitId,
-          periodStart,
-          usageCount: 1,
-          creditedCentavos: line.creditBackCentavos,
-          discountedCentavos: line.amountCentavos,
-        },
-        update: {
-          usageCount: { increment: 1 },
-          creditedCentavos: { increment: line.creditBackCentavos },
-          discountedCentavos: { increment: line.amountCentavos },
-        },
-      });
+          update: {
+            usageCount: { increment: 1 },
+            creditedCentavos: { increment: line.creditBackCentavos },
+            discountedCentavos: { increment: line.amountCentavos },
+          },
+        });
+      }
 
+      // One receipt line either way, pointing at whichever table it came from.
+      // `source` is stored rather than inferred from which id is null, so a
+      // line whose benefit row is later deleted still knows what it was.
       await tx.orderAppliedBenefit.create({
         data: {
           orderId: input.orderId,
-          benefitId: line.benefitId,
+          source: line.source,
+          benefitId:
+            line.source === BenefitSource.SUBSCRIPTION ? line.benefitId : null,
+          tierBenefitId:
+            line.source === BenefitSource.LOYALTY_TIER ? line.benefitId : null,
           type: line.type,
           displayLabel: line.displayLabel,
           amountCentavos: line.amountCentavos,

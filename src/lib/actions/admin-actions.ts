@@ -9,6 +9,7 @@ import {
   ServiceKey,
   SubscriptionStatus,
   StoreRole,
+  TierBenefitType,
   VerificationStatus,
 } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
@@ -48,6 +49,12 @@ import {
   MAX_PARTNER_REWARD_CENTAVOS,
   acquisitionCost,
 } from '@/lib/referrals/partner-policy';
+import {
+  MAX_TIER_PERCENT_BASIS_POINTS,
+  MAX_TIER_PRIORITY_WEIGHT,
+  TIER_BENEFIT_NAME,
+  isBillBenefit,
+} from '@/lib/loyalty/tier-benefits';
 import { STORE_PROGRAMME_ID } from '@/lib/referrals/store-programme';
 import { attributeStoreReferral } from '@/lib/referrals/store-attribution';
 import {
@@ -3455,6 +3462,268 @@ export async function setStoreReferralProgrammeAction(
           'Bonuses already earned keep the amounts they were paid at.'
         : 'Shop referrals are off. Attributions already recorded will stop ' +
           'paying, and bonuses already earned are still owed.',
+    };
+  });
+}
+
+/**
+ * Adds or changes one benefit on a loyalty tier.
+ *
+ * The type decides which fields are read, and every other column is written
+ * NULL rather than left as it was. That is the important half: editing a
+ * DISPATCH_PRIORITY row into a DISCOUNT_PERCENT one and leaving the old
+ * `priorityWeight` behind would leave a row whose columns contradict its type,
+ * which `loyalty_tier_benefit_columns_match_type` refuses — so the guard would
+ * turn a careless edit into an error the operator cannot read. Nulling first
+ * means the form does the obvious thing.
+ */
+export async function setLoyaltyTierBenefitAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const reason = normaliseReason(formData.get('reason'));
+
+    const tierId = String(formData.get('tierId') ?? '').trim();
+    const rawType = String(formData.get('type') ?? '').trim();
+    const displayLabel = String(formData.get('displayLabel') ?? '')
+      .trim()
+      .slice(0, 120);
+
+    if (!tierId) return { ok: false, message: 'Pick the tier this belongs to.' };
+    if (!(rawType in TierBenefitType)) {
+      return { ok: false, message: 'Pick what the tier confers.' };
+    }
+    const type = rawType as TierBenefitType;
+
+    if (displayLabel.length < 3) {
+      return {
+        ok: false,
+        message:
+          'Write the line the customer reads. The sentence under it is ' +
+          'generated from the numbers, but the heading is yours.',
+      };
+    }
+
+    const tier = await prisma.loyaltyTier.findUnique({
+      where: { id: tierId },
+      select: { id: true, name: true },
+    });
+    if (!tier) return { ok: false, message: 'No such tier.' };
+
+    const optionalWhole = (field: string): number | null => {
+      const raw = String(formData.get(field) ?? '').trim();
+      if (raw.length === 0) return null;
+      const value = Number(raw);
+      return Number.isInteger(value) ? value : Number.NaN;
+    };
+    const optionalPesos = (field: string): number | null => {
+      const raw = String(formData.get(field) ?? '').trim();
+      if (raw.length === 0) return null;
+      return centavosFromPesoInput(raw);
+    };
+    const percent = (): number | null => {
+      const raw = String(formData.get('percent') ?? '').trim();
+      if (raw.length === 0) return null;
+      const value = Number(raw);
+      if (!Number.isFinite(value)) return Number.NaN;
+      return Math.round(value * 100);
+    };
+
+    // Every column NULL, then only the ones this type uses filled in.
+    const data: {
+      percentBasisPoints: number | null;
+      minimumOrderCentavos: number | null;
+      monthlyUsageCap: number | null;
+      maxDiscountCentavos: number | null;
+      monthlyCeilingCentavos: number | null;
+      priorityWeight: number | null;
+      serviceKeys: ServiceKey[];
+    } = {
+      percentBasisPoints: null,
+      minimumOrderCentavos: null,
+      monthlyUsageCap: null,
+      maxDiscountCentavos: null,
+      monthlyCeilingCentavos: null,
+      priorityWeight: null,
+      serviceKeys: [],
+    };
+
+    const badNumber = { ok: false as const, message: 'Those numbers do not read as numbers.' };
+
+    switch (type) {
+      case TierBenefitType.FREE_DELIVERY: {
+        const minimum = optionalPesos('minimumPesos') ?? 0;
+        const cap = optionalWhole('monthlyCap');
+        if (minimum === null || Number.isNaN(minimum) || Number.isNaN(cap)) return badNumber;
+        if (minimum < 0) return { ok: false, message: 'The minimum order cannot be negative.' };
+        if (cap !== null && cap < 1) {
+          return {
+            ok: false,
+            message: 'A cap of zero would be a benefit that never applies. Leave it blank for no cap.',
+          };
+        }
+        data.minimumOrderCentavos = minimum;
+        data.monthlyUsageCap = cap;
+        break;
+      }
+      case TierBenefitType.DISCOUNT_PERCENT: {
+        const basisPoints = percent();
+        const cap = optionalPesos('maxDiscountPesos');
+        if (basisPoints === null || Number.isNaN(basisPoints)) {
+          return { ok: false, message: 'Write the percentage, like 10 or 7.5.' };
+        }
+        if (cap !== null && Number.isNaN(cap)) return badNumber;
+        if (basisPoints <= 0 || basisPoints > MAX_TIER_PERCENT_BASIS_POINTS) {
+          return {
+            ok: false,
+            message:
+              `A tier discount is between 0 and ${MAX_TIER_PERCENT_BASIS_POINTS / 100}%. ` +
+              'More than that is usually a decimal point in the wrong place.',
+          };
+        }
+        if (cap !== null && cap < 1) {
+          return { ok: false, message: 'Leave the ceiling blank for no ceiling.' };
+        }
+        data.percentBasisPoints = basisPoints;
+        data.maxDiscountCentavos = cap;
+        data.serviceKeys = formData
+          .getAll('serviceKeys')
+          .map((key) => String(key))
+          .filter((key): key is ServiceKey => key in ServiceKey);
+        break;
+      }
+      case TierBenefitType.CREDIT_BACK_PERCENT: {
+        const basisPoints = percent();
+        const ceiling = optionalPesos('monthlyCeilingPesos');
+        if (basisPoints === null || Number.isNaN(basisPoints)) {
+          return { ok: false, message: 'Write the percentage, like 2 or 2.5.' };
+        }
+        if (ceiling !== null && Number.isNaN(ceiling)) return badNumber;
+        if (basisPoints <= 0 || basisPoints > MAX_TIER_PERCENT_BASIS_POINTS) {
+          return {
+            ok: false,
+            message: `Credit-back is between 0 and ${MAX_TIER_PERCENT_BASIS_POINTS / 100}%.`,
+          };
+        }
+        if (ceiling !== null && ceiling < 1) {
+          return { ok: false, message: 'Leave the monthly ceiling blank for none.' };
+        }
+        data.percentBasisPoints = basisPoints;
+        data.monthlyCeilingCentavos = ceiling;
+        break;
+      }
+      case TierBenefitType.DISPATCH_PRIORITY:
+      case TierBenefitType.SUPPORT_PRIORITY: {
+        const minutes = optionalWhole('priorityMinutes');
+        if (minutes === null || Number.isNaN(minutes)) {
+          return { ok: false, message: 'Write how many minutes of a head start this is worth.' };
+        }
+        if (minutes < 1 || minutes > MAX_TIER_PRIORITY_WEIGHT) {
+          return {
+            ok: false,
+            message:
+              `Between 1 and ${MAX_TIER_PRIORITY_WEIGHT} minutes. It is a tie-break ` +
+              'between things of similar age, not a separate queue — somebody who has ' +
+              'waited longer than this still goes first, which is what stops an order ' +
+              'being starved on a busy night.',
+          };
+        }
+        data.priorityWeight = minutes;
+        break;
+      }
+      case TierBenefitType.POINTS_NEVER_EXPIRE:
+        // Nothing to read. Every column stays null.
+        break;
+    }
+
+    const existing = await prisma.loyaltyTierBenefit.findFirst({
+      where: { tierId, type },
+      select: { id: true },
+    });
+
+    await prisma.$transaction(async (tx) => {
+      const row = existing
+        ? await tx.loyaltyTierBenefit.update({
+            where: { id: existing.id },
+            data: { ...data, displayLabel },
+          })
+        : await tx.loyaltyTierBenefit.create({
+            data: { tierId, type, ...data, displayLabel },
+          });
+      await recordAdminAction(
+        {
+          actorId: admin.id,
+          action: AdminAction.LOYALTY_TIER_BENEFIT_CHANGED,
+          subjectType: 'LoyaltyTierBenefit',
+          subjectId: row.id,
+          subjectLabel: `${tier.name} · ${TIER_BENEFIT_NAME[type]}`,
+          reason,
+          detail: { tierId, type, ...data, displayLabel },
+        },
+        tx,
+      );
+    });
+
+    revalidatePath('/admin/loyalty');
+    revalidatePath('/points');
+
+    return {
+      ok: true,
+      message:
+        `${tier.name} now gets "${TIER_BENEFIT_NAME[type]}". ` +
+        (isBillBenefit(type)
+          ? 'It is priced by the same engine as a Plus benefit, so a customer ' +
+            'with both gets one waiver rather than two.'
+          : 'It costs nothing on a bill. Orders already placed are unaffected.'),
+    };
+  });
+}
+
+/**
+ * Removes one benefit from a tier.
+ *
+ * The row goes; the receipts do not. `OrderAppliedBenefit.tierBenefitId` is
+ * nullable and its `source` and `displayLabel` are copies, so an order priced
+ * by this benefit last week still says what it got — which is the reason those
+ * columns are copies rather than a join.
+ */
+export async function removeLoyaltyTierBenefitAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const reason = normaliseReason(formData.get('reason'));
+    const benefitId = String(formData.get('benefitId') ?? '').trim();
+
+    const benefit = await prisma.loyaltyTierBenefit.findUnique({
+      where: { id: benefitId },
+      select: { id: true, type: true, tier: { select: { name: true } } },
+    });
+    if (!benefit) return { ok: false, message: 'That benefit is already gone.' };
+
+    await prisma.$transaction(async (tx) => {
+      await tx.loyaltyTierBenefit.delete({ where: { id: benefit.id } });
+      await recordAdminAction(
+        {
+          actorId: admin.id,
+          action: AdminAction.LOYALTY_TIER_BENEFIT_REMOVED,
+          subjectType: 'LoyaltyTierBenefit',
+          subjectId: benefit.id,
+          subjectLabel: `${benefit.tier.name} · ${TIER_BENEFIT_NAME[benefit.type]}`,
+          reason,
+        },
+        tx,
+      );
+    });
+
+    revalidatePath('/admin/loyalty');
+    revalidatePath('/points');
+    return {
+      ok: true,
+      message:
+        `${benefit.tier.name} no longer gets "${TIER_BENEFIT_NAME[benefit.type]}". ` +
+        'Receipts for orders it already priced still name it.',
     };
   });
 }

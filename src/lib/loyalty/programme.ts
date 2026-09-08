@@ -7,6 +7,7 @@ import {
   type TierFacts,
 } from '@/lib/loyalty/policy';
 import { LoyaltyEntryType } from '@prisma/client';
+import type { TierBenefitFacts } from '@/lib/loyalty/tier-benefits';
 
 /** Always this. One row, enforced by `loyalty_programme_singleton`. */
 export const PROGRAMME_ID = 'default';
@@ -82,6 +83,84 @@ export async function pointsEarnedInWindow(
     _sum: { points: true },
   });
   return earned._sum.points ?? 0;
+}
+
+/** A tier and everything it confers. */
+export type TierWithBenefits = TierFacts & { benefits: TierBenefitFacts[] };
+
+/**
+ * Every tier with its benefits, cheapest first.
+ *
+ * One query with an include rather than a query per tier: the ladder is three
+ * or four rows and this is read on the checkout path, where a round trip per
+ * tier would be paid on every keystroke.
+ */
+export async function getTiersWithBenefits(
+  client?: PrismaTransactionClient,
+): Promise<TierWithBenefits[]> {
+  const db = client ?? prisma;
+  const rows = await db.loyaltyTier.findMany({
+    orderBy: { thresholdPoints: 'asc' },
+    include: { benefits: { orderBy: { sortOrder: 'asc' } } },
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    thresholdPoints: row.thresholdPoints,
+    earnMultiplierBasisPoints: row.earnMultiplierBasisPoints,
+    blurb: row.blurb,
+    benefits: row.benefits.map((benefit) => ({
+      id: benefit.id,
+      type: benefit.type,
+      serviceKeys: benefit.serviceKeys,
+      percentBasisPoints: benefit.percentBasisPoints,
+      minimumOrderCentavos: benefit.minimumOrderCentavos,
+      monthlyUsageCap: benefit.monthlyUsageCap,
+      maxDiscountCentavos: benefit.maxDiscountCentavos,
+      monthlyCeilingCentavos: benefit.monthlyCeilingCentavos,
+      priorityWeight: benefit.priorityWeight,
+      displayLabel: benefit.displayLabel,
+      sortOrder: benefit.sortOrder,
+    })),
+  }));
+}
+
+/**
+ * What one customer's tier confers on them right now.
+ *
+ * The single read every seam that honours a tier benefit goes through —
+ * checkout, the dispatch fan-out, the support queue and the earning path — so
+ * there is one answer to "what is this person entitled to" rather than four
+ * that can drift.
+ *
+ * **A dead programme confers nothing.** `programmeIsLive` is not enough on its
+ * own: a tier ladder can be configured while the programme is switched off, and
+ * a customer keeping free delivery from a programme nobody is running is a
+ * benefit no operator can find the source of. Off means off, everywhere.
+ */
+export async function tierBenefitsForUser(
+  userId: string,
+  now: Date = new Date(),
+  client?: PrismaTransactionClient,
+): Promise<{
+  tier: TierWithBenefits | null;
+  benefits: TierBenefitFacts[];
+}> {
+  const programme = await getProgramme(client);
+  if (!programme.isActive) return { tier: null, benefits: [] };
+
+  const [tiers, earnedInWindow] = await Promise.all([
+    getTiersWithBenefits(client),
+    pointsEarnedInWindow(userId, programme, now, client),
+  ]);
+
+  const { current } = tierFor(tiers, earnedInWindow);
+  if (current === null) return { tier: null, benefits: [] };
+
+  // `tierFor` returns the matching element of the array it was given, so this
+  // find is a lookup rather than a search over a different list.
+  const tier = tiers.find((row) => row.id === current.id) ?? null;
+  return { tier, benefits: tier?.benefits ?? [] };
 }
 
 /** A user's current tier, and how far to the next. */

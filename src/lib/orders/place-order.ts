@@ -502,6 +502,7 @@ async function attemptPlacement(input: CheckoutInput): Promise<{
           tipCentavos: quote.price.tipCentavos,
           promoDiscountCentavos: quote.price.promoDiscountCentavos,
           subscriptionDiscountCentavos: quote.price.subscriptionDiscountCentavos,
+          loyaltyDiscountCentavos: quote.price.loyaltyDiscountCentavos,
           walletCreditAppliedCentavos: quote.price.walletCreditAppliedCentavos,
           totalCentavos: quote.price.totalCentavos,
           paymentMethod: input.paymentMethod,
@@ -605,10 +606,19 @@ async function attemptPlacement(input: CheckoutInput): Promise<{
         );
       }
 
-      if (quote.price.subscriptionId && quote.price.appliedBenefits.length > 0) {
+      // Deliberately NOT gated on `subscriptionId`. It used to be, which was
+      // correct while a subscription was the only thing that conferred a
+      // benefit — and became a silent hole the moment a loyalty tier could:
+      // a customer with a tier and no plan would have had no usage row
+      // written, so their monthly allowance would never be spent and their
+      // receipt would carry no benefit line. Nobody would notice until the
+      // free deliveries never ran out. Found by the compiler when
+      // `commitBenefitUsage` started requiring the customer id.
+      if (quote.price.appliedBenefits.length > 0) {
         await commitBenefitUsage(
           {
             subscriptionId: quote.price.subscriptionId,
+            customerId: input.customerId,
             orderId: created.id,
             appliedBenefits: quote.price.appliedBenefits,
           },

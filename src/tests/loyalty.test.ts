@@ -195,18 +195,63 @@ describe('tiers', () => {
     expect(start.getTime()).toBeLessThan(now.getTime());
   });
 
-  it('changes only the earn rate, never a bill', () => {
-    // Deliberately not a fourth discount mechanism: this app already has
-    // three, and each interacts with the others inside applyBenefits.
+  it('keeps the earn rate on the tier itself, and its benefits in rows', () => {
+    // The multiplier is a column because there is exactly one of it. Anything
+    // a tier confers beyond the earn rate is a `LoyaltyTierBenefit` row, so
+    // adding a benefit is not a migration and turning one off is not nulling
+    // a column whose meaning depends on another column.
     const schema = source('prisma/schema.prisma');
-    const model = schema.slice(schema.indexOf('model LoyaltyTier'));
+    const at = schema.indexOf('model LoyaltyTier {');
+    const model = schema.slice(at, schema.indexOf('}', at));
     expect(model).toMatch(/earnMultiplierBasisPoints/);
-    expect(model.slice(0, model.indexOf('}'))).not.toMatch(
-      /freeDelivery|discountCentavos|percentBasisPoints/,
-    );
-    // And nothing loyalty-shaped appears in the checkout arithmetic.
-    expect(codeOnly('src/lib/pricing/benefits.ts')).not.toMatch(/loyalty|tier/i);
-    expect(codeOnly('src/lib/pricing/checkout.ts')).not.toMatch(/loyalty|tier/i);
+    expect(model).not.toMatch(/freeDelivery|discountCentavos|percentBasisPoints/);
+    expect(model).toMatch(/benefits\s+LoyaltyTierBenefit\[\]/);
+  });
+
+  it('confers a bill benefit through the EXISTING mechanism, not a fourth one', () => {
+    // This test replaces one that asserted a tier could never touch a bill,
+    // and it is guarding the argument that test was really about. The old
+    // comment said: this app already has three ways to reduce a bill and each
+    // interacts with the others inside `applyBenefits`, so a fourth would
+    // have to interact with all three.
+    //
+    // A tier now waives delivery — through `applyBenefits`, as a benefit row
+    // of the same type carrying the same columns. So there is still exactly
+    // one implementation of each way to reduce a bill, which is the whole of
+    // what mattered. What follows checks that literally.
+    const engine = codeOnly('src/lib/pricing/benefits.ts');
+
+    // One place each fee reduction happens.
+    expect(engine.match(/deliveryWaived = true/g)?.length).toBe(1);
+    expect(
+      engine.match(/r\.benefit\.type === BenefitType\.DISCOUNT_PERCENT/g)?.length,
+    ).toBe(1);
+    expect(
+      engine.match(/r\.benefit\.type === BenefitType\.CREDIT_BACK_PERCENT/g)?.length,
+    ).toBe(1);
+
+    // And the engine still has no idea which of the two things conferred a
+    // benefit: it reads a `source` it was handed and never a tier or a plan.
+    expect(engine).not.toMatch(/LoyaltyTier|loyaltyTier|subscriptionId|plan\./);
+    expect(engine).not.toMatch(/TierBenefitType/);
+  });
+
+  it('classifies a benefit type in exactly one place', () => {
+    // `billBenefitTypeFor` is the boundary between the two families. A second
+    // switch over TierBenefitType deciding the same question is how the perks
+    // and the bill benefits come to disagree about a seventh type.
+    const policy = codeOnly('src/lib/loyalty/tier-benefits.ts');
+    expect(policy).toMatch(/export function billBenefitTypeFor/);
+
+    for (const file of [
+      'src/lib/pricing/benefits.ts',
+      'src/lib/pricing/checkout.ts',
+      'src/lib/fleet/dispatch-offers.ts',
+      'src/lib/support/queries.ts',
+    ]) {
+      const code = codeOnly(file);
+      expect(code, file).not.toMatch(/case TierBenefitType\./);
+    }
   });
 });
 
@@ -426,8 +471,17 @@ describe('points become money only through the credits ledger', () => {
 
   it('never lets points pay for an order directly', () => {
     // There is one spendable balance and one place that spends it.
+    //
+    // This used to be a blanket ban on the word "loyalty" in these two files,
+    // which stopped being the right check the moment a tier could confer a
+    // discount: `loyaltyDiscountCentavos` is a column on an order, not points
+    // being spent. What must stay true is narrower and more precise — neither
+    // file touches the POINTS LEDGER at all.
     for (const file of ['src/lib/orders/place-order.ts', 'src/lib/pricing/checkout.ts']) {
-      expect(codeOnly(file)).not.toMatch(/loyalty|points/i);
+      const code = codeOnly(file);
+      expect(code, file).not.toMatch(/recordLoyaltyEntry|loyaltyEntry|LoyaltyEntryType/);
+      expect(code, file).not.toMatch(/pointsBalance|pointsSpent|quoteRedemption/);
+      expect(code, file).not.toMatch(/loyaltyAccount/);
     }
   });
 

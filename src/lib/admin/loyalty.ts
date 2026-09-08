@@ -1,6 +1,6 @@
 import { LoyaltyEntryType } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
-import { getProgramme, getTiers } from '@/lib/loyalty/programme';
+import { getProgramme, getTiersWithBenefits } from '@/lib/loyalty/programme';
 import {
   effectiveGivebackBasisPoints,
   outstandingLiabilityCentavos,
@@ -10,6 +10,7 @@ import {
   type ProgrammeFacts,
   type TierFacts,
 } from '@/lib/loyalty/policy';
+import { tierGiveback, type TierBenefitFacts } from '@/lib/loyalty/tier-benefits';
 
 /**
  * The console's view of the points programme.
@@ -27,7 +28,25 @@ import {
 export interface LoyaltyOverview {
   programme: ProgrammeFacts;
   isLive: boolean;
-  tiers: (TierFacts & { holders: number })[];
+  tiers: (TierFacts & {
+    holders: number;
+    benefits: TierBenefitFacts[];
+    /**
+     * What one customer at this tier can cost in a month, at most, against a
+     * representative order. Null where an uncapped benefit makes it
+     * unbounded — reported as "cannot be bounded" rather than as a big
+     * number an operator might budget against.
+     */
+    monthlyCeilingCentavos: number | null;
+    perOrderCeilingCentavos: number;
+    perkCount: number;
+    /** True when this tier waives a delivery fee — the Plus headline benefit. */
+    waivesDelivery: boolean;
+  })[];
+
+  /** The order the ceilings above were computed against, so they are checkable. */
+  representativeOrder: { subtotalCentavos: number; deliveryFeeCentavos: number };
+  representativeOrdersPerMonth: number;
 
   /** Points earned, redeemed and expired since the beginning. */
   pointsEarned: number;
@@ -59,7 +78,7 @@ export async function loyaltyOverview(): Promise<LoyaltyOverview> {
       _count: { _all: true },
       _sum: { pointsBalance: true },
     }),
-    getTiers(),
+    getTiersWithBenefits(),
     // From the CREDITS ledger via the join, not by re-deriving from points:
     // what was actually granted is the truth about what was paid out, and a
     // disagreement between the two is the thing worth being able to see.
@@ -115,15 +134,37 @@ export async function loyaltyOverview(): Promise<LoyaltyOverview> {
     if (reached) holders.set(reached.id, (holders.get(reached.id) ?? 0) + 1);
   }
 
-  const holderCounts = ladder.map((tier) => ({
-    ...tier,
-    holders: holders.get(tier.id) ?? 0,
-  }));
+  // A representative order the ceilings are computed against. Fixed here
+  // rather than read from real orders on purpose: the console SHOWS these two
+  // figures next to the answer, so an operator can check the arithmetic — and
+  // a moving average would make the ceiling drift week to week for reasons
+  // nothing on the screen explains.
+  const representativeOrder = { subtotalCentavos: 50_000, deliveryFeeCentavos: 4_900 };
+  const representativeOrdersPerMonth = 8;
+
+  const holderCounts = ladder.map((tier) => {
+    const cost = tierGiveback(
+      tier.benefits,
+      representativeOrder,
+      representativeOrdersPerMonth,
+    );
+    return {
+      ...tier,
+      holders: holders.get(tier.id) ?? 0,
+      benefits: tier.benefits,
+      monthlyCeilingCentavos: cost.unbounded ? null : cost.perMonthCeilingCentavos,
+      perOrderCeilingCentavos: cost.perOrderCeilingCentavos,
+      perkCount: cost.perkCount,
+      waivesDelivery: cost.waivesDelivery,
+    };
+  });
 
   return {
     programme,
     isLive: programmeIsLive(programme),
     tiers: holderCounts,
+    representativeOrder,
+    representativeOrdersPerMonth,
 
     pointsEarned: sum(LoyaltyEntryType.EARNED),
     pointsRedeemed: sum(LoyaltyEntryType.REDEEMED),

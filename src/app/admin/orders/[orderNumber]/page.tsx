@@ -79,6 +79,7 @@ export default async function AdminOrderPage({
   const discounts: [string, number][] = [
     ['Promo', order.promoDiscountCentavos],
     ['Subscription', order.subscriptionDiscountCentavos],
+    ['Loyalty tier', order.loyaltyDiscountCentavos],
     ['Credits applied', order.walletCreditAppliedCentavos],
   ];
 

@@ -1584,20 +1584,123 @@ gap, for the people who never buy a plan, and need no payment rail at all.
 The decision that keeps this from confusing anybody: **points buy credits, and
 credits buy food.** There is exactly one balance a customer can spend, and it is
 the one that was already there. Points are a thing you convert, not a second
-wallet to reason about at the checkout — and nothing loyalty-shaped appears in
-`place-order.ts` or `checkout.ts` at all, which a test asserts.
+wallet to reason about at the checkout.
 
-### What a tier changes, and what it must not
+That used to come with a stronger claim — that nothing loyalty-shaped appeared
+in `place-order.ts` or `checkout.ts` at all — and it stopped being true when a
+tier could confer a discount. What a test still asserts is the part that
+mattered: neither file touches the POINTS LEDGER. No `recordLoyaltyEntry`, no
+`loyaltyEntry`, no `pointsBalance`, no redemption. `loyaltyDiscountCentavos` is
+a column on an order; points are still only ever converted, on the credits
+screen, by the customer.
 
-A tier changes the earn rate. Nothing else.
+### What a tier confers
 
-The temptation is to make Tapat waive delivery. This app already has three ways
-to reduce a bill — the fee rule's own free-delivery threshold, Plus benefits,
-and promo discounts — and each interacts with the others inside
-`applyBenefits`. A fourth would have to interact with all three, and would put
-loyalty arithmetic in the checkout path where a bug costs somebody the wrong
-price. A tier that earns faster compounds the thing the programme is for and
-touches nothing near a bill.
+A tier changes the earn rate, and confers a list of `LoyaltyTierBenefit` rows.
+The multiplier stayed a column because there is exactly one of it; everything
+else is a row, so adding a benefit is not a migration and turning one off is
+not nulling a column whose meaning depends on another column.
+
+**This reverses an earlier decision, and it is worth being precise about which
+part.** The first version of this section said a tier changes the earn rate and
+nothing else, and argued: this app already has three ways to reduce a bill —
+the fee rule's own free-delivery threshold, Plus benefits, and promo discounts
+— each interacting with the others inside `applyBenefits`, so a fourth would
+have to interact with all three and would put loyalty arithmetic in the
+checkout path where a bug costs somebody the wrong price.
+
+That argument was about a FOURTH MECHANISM and it still holds. What a tier now
+gets is a second way to qualify for the mechanism that already exists. A
+`LoyaltyTierBenefit` of type FREE_DELIVERY carries the same columns as a
+`SubscriptionBenefit` of type FREE_DELIVERY and is priced by the same
+`applyBenefits`, so there is still one implementation of "free delivery over
+₱300, four times a month" and one place a bug in it can be. A test counts the
+code paths: one `deliveryWaived = true`, one DISCOUNT_PERCENT loop, one
+CREDIT_BACK loop.
+
+`billBenefitTypeFor` in `lib/loyalty/tier-benefits.ts` is the boundary between
+the two families and is compile-enforced over all six types, so a seventh
+cannot be added without deciding which side of it it falls on.
+
+### The three that touch no bill
+
+DISPATCH_PRIORITY, SUPPORT_PRIORITY and POINTS_NEVER_EXPIRE are read at exactly
+one seam each — the fan-out, the ticket queue, and the expiry stamped on an
+earned point.
+
+**The two priority benefits are minutes of apparent age, and the bound is the
+whole design.** A customer whose tier confers DISPATCH_PRIORITY has their order
+treated as if placed `priorityWeight` minutes earlier, so it is offered ahead
+of things placed inside that window and behind anything older. A boolean that
+sorted every suki above every stranger would mean, on a busy Friday, an order
+that is never offered at all while loyal customers keep arriving — and nobody
+would see it happen, because a starved order looks exactly like an order
+waiting for a rider. A few minutes cannot do that. The ceiling is
+`MAX_TIER_PRIORITY_WEIGHT` in the policy and again in SQL, and
+`effectiveQueueTime` is exported so the bound is tested numerically rather than
+by matching the multiplication in the source — an earlier test did the latter
+and passed against a mutant that had changed `* 60_000` to
+`* 60_000_000_000`, which is the difference between a head start and a separate
+queue.
+
+In support the boost is a tie-break INSIDE a priority band and never across
+one: an URGENT ticket from somebody who has never ordered still outranks a
+NORMAL one from the most loyal customer on the platform, because urgency is
+about what has happened to them and loyalty is about what they have spent. The
+boost is also shown on the row, because a queue that reorders itself for a
+reason the agent cannot see is one they will assume is broken.
+
+POINTS_NEVER_EXPIRE stamps `expiresAt` null, which is what "never" already
+meant in that column, so the perk needed no new representation and the sweep
+needed no change — it filters `expiresAt: { not: null }` already. The promise is
+about the EARNING rather than the customer: points earned while at that tier
+keep it forever, and dropping a tier next year does not retroactively put a
+clock on them.
+
+### Whose allowance is spent, and whose column it lands in
+
+`Order.loyaltyDiscountCentavos` is its own column rather than a share of
+`subscriptionDiscountCentavos`, and the reason is the receipt: a customer who
+has never paid for Plus, reading "Plus benefits −₱49", has been told something
+false about why their delivery was free — and an operator asking what Plus costs
+would be reading a figure that includes people who do not subscribe. Settlement
+treats the two identically and absorbs both against the platform's share.
+
+When a customer has BOTH a plan and a tier that waive delivery, they get one
+waiver. Which allowance it spends is `sourcedBenefitsFor`'s choice, and it
+spends the TIER's: the subscriber PAID for their four free deliveries a month
+and the tier's are a gift, so spending the gift first leaves the thing they
+bought intact for later in the month. It changes no total — the customer pays
+the same either way, and only later in the month does the difference show.
+
+When discounts overshoot a bill, they are trimmed cheapest-promise-first: the
+customer's own voucher is never clipped, then the subscription they pay for,
+and the tier is clipped first of all. That only collides on a bill a voucher
+has nearly zeroed, which is exactly when an arbitrary order becomes a support
+ticket nobody can explain.
+
+The tier's monthly caps live in `LoyaltyBenefitUsage`, keyed by USER rather
+than by subscription — a customer is Tapat because of what they ordered, not
+because of a row they pay for. Which also caught a real hole: the placement
+call that commits benefit usage was gated on `subscriptionId`, so a customer
+with a tier and no plan would have had no usage row and no receipt line, and
+their allowance would never have run out. Nobody would have noticed until the
+free deliveries never stopped. The compiler found it when `commitBenefitUsage`
+started requiring a customer id.
+
+### What the console has to show
+
+The headline is the most one customer at a tier can cost in a MONTH, computed
+against a representative order the screen displays next to the answer, so the
+arithmetic is checkable rather than magic. An uncapped benefit is reported as
+"unbounded" rather than as a large number: "we cannot bound this" is the
+finding, and rounding it to something an operator might budget against would be
+the wrong kind of helpful.
+
+And it warns when a tier gives away free delivery, because that is the headline
+benefit of the subscription the business is trying to sell. That can be the
+right trade — a tier costs nothing to run and a subscription needs a collection
+every month — but it is a decision about the plan rather than about the tier.
 
 Tiers are calculated from points **earned in a rolling window**, not from the
 balance and not from lifetime totals. Not the balance, because redeeming must

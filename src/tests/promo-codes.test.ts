@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { AdminAction, PromoKind, ServiceKey } from '@prisma/client';
+import { AdminAction, BenefitSource, PromoKind, ServiceKey } from '@prisma/client';
 import {
   MAX_DISCOUNT_CENTAVOS,
   REFUSAL_TEXT,
@@ -376,7 +376,9 @@ describe('not stacking must not punish a subscriber', () => {
     const planOnly = applyBenefits({
       serviceType: ServiceKey.FOOD,
       fees: FEES,
-      benefits: [FREE_DELIVERY_BENEFIT],
+      benefits: [
+        { benefit: FREE_DELIVERY_BENEFIT, source: BenefitSource.SUBSCRIPTION },
+      ],
       usageByBenefitId: new Map(),
     });
     const promoOnly = applyBenefits({

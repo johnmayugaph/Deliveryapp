@@ -135,6 +135,10 @@ export default async function OrderDetailPage({
       sign: -1,
     },
     { label: 'Plus benefits', centavos: order.subscriptionDiscountCentavos, sign: -1 },
+    // Its own line, never folded into the one above. A customer who has never
+    // paid for Plus, reading "Plus benefits −₱49", has been told something
+    // false about why their delivery was free.
+    { label: 'Your tier', centavos: order.loyaltyDiscountCentavos, sign: -1 },
     { label: 'Credits', centavos: order.walletCreditAppliedCentavos, sign: -1 },
   ].filter((line) => line.centavos > 0);
 

@@ -291,6 +291,34 @@ enum BenefitType {
   CREDIT_BACK_PERCENT // uses percentBasisPoints + monthlyCeilingCentavos
 }
 
+/// What a loyalty tier confers.
+///
+/// Two families in one enum, deliberately. The first three are the SAME three
+/// `BenefitType` values a subscription plan uses, and they are priced by the
+/// same `applyBenefits` — a tier is a second way to qualify for an existing
+/// benefit, not a fourth discount mechanism. `billBenefitTypeFor` in
+/// `lib/loyalty/tier-benefits.ts` maps them across, compile-enforced over every
+/// value here, and returns null for the rest.
+///
+/// The last three touch no bill at all. They are what a status band can give
+/// away without putting loyalty arithmetic anywhere near a checkout, and each
+/// is read at exactly one seam: the dispatch fan-out, the support queue, and
+/// the expiry stamped on an earned point.
+enum TierBenefitType {
+  /// uses minimumOrderCentavos + monthlyUsageCap
+  FREE_DELIVERY
+  /// uses percentBasisPoints + serviceKeys (+ optional maxDiscountCentavos)
+  DISCOUNT_PERCENT
+  /// uses percentBasisPoints + monthlyCeilingCentavos
+  CREDIT_BACK_PERCENT
+  /// uses priorityWeight. Offered to riders ahead of an equally old order.
+  DISPATCH_PRIORITY
+  /// uses priorityWeight. Sorted ahead of an equally old ticket.
+  SUPPORT_PRIORITY
+  /// uses no columns. Points earned at this tier are stamped with no expiry.
+  POINTS_NEVER_EXPIRE
+}
+
 enum SupportTicketStatus {
   OPEN
   AWAITING_CUSTOMER
@@ -492,6 +520,9 @@ model User {
   referralReceived        Referral?                         @relation("RefereeReferral")
   loyaltyAccount          LoyaltyAccount?
   loyaltyAdjustments      LoyaltyEntry[]                    @relation("LoyaltyAdjustmentActor")
+  /// A tier benefit's monthly cap is counted against the person, because a
+  /// tier is not a row they pay for. Written by hand, like the one below.
+  loyaltyBenefitUsages    LoyaltyBenefitUsage[]
   promoRedemptions        PromoRedemption[]
   promoCodesCreated       PromoCode[]                       @relation("PromoCodeCreator")
   giftCardsIssued         GiftCard[]                        @relation("GiftCardIssuer")
@@ -1213,6 +1244,18 @@ model Order {
   /// Discount attributable to an active subscription benefit, kept separate so
   /// we can measure what the tier actually costs us.
   subscriptionDiscountCentavos Int     @default(0)
+  /// Discount attributable to a LOYALTY TIER benefit.
+  ///
+  /// Its own column rather than a share of the one above, and the reason is
+  /// the receipt. A customer who has never paid for Plus, reading "Plus
+  /// benefits −₱49" on their bill, has been told something false about why
+  /// their delivery was free — and an operator asking what Plus costs would
+  /// be reading a figure that includes people who do not subscribe.
+  ///
+  /// Settlement treats it identically: `splitOrderValue` absorbs it against
+  /// the platform's share, because the shop still gets its subtotal and the
+  /// rider still gets the fee somebody was not charged.
+  loyaltyDiscountCentavos      Int     @default(0)
   /// Credits spent on this order. Mirrors the ORDER_PAYMENT ledger entry.
   walletCreditAppliedCentavos  Int     @default(0)
   /// What the customer owes after everything above.
@@ -1984,8 +2027,20 @@ model OrderAppliedBenefit {
   orderId String
   order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
+  /// Exactly one of these two is set, enforced by
+  /// `order_applied_benefit_names_one_source` in prisma/sql/loyalty_tiers.sql.
+  /// Both nullable because either kind of benefit row may be deleted after an
+  /// order has already been priced by it, and a receipt must survive that.
   benefitId String?
   benefit   SubscriptionBenefit? @relation(fields: [benefitId], references: [id])
+
+  tierBenefitId String?
+  tierBenefit   LoyaltyTierBenefit? @relation(fields: [tierBenefitId], references: [id])
+
+  /// Which family this line came from, so a receipt can name it without
+  /// inferring from which id happens to be null — and so a line whose benefit
+  /// row was later deleted still knows what it was.
+  source BenefitSource @default(SUBSCRIPTION)
 
   type               BenefitType
   displayLabel       String
@@ -1998,6 +2053,13 @@ model OrderAppliedBenefit {
 
   @@index([orderId])
   @@index([benefitId, createdAt])
+  @@index([tierBenefitId, createdAt])
+}
+
+/// Which of the two things that confer benefits conferred this one.
+enum BenefitSource {
+  SUBSCRIPTION
+  LOYALTY_TIER
 }
 
 // -----------------------------------------------------------------------------
@@ -2550,6 +2612,8 @@ enum AdminAction {
   /// because a tier changes how fast points are earned, which is a different
   /// decision from what a point is worth.
   LOYALTY_TIER_CHANGED
+  LOYALTY_TIER_BENEFIT_CHANGED
+  LOYALTY_TIER_BENEFIT_REMOVED
   /// A signed correction to somebody's points, with a reason. The loyalty
   /// ledger's equivalent of a credits ADJUSTMENT.
   LOYALTY_POINTS_ADJUSTED
@@ -3365,6 +3429,107 @@ model LoyaltyTier {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  benefits LoyaltyTierBenefit[]
+}
+
+/// One thing a tier confers.
+///
+/// ### Why this is a table rather than more columns on the tier
+///
+/// `LoyaltyTier.earnMultiplierBasisPoints` was the only benefit a tier had,
+/// and it was a column because there was exactly one. A tier that confers
+/// three things needs rows: adding a fourth benefit type must not be a
+/// migration, and an operator turning off free delivery for Tapat must not
+/// mean nulling a column whose meaning depends on another column.
+///
+/// The columns mirror `SubscriptionBenefit` for the three bill types, on
+/// purpose and to the letter — `applyBenefits` reads a structural type, so a
+/// row here passes into the same engine that prices a Plus plan. Two
+/// implementations of "free delivery over ₱300, four times a month" is how the
+/// two disagree by a peso in month three.
+///
+/// ### What it does NOT get
+///
+/// No `isActive`. A benefit a tier does not confer is a row that is not there;
+/// a flag would give every read two things to check and one of them would be
+/// forgotten. The tier ladder itself is what an operator switches off.
+model LoyaltyTierBenefit {
+  id     String      @id @default(cuid())
+  tierId String
+  tier   LoyaltyTier @relation(fields: [tierId], references: [id], onDelete: Cascade)
+
+  type TierBenefitType
+
+  /// Empty means every active service. Same column, same meaning, same
+  /// absence of a branch as `SubscriptionBenefit.serviceKeys`.
+  serviceKeys ServiceKey[] @default([])
+
+  /// Basis points, so 1250 is 12.5%.
+  percentBasisPoints Int?
+
+  /// FREE_DELIVERY: the subtotal the benefit needs to trigger.
+  minimumOrderCentavos Int?
+  /// FREE_DELIVERY: how many times per calendar month it may be used.
+  monthlyUsageCap Int?
+  /// DISCOUNT_PERCENT: per-order ceiling on the discount.
+  maxDiscountCentavos Int?
+  /// CREDIT_BACK_PERCENT: how much credit-back it may accrue per month.
+  monthlyCeilingCentavos Int?
+
+  /// DISPATCH_PRIORITY and SUPPORT_PRIORITY: how far ahead this tier goes.
+  ///
+  /// Deliberately small and bounded by `loyalty_tier_benefit_sane`. Priority
+  /// is a tie-break between orders of similar age, not a licence to serve a
+  /// suki's lunch before a stranger's breakfast — see `dispatchPriorityFor`.
+  priorityWeight Int?
+
+  /// Shown to the customer. Never read by any arithmetic.
+  displayLabel String
+
+  sortOrder Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  usages          LoyaltyBenefitUsage[]
+  appliedToOrders OrderAppliedBenefit[]
+
+  @@index([tierId, type])
+}
+
+/// A customer's use of one tier benefit in one calendar month.
+///
+/// The parallel of `SubscriptionBenefitUsage`, and it has to be a separate
+/// table for a structural reason rather than a stylistic one: that table is
+/// keyed by `userSubscriptionId`, and a tier benefit has no subscription. A
+/// customer is Tapat because of what they ordered, not because of a row they
+/// pay for, so the cap is counted against the USER.
+///
+/// Which also means it survives them dropping a tier and coming back: the
+/// month's allowance is the month's allowance.
+model LoyaltyBenefitUsage {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  tierBenefitId String
+  tierBenefit   LoyaltyTierBenefit @relation(fields: [tierBenefitId], references: [id], onDelete: Cascade)
+
+  /// First instant of the calendar month, UTC. Same convention as
+  /// `currentPeriodStart` in lib/pricing/checkout.ts, which both tables share.
+  periodStart DateTime
+
+  usageCount         Int @default(0)
+  creditedCentavos   Int @default(0)
+  discountedCentavos Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, tierBenefitId, periodStart])
+  @@index([tierBenefitId, periodStart])
 }
 
 // -----------------------------------------------------------------------------
