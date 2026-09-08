@@ -247,6 +247,18 @@ enum DispatchOfferStatus {
 }
 
 enum SubscriptionStatus {
+  /// Enrolled, and the first period has not been paid for yet.
+  ///
+  /// Confers NOTHING — `getActiveSubscription` in the pricing engine accepts
+  /// only ACTIVE, so a subscription in this state is invisible to checkout.
+  /// It exists for the same reason `OrderStatus.PENDING_PAYMENT` does: a
+  /// prepaid thing is not a thing until the money arrives, and a subscription
+  /// that granted a month of free deliveries before anybody paid would be
+  /// giving away the product to whoever tapped Subscribe.
+  ///
+  /// It DOES occupy the one-live-subscription slot, so somebody with an
+  /// unpaid enrolment cannot start a second one.
+  PENDING_PAYMENT
   ACTIVE
   PAST_DUE
   CANCELLED
@@ -485,6 +497,7 @@ model User {
   giftCardsIssued         GiftCard[]                        @relation("GiftCardIssuer")
   giftCardsRedeemed       GiftCard[]                        @relation("GiftCardRedeemer")
   giftCardsVoided         GiftCard[]                        @relation("GiftCardVoider")
+  invoicesSettled         SubscriptionInvoice[]             @relation("InvoiceSettler")
 
   @@index([roles], type: Gin)
   @@index([preferredCityId])
@@ -1732,6 +1745,108 @@ model SubscriptionPlan {
 ///   DISCOUNT_PERCENT    -> percentBasisPoints, serviceKeys, maxDiscountCentavos
 ///   CREDIT_BACK_PERCENT -> percentBasisPoints, monthlyCeilingCentavos
 /// `src/lib/pricing/checkout.ts` validates that pairing before applying it.
+/// One month's bill for one subscription.
+///
+/// ### Why this exists at all
+///
+/// Before it, a subscription had a `renewsAt` and nothing else: no record of
+/// what was owed for which period, so there was nothing to chase, nothing to
+/// reconcile, and nothing for the three-day PAST_DUE grace to actually grace.
+/// That gap is provider-independent — a card gateway, an e-wallet mandate and
+/// a bank transfer all need the same answer to "what does this person owe for
+/// September, and did it arrive".
+///
+/// ### The two halves of a settlement
+///
+/// A customer SUBMITS a reference ("I sent it, ref 1234567890") and somebody
+/// then CONFIRMS it. Those are separate columns because they are separate
+/// facts with separate authors — exactly the split `PaymentEvent` makes for an
+/// order with CHARGE_SUBMITTED and CHARGE_CONFIRMED. A refusal clears the
+/// submission so the customer can send a corrected reference.
+///
+/// ### What it does not model
+///
+/// No partial payments and no proration. A monthly fee is paid or it is not,
+/// and cancelling runs to the end of the period already bought rather than
+/// refunding part of it. Both are deliberate omissions rather than oversights:
+/// proration needs a refund rail, and there is no refund rail for a
+/// subscription because there is no charge rail yet either.
+model SubscriptionInvoice {
+  id String @id @default(cuid())
+
+  subscriptionId String
+  subscription   UserSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  /// Human-quotable, and what the customer is asked to put in the transfer
+  /// note. It is what makes an unmatched payment findable later.
+  reference String @unique
+
+  /// The period this invoice buys. Stamped at issue, so the customer can see
+  /// what they are paying for before they pay.
+  ///
+  /// A LATE settlement does not rewrite these: the subscription's own
+  /// `renewsAt` becomes one period from the moment the money arrived, so
+  /// somebody who pays three days late gets a full month rather than a stub.
+  /// The invoice therefore records what was offered and `renewsAt` records
+  /// what they have — see `nextRenewsAt` in lib/subscriptions/billing-policy.
+  periodStart DateTime
+  periodEnd   DateTime
+
+  /// COPIED from the plan at issue, never read through the relation.
+  ///
+  /// This is the point of the column. Raising the plan price must not change
+  /// what somebody already owes for a period they were quoted — a bill that
+  /// rewrites itself is not a bill. The immutability trigger in
+  /// prisma/sql/subscription_invoices.sql makes that true at the database
+  /// level too.
+  amountCentavos Int
+  currency       String @default("PHP")
+
+  issuedAt DateTime @default(now())
+  dueAt    DateTime
+
+  /// How many times collection has been attempted and failed — a provider
+  /// declining, or an administrator refusing a reference that did not check
+  /// out. Drives the dunning ladder.
+  attemptCount      Int       @default(0)
+  lastAttemptAt     DateTime?
+  lastFailureReason String?
+
+  /// The customer's claim, before anybody has checked it.
+  submittedAt        DateTime?
+  submittedReference String?
+
+  /// Set together, or not at all — see `subscription_invoice_settlement_is_complete`.
+  settledAt        DateTime?
+  /// Which rail settled it: `manual` for a transfer a person confirmed, a
+  /// provider key when one is wired. A string rather than an enum so adding a
+  /// provider is configuration, not a migration — the same choice
+  /// `PaymentEvent.provider` makes.
+  settledVia       String?
+  /// The reference that was accepted, or the provider's own transaction id.
+  settledReference String?
+  /// The administrator who confirmed it. NULL when a provider did, and NULL
+  /// after a lawful purge — which is why the completeness guard does not
+  /// mention this column.
+  settledById      String?
+  settledBy        User?     @relation("InvoiceSettler", fields: [settledById], references: [id], onDelete: SetNull)
+
+  /// Cancelled before it was ever paid: the subscription was cancelled, the
+  /// customer was comped, it was raised in error.
+  voidedAt   DateTime?
+  voidReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// Never bill the same period twice. This is the constraint that makes the
+  /// issuing sweep safe to run every minute: a second pass finds the row
+  /// already there rather than raising a duplicate bill.
+  @@unique([subscriptionId, periodStart])
+  @@index([dueAt, settledAt])
+  @@index([submittedAt])
+}
+
 model SubscriptionBenefit {
   id     String           @id @default(cuid())
   planId String
@@ -1798,6 +1913,7 @@ model UserSubscription {
   updatedAt DateTime @updatedAt
 
   benefitUsages SubscriptionBenefitUsage[]
+  invoices      SubscriptionInvoice[]
 
   /// One live subscription per person, enforced by a partial unique index in
   /// `prisma/sql/subscriptions.sql` — Prisma cannot express one, and an index
@@ -2033,6 +2149,23 @@ enum NotificationKind {
   CREDITS_GRANTED
   /// To the subscriber: the term ended.
   SUBSCRIPTION_ENDED
+  /// A subscription bill has been raised. Carries the amount, the reference to
+  /// put in the transfer note, and the deadline — everything the customer
+  /// needs without opening the app, because the whole point of billing ahead
+  /// of the boundary is that they can act on it in time.
+  SUBSCRIPTION_INVOICE_DUE
+  /// The term ran out with the bill unpaid. Benefits have already stopped;
+  /// this says so, and says paying still restores the plan.
+  SUBSCRIPTION_PAST_DUE
+  /// To the subscriber: somebody checked the transfer and the plan is on. The
+  /// one subscription message a customer is actively waiting for — on a rail
+  /// where a person confirms by hand there is real time between "I have sent
+  /// it" and "we have it", and silence in that gap reads as a lost payment.
+  SUBSCRIPTION_PAYMENT_CONFIRMED
+  /// To the subscriber: the reference they gave did not check out. Carries the
+  /// reason verbatim, because it is the only thing that says what to do next,
+  /// and the bill is still owed — a mistyped digit is not a cancellation.
+  SUBSCRIPTION_PAYMENT_REFUSED
   /// To somebody who tapped a coming-soon tile: that vertical is now live
   /// where they are. The only message in the system that somebody asked for
   /// in advance.
@@ -2403,6 +2536,19 @@ enum AdminAction {
   /// issuing because "was that card still good on Tuesday" is the question a
   /// customer standing at a counter is asking.
   GIFT_CARD_VOIDED
+  /// A subscription transfer was confirmed as received. The same decision as
+  /// PAYMENT_CONFIRMED and audited for the same reason, but kept distinct
+  /// because this one also moves a term: it is the moment a month of benefits
+  /// is granted on the word of a person reading a statement.
+  SUBSCRIPTION_INVOICE_CONFIRMED
+  /// A claimed subscription transfer was refused. The reason goes to the
+  /// subscriber verbatim as well as to the audit trail, and the bill stays
+  /// owed.
+  SUBSCRIPTION_INVOICE_REFUSED
+  /// A subscription bill nobody had paid was cancelled. Distinct from a
+  /// refusal because this one says the money is no longer owed, which is a
+  /// decision to forgo revenue rather than a judgement about a reference.
+  SUBSCRIPTION_INVOICE_VOIDED
 }
 
 /// One privileged action, and why.

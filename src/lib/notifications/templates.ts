@@ -32,6 +32,11 @@ export interface NotificationContext {
   creditsReason?: string;
   planName?: string;
   reason?: string;
+  /** For a subscription bill: what to send, where to quote it, and by when. */
+  invoiceReference?: string;
+  dueLabel?: string;
+  /** For a lapse: how long paying late still restores the plan. */
+  recoveryDays?: number;
   /** For a security alert: what changed, in the person's own terms. */
   securityEvent?: string;
   /** Masked — the last four digits of the number the account moved to. */
@@ -224,6 +229,105 @@ export const NOTIFICATION_TEMPLATES: Readonly<Record<NotificationKind, Template>
     title: 'Your plan has ended',
     body: `Your ${context.planName ?? 'plan'} has ended, so no benefits apply at checkout for now.`,
     sms: `Your TARA ${context.planName ?? 'plan'} has ended.`,
+  }),
+
+  /**
+   * The bill, sent a week before the money is needed.
+   *
+   * It carries the amount and the reference because those are the two things
+   * somebody needs in their transfer app, and putting them in the notification
+   * means they never have to open TARA to pay TARA. The deadline is stated
+   * plainly rather than as "soon": a subscription lapses on a date, and the
+   * customer should be told which one.
+   */
+  [NotificationKind.SUBSCRIPTION_INVOICE_DUE]: (context) => ({
+    title: `${context.planName ?? 'Your plan'} renews ${context.dueLabel ?? 'soon'}`,
+    body: [
+      context.amountCentavos
+        ? `Send ${formatCentavos(context.amountCentavos)} to keep your benefits.`
+        : 'Your renewal is due.',
+      context.invoiceReference
+        ? `Put ${context.invoiceReference} in the note so we can match it.`
+        : null,
+    ]
+      .filter(Boolean)
+      .join(' '),
+    // Composed from parts and joined, not interpolated. A template with an
+    // absent field inlined leaves "ref  by" — two spaces and a missing word —
+    // and `notifications.test.ts` refuses that for every kind, which is how
+    // this one was caught before it went out to anybody.
+    sms: [
+      `TARA ${context.planName ?? 'plan'}:`,
+      'send',
+      context.amountCentavos ? formatCentavos(context.amountCentavos) : 'your renewal',
+      context.invoiceReference ? `ref ${context.invoiceReference}` : null,
+      `by ${context.dueLabel ?? 'the due date'}.`,
+    ]
+      .filter(Boolean)
+      .join(' '),
+  }),
+
+  /**
+   * The term ran out unpaid.
+   *
+   * Leads with the consequence rather than the bill, because the consequence
+   * is what the customer will otherwise discover at checkout — and being told
+   * by a delivery fee is worse than being told by us. Then says the door is
+   * still open, with the number of days, because a vague "soon" gets ignored.
+   */
+  [NotificationKind.SUBSCRIPTION_PAST_DUE]: (context) => ({
+    title: `${context.planName ?? 'Your plan'} is unpaid`,
+    body: `Your benefits have stopped for now. Paying${
+      context.recoveryDays ? ` within ${context.recoveryDays} days` : ' soon'
+    } puts them straight back.`,
+    sms: `Your TARA ${context.planName ?? 'plan'} is unpaid and benefits have stopped. Pay to restore it.`,
+  }),
+
+  /**
+   * Somebody checked the transfer and the plan is on.
+   *
+   * The one subscription message a customer is actively waiting for. On a rail
+   * where a person confirms by hand, there is real time between "I have sent
+   * it" and "we have it", and an app that says nothing in that gap is
+   * indistinguishable from one that lost the payment.
+   *
+   * It carries the date the term runs to, not "you are subscribed". A month is
+   * what was bought, and the next thing that will happen is another bill.
+   */
+  [NotificationKind.SUBSCRIPTION_PAYMENT_CONFIRMED]: (context) => ({
+    title: `${context.planName ?? 'Your plan'} is on`,
+    body: [
+      'We have your payment.',
+      context.dueLabel
+        ? `Your benefits apply at checkout until ${context.dueLabel}.`
+        : 'Your benefits apply at checkout from now.',
+    ].join(' '),
+    sms: [
+      `TARA ${context.planName ?? 'plan'}: payment received.`,
+      context.dueLabel ? `Benefits run to ${context.dueLabel}.` : 'Benefits are on.',
+    ].join(' '),
+  }),
+
+  /**
+   * The reference did not check out.
+   *
+   * Carries the reason VERBATIM, which makes the refusal text in the console
+   * something a customer reads. The bill is still owed and the message says so
+   * — a mistyped digit is not a cancellation, and telling somebody their
+   * payment "failed" when the money may well be sitting in the account is how
+   * a fixable problem becomes a lost subscriber.
+   */
+  [NotificationKind.SUBSCRIPTION_PAYMENT_REFUSED]: (context) => ({
+    title: `We could not match your ${context.planName ?? 'plan'} payment`,
+    body: [
+      context.reason ?? 'The reference you sent did not match a transfer we can see.',
+      'The bill is still open — send a corrected reference and we will check again.',
+    ].join(' '),
+    sms: [
+      'TARA:',
+      context.reason ?? 'we could not match your subscription payment.',
+      'Open the app to send a corrected reference.',
+    ].join(' '),
   }),
 
   /**

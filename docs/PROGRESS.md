@@ -3468,3 +3468,185 @@ description also show the transaction type. The description is now the bare
 reference.
 
 1699 tests pass; typecheck, lint and build clean.
+
+---
+
+## Phase 41 — Selling TARA Plus
+
+### The thing that had been plumbed and never wired
+
+Plus was built in Phase 9: a plan, structured benefits, month-to-date usage,
+and a pricing engine that honours all of it. It had never sold a single
+subscription, and `/plus` said so — *"Sign-up is not open yet… we have no way
+to collect a monthly fee."* That sentence was true and correct, and it had been
+true for thirty phases.
+
+The blocker was never the schema. Credits cannot pay for a plan — they are
+rewards, spendable on orders only, enforced in the ledger, in SQL and in tests
+— and cash on delivery cannot bill ₱99 a month. The old seam,
+`resolveSubscriptionCharger()`, existed to refuse loudly rather than fake a
+charge, and that was the right instinct: a stub that records a charge nobody
+made is the failure mode of an SMS "sender" that prints to a console.
+
+What was missing was not a gateway. It was noticing that a **transfer somebody
+confirms by hand** is a payment rail — the app has had one for orders since
+Phase 32, using the same GCash account — and that the honest cost of using it
+for subscriptions is one person, per subscriber, per month.
+
+### Invoices first, rails second
+
+The old seam took `charge({ userId, amountCentavos, description })`. Wiring any
+provider to that signature would have hit two holes immediately: a retried
+webhook or a re-run cron would charge the same month twice, and nothing tied a
+charge to the period it paid for, so a customer asking "what was this ₱99 for"
+had no answer and a reconciliation could not tell one month's ₱99 from
+another's.
+
+So `SubscriptionInvoice` came first: a named month, the price **copied** at
+issue and immutable afterwards, unique on `(subscriptionId, periodStart)`, with
+its five states derived from timestamps rather than stored. Then the rail was
+reshaped around it — `request()` for the arm that asks a customer to pay,
+`collect({ invoice, mandate, idempotencyKey })` for the arm that charges a
+stored instrument, and `PaymentMandate` named even with no implementation,
+because a revocable expiring token is the thing that makes billing *recurring*
+and its absence was what made the old seam unable to describe its own job.
+
+Both arms settle the same invoice. Nothing downstream knows which one collected.
+
+### Bill before the boundary, not on it
+
+The decision that removed the hardest problem. A bill goes out seven days
+BEFORE the period it pays for.
+
+Bill on the boundary and you must decide what happens while the payment is in
+flight, and every answer is bad: stop the benefits instantly and somebody whose
+transfer is an hour behind loses their free delivery; keep them on through a
+"grace period" and you are giving away the product on an unpaid month, which
+this codebase is careful never to do. Billing ahead means the customer pays
+while still inside the month they already paid for. There is no window to have
+an opinion about.
+
+What survives of the grace is a different and much smaller promise:
+`RECOVERY_DAYS` (5) is how long a lapsed subscription can still be **revived**
+by paying — not how long it keeps working.
+
+That also exposed a comment that had been wrong for thirty phases. The old
+PAST_DUE grace claimed it existed "so a card that fails on a Friday has the
+weekend to be fixed before benefits stop". It never did: a PAST_DUE row has a
+`renewsAt` in the past, so the pricing engine refused it on both counts. The
+path had never run, because PAID enrolment was refused for want of a gateway.
+
+### Signing up and paying are two different acts
+
+`subscribeAction` does not make anybody a subscriber. It creates a
+PENDING_PAYMENT enrolment and raises the first bill, and PENDING_PAYMENT
+confers **nothing** — `BENEFIT_CONFERRING_STATUSES` is `[ACTIVE]` while
+`LIVE_SUBSCRIPTION_STATUSES` has three entries, and the gap between those two
+lists is the whole content of the paid rail. A unit test asserts the gap is
+never empty, because collapsing them would either give away unpaid months or
+hide an unpaid signup from the billing sweep.
+
+So the screen says "Waiting for payment" rather than "Active", and the benefit
+list says none of it is on yet. The alternative is somebody arriving at
+checkout expecting free delivery and finding out from the total.
+
+### The sentence the screen has to say
+
+> **This is a transfer you make each month, not a card on file.** We cannot
+> charge you and we do not hold anything to charge.
+
+Every subscription anybody has ever held works the other way round: authorise
+once, forget. A customer who assumes that here will lose their benefits on a
+month they believed was covered, and they will be right to be annoyed, because
+nothing told them otherwise. Saying it plainly costs some sign-ups. It costs
+fewer than a lapse nobody saw coming.
+
+### The console number that decides when to stop using this rail
+
+`/admin/subscriptions` leads with **what is billed against what has actually
+arrived**. Every subscription dashboard ever built shows the first number; on a
+rail where the customer must remember and a person must confirm, the first
+number is a ceiling and the gap between the two is the collection rate. MRR
+alone would report a healthy subscription business while nobody paid, and it
+would keep doing so for months, because a lapse looks exactly like a customer
+who has not got round to it yet.
+
+The third number is `Confirmations this month`: how many times somebody has to
+look at a statement and click. It scales with subscribers and nothing else.
+Twenty is a coffee's worth of attention; four hundred is a job, and at that
+point a provider's per-transaction fee is cheaper than the person. A signal
+nobody can see is not a signal.
+
+### Four things found by building the screens
+
+**A cancelled plan left its bill behind.** `cancelSubscription()` set the status
+and nothing else, so the customer kept being asked for a month they no longer
+had — and confirming a late transfer would have flipped the row back to ACTIVE.
+A CANCELLED row is not in `LIVE_SUBSCRIPTION_STATUSES`, so the sweep never
+revisits it: cancelling now voids any unpaid bill in the same transaction.
+
+**The first payment bought a month and two days.** `nextRenewsAt` extends from
+the later of the current renewal date and the payment, which is right for a
+renewal and wrong for a first payment, where "current renewal date" is the
+48-hour payment *deadline* and not a boundary anybody bought. Somebody who paid
+within the hour got a month plus two days; somebody who paid at the deadline got
+a month. Worse, it contradicted the row: settlement sets `startedAt` to the
+moment the money arrived. Found by the live-database script asserting "a month
+from the payment" and getting a month and two days.
+
+**A settled bill could have no reference.** The all-or-nothing settlement guard
+paired `settledAt` with `settledVia` and said nothing about
+`settledReference` — so the database accepted a confirmed month with nothing to
+point at, which cannot be reconciled against a statement. Reconciliation is the
+only evidence this rail leaves. The guard now demands it, and `settleInvoice()`
+refuses a blank one with a sentence rather than a constraint violation.
+
+**The console spoke to the operator in the customer's voice.** The status pill
+read *"We are checking your transfer"* to the person whose job was to do the
+checking. There are now two wordings per state, both compile-enforced over the
+same union, and a test that refuses "your" or "we" in the console half.
+
+### Verified in four places
+
+**Fourteen new unit tests** (1736 total): the three live statuses and the one
+that confers, with an assertion that the gap between them is never empty; the
+first payment running from the payment and not the deadline, and paying early
+buying no extra days; the renewal rule unchanged by that flag; both state
+wordings covering the same five states, the console half never addressing the
+customer, and "Paid" staying "Paid" in both; and the Manila date label rolling
+to the next day at 17:00 UTC. Two seams were mutated to confirm the new checks
+fail — the console wording and the timezone.
+
+**Twenty-one SQL-guard checks** against the live database, each naming its own
+constraint. The harness needed a third iteration of the same discipline: a
+unique-index violation arrives as `Key ("userId")=(…) already exists` with no
+index name attached, so the statement is now wrapped in a plpgsql block that
+reads `CONSTRAINT_NAME` out of `GET STACKED DIAGNOSTICS`. Every guard is
+exercised with a control row that differs in exactly one field and must insert
+— without that half, a guard exercise proves only that *something* refused
+*something*. The block also always raises, so a bad row is never committed.
+
+**Thirty-two more against the live database**: a full enrol → bill → pay →
+renew cycle, three sweeps inside one lead window raising exactly one renewal,
+four concurrent confirmations settling once and moving the term by one month
+rather than four, an unpaid first period expiring with its bill voided and a
+late transfer unable to resurrect it, the plan price rising without changing
+what somebody already owes, and the pricing engine itself — not a constant —
+refusing benefits to PENDING_PAYMENT and PAST_DUE while granting them to
+ACTIVE.
+
+**Forty-five in a real browser**: subscribing, then reading what is owed, where
+to send it and by when; the reference submitted and the panel changing to
+"checking"; the console showing both references separately, MRR at ₱0.00 while
+the enrolment is unpaid and ₱99.00 after; a refusal reaching the customer in the
+refuser's own words without cancelling the bill; a corrected reference; the
+confirmation switching the benefits on and the counter moving to 1/1; and
+cancelling taking the unpaid renewal bill with it while leaving the paid one
+paid.
+
+One check was rewritten for reporting a bare `true` — after a confirmation the
+row leaves the queue, so there is no second Confirm button to double-tap, and
+saying "ok, nothing to tap" is a check that cannot fail. It now asserts the
+queue is empty, which is the reason there is nothing to tap.
+
+1736 tests pass; typecheck, lint and build clean.

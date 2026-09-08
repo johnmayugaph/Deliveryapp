@@ -9,14 +9,18 @@
 
 -- One live subscription per person.
 --
--- ACTIVE and PAST_DUE are both live: a PAST_DUE subscription is one whose
--- renewal has not been paid, and enrolling again while it stands would leave
--- two rows competing to supply benefits. CANCELLED and EXPIRED rows are history
--- and may accumulate freely, which is why this is a partial index.
+-- THREE statuses are live. ACTIVE is the paid-up case. PAST_DUE is one whose
+-- renewal has not been paid. PENDING_PAYMENT is one whose FIRST period has not
+-- been paid — it confers nothing, but it still occupies the slot, because
+-- somebody with an unpaid enrolment starting a second one is how you end up
+-- with two bills and two rows competing to supply benefits.
+--
+-- CANCELLED and EXPIRED rows are history and may accumulate freely, which is
+-- why this is a partial index.
 DROP INDEX IF EXISTS user_subscription_one_live_per_user;
 CREATE UNIQUE INDEX user_subscription_one_live_per_user
   ON "UserSubscription" ("userId")
-  WHERE "status" IN ('ACTIVE', 'PAST_DUE');
+  WHERE "status" IN ('PENDING_PAYMENT', 'ACTIVE', 'PAST_DUE');
 
 -- A grant needs a grantor.
 --
@@ -32,12 +36,43 @@ ALTER TABLE "UserSubscription"
   );
 
 -- A subscription that has ended says when.
+--
+-- The live statuses are exempt; everything else has to name the moment. Kept
+-- in step with the partial index above — a status that is live for one and
+-- terminal for the other would make an enrolment unsavable.
 ALTER TABLE "UserSubscription"
   DROP CONSTRAINT IF EXISTS user_subscription_ended_when_terminal;
 
 ALTER TABLE "UserSubscription"
   ADD CONSTRAINT user_subscription_ended_when_terminal CHECK (
-    "status" IN ('ACTIVE', 'PAST_DUE') OR "endedAt" IS NOT NULL
+    "status" IN ('PENDING_PAYMENT', 'ACTIVE', 'PAST_DUE') OR "endedAt" IS NOT NULL
+  );
+
+-- A PAID subscription is never a grant, and a grant is never billed.
+--
+-- The existing grant-has-a-grantor check says a non-PAID subscription names
+-- who gave it. This says the converse: a PAID one must NOT, because a
+-- subscription that is both billed and comped is one nobody can answer
+-- questions about — and because the invoice sweep decides what to bill from
+-- `origin` alone.
+ALTER TABLE "UserSubscription"
+  DROP CONSTRAINT IF EXISTS user_subscription_paid_is_not_granted;
+
+ALTER TABLE "UserSubscription"
+  ADD CONSTRAINT user_subscription_paid_is_not_granted CHECK (
+    "origin" <> 'PAID' OR "grantedByUserId" IS NULL
+  );
+
+-- Only a PAID subscription can be waiting for a first payment.
+--
+-- A comp that sat in PENDING_PAYMENT would confer nothing and never be
+-- billed, so it would be a grant that silently does not exist.
+ALTER TABLE "UserSubscription"
+  DROP CONSTRAINT IF EXISTS user_subscription_only_paid_awaits_payment;
+
+ALTER TABLE "UserSubscription"
+  ADD CONSTRAINT user_subscription_only_paid_awaits_payment CHECK (
+    "status" <> 'PENDING_PAYMENT' OR "origin" = 'PAID'
   );
 
 -- Benefit usage is never negative, and a usage row cannot claim to have

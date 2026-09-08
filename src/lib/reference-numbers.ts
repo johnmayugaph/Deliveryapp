@@ -39,4 +39,17 @@ export function generateTicketNumber(now: Date = new Date()): string {
   return `HELP-${datePart(now)}-${randomCode(5)}`;
 }
 
+/**
+ * e.g. `SUB-20260906-K3M9Q`.
+ *
+ * A subscription invoice's reference, and it does double duty: it is what the
+ * customer is asked to put in the transfer note, so it is the only thing that
+ * makes an unmatched payment findable in a bank statement two weeks later.
+ * Hence the same unambiguous alphabet — it gets read aloud and typed into
+ * somebody else's app.
+ */
+export function generateInvoiceReference(now: Date = new Date()): string {
+  return `SUB-${datePart(now)}-${randomCode(5)}`;
+}
+
 export { UNAMBIGUOUS_ALPHABET };

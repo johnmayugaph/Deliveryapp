@@ -1,84 +1,84 @@
 /**
- * The seam where a subscription charge would happen.
+ * Where the subscription payment seam used to live.
  *
- * It has no implementations, deliberately. The app's two money rails are
- * cash-on-delivery, which a rider collects against a specific order, and
- * credits, which are rewards we grant and which are spendable on orders only —
- * that constraint is enforced in `src/lib/wallet/ledger.ts`, in SQL triggers,
- * and in tests. Charging ₱99 of granted credits for a subscription would break
- * it, and would be a comp dressed up as revenue besides.
+ * It has moved to `src/lib/subscriptions/rails/`, which is now the same shape
+ * as the order payment seam in `lib/payments/rails/` — a directory with a
+ * types module, one rail per file, and a resolver that returns null when
+ * nothing is configured.
  *
- * So a PAID subscription cannot be created until a real gateway is chosen. The
- * alternative — a stub that records a charge nobody made — is the same failure
- * mode as an SMS "sender" that prints to a console in production: everything
- * reports success and no money arrives.
+ * ### What changed, and why the old shape had to go
  *
- * When a provider is picked, it lands here as a `SubscriptionCharger`, and
- * `enrollInPlan` stops refusing PAID.
+ * The old seam was a single `SubscriptionCharger` with:
+ *
+ *     charge({ userId, amountCentavos, description })
+ *
+ * That signature was right about the hard part — refusing to fake a charge —
+ * and wrong about three things that would have bitten the moment a provider
+ * landed:
+ *
+ *  1. **No idempotency key.** A retried webhook or a re-run cron would charge
+ *     the same month twice. `collect` now takes one, derived from the invoice.
+ *  2. **No invoice.** A charge tied to a `userId` and an amount cannot say
+ *     which period it paid for, so nothing could be reconciled and a customer
+ *     asking "what was this ₱99 for" had no answer. Rails now settle a named
+ *     `SubscriptionInvoice`.
+ *  3. **No mandate.** The thing that makes billing *recurring* rather than a
+ *     payment is a stored, revocable authorisation. The old interface could
+ *     not describe one, so "add a gateway here" was a bigger job than it
+ *     looked.
+ *
+ * The refusal it existed to make is still made, in
+ * `resolveSubscriptionRail`: an unrecognised `SUBSCRIPTION_PAYMENT_PROVIDER`
+ * throws rather than quietly falling back, because a deployment that believes
+ * it has automatic billing and has manual billing finds out a month later from
+ * a customer.
+ *
+ * What is NEW is that there is now a rail that works: a transfer the customer
+ * makes and a person confirms. It is not recurring — see
+ * `ManualSubscriptionRail` for the honest accounting of what that costs — but
+ * it means a plan can be sold.
+ *
+ * This file re-exports so that nothing which already imported from here had to
+ * change. Prefer importing from `@/lib/subscriptions/rails` in new code.
  */
 
-export interface SubscriptionCharge {
-  /** The provider's own reference, for reconciliation. */
-  reference: string;
-  amountCentavos: number;
-  chargedAt: Date;
-}
+export {
+  isPaidEnrollmentAvailable,
+  resolveSubscriptionRail,
+  subscriptionRailStatus,
+} from '@/lib/subscriptions/rails';
 
-export interface SubscriptionCharger {
-  readonly providerName: string;
-  charge(input: {
-    userId: string;
-    amountCentavos: number;
-    description: string;
-  }): Promise<SubscriptionCharge>;
-}
+export type {
+  CollectableInvoice,
+  CollectionMode,
+  PaymentMandate,
+  PaymentRequest,
+  SettlementResult,
+  SettlementSource,
+  SubscriptionRail,
+  SubscriptionRailEnv,
+  SubscriptionRailStatus,
+} from '@/lib/subscriptions/rails';
 
+/**
+ * Kept because it is the sentence somebody reads when they try to sell a plan
+ * with nowhere to send the money, and because the actions layer names it.
+ *
+ * The message has changed: the old one said no rail could ever bill a monthly
+ * fee, which was true when credits were the only alternative to cash. It is
+ * not true now — a transfer rail exists and needs three environment
+ * variables.
+ */
 export class NoSubscriptionPaymentRailError extends Error {
   constructor() {
     super(
-      'No subscription payment provider is configured, so a PAID subscription ' +
-        'cannot be created. The app charges cash on delivery or credits, and ' +
-        'credits are spendable on orders only by design — neither can bill a ' +
-        'monthly fee. Grant a COMPED or PROMOTIONAL subscription instead, or ' +
-        'add a gateway in src/lib/subscriptions/payment.ts.',
+      'No way to collect a subscription fee is configured, so a paid plan ' +
+        'cannot be sold. Set PAYMENT_TRANSFER_LABEL, ' +
+        'PAYMENT_TRANSFER_ACCOUNT_NAME and PAYMENT_TRANSFER_ACCOUNT_NUMBER — ' +
+        'the same account the checkout transfer uses — and subscribers will be ' +
+        'billed by transfer, confirmed by hand. Or grant a COMPED subscription ' +
+        'instead, which needs no rail at all.',
     );
     this.name = 'NoSubscriptionPaymentRailError';
-  }
-}
-
-/** Just the variables charger selection reads. */
-export interface SubscriptionPaymentEnv {
-  SUBSCRIPTION_PAYMENT_PROVIDER?: string | undefined;
-  [key: string]: string | undefined;
-}
-
-/**
- * Resolves a charger, or throws.
- *
- * There is no development fallback on purpose: a fake charge in development
- * becomes a fake charge in production the day someone copies the config.
- */
-export function resolveSubscriptionCharger(
-  env: SubscriptionPaymentEnv = process.env,
-): SubscriptionCharger {
-  const provider = env.SUBSCRIPTION_PAYMENT_PROVIDER;
-  if (provider) {
-    throw new Error(
-      `SUBSCRIPTION_PAYMENT_PROVIDER is set to "${provider}", but no charger is ` +
-        'implemented for it. Add one in src/lib/subscriptions/payment.ts.',
-    );
-  }
-  throw new NoSubscriptionPaymentRailError();
-}
-
-/** Whether a paid enrollment could succeed. The plan screen asks before offering it. */
-export function isPaidEnrollmentAvailable(
-  env: SubscriptionPaymentEnv = process.env,
-): boolean {
-  try {
-    resolveSubscriptionCharger(env);
-    return true;
-  } catch {
-    return false;
   }
 }

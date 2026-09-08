@@ -79,6 +79,13 @@ import {
   type PartyRef,
 } from '@/lib/settlement/ledger';
 import {
+  InvoiceNotCollectableError,
+  InvoiceNotFoundError,
+  refuseInvoiceClaim,
+  settleInvoice,
+  voidInvoice,
+} from '@/lib/subscriptions/billing';
+import {
   InvalidCommissionError,
   InvalidSettlementEntryError,
   assertCommissionInRange,
@@ -164,6 +171,16 @@ async function guarded(
     if (
       error instanceof GiftCardNotVoidableError ||
       error instanceof GiftCardAmountError
+    ) {
+      return { ok: false, message: error.message };
+    }
+    // A bill somebody else confirmed, cancelled, or paid a second ago. Two
+    // administrators working the same invoice queue is normal, and every one
+    // of these refusals is a sentence rather than a fault — so none should
+    // land on `/admin/errors` either.
+    if (
+      error instanceof InvoiceNotCollectableError ||
+      error instanceof InvoiceNotFoundError
     ) {
       return { ok: false, message: error.message };
     }
@@ -2852,6 +2869,203 @@ export async function voidGiftCardAction(
       message:
         `${card.reference} is cancelled. Anybody typing it now is told so, and ` +
         `the ${formatCentavos(card.amountCentavos)} is off the outstanding total.`,
+    };
+  });
+}
+
+// -----------------------------------------------------------------------------
+// Subscription invoices
+// -----------------------------------------------------------------------------
+
+/**
+ * The three decisions somebody makes about a subscription bill.
+ *
+ * They are the same three the order payment queue has — confirm, refuse,
+ * cancel — and they are deliberately named and worded differently, because on
+ * a subscription each one also moves a TERM. Confirming an order releases a
+ * meal; confirming a bill grants a month of benefits and pushes the next
+ * deadline out. That is why these get their own audit actions rather than
+ * reusing `PAYMENT_CONFIRMED`: "which month did we decide they had paid for"
+ * is the question a dispute turns on, and it is unanswerable from an order's
+ * audit row.
+ */
+
+/**
+ * The transfer checked out: mark the month paid.
+ *
+ * The reference recorded is what the CONSOLE matched, defaulting to what the
+ * customer claimed. It is settable because the useful case is a customer who
+ * mistyped one digit of a number that is otherwise clearly theirs in the
+ * statement — recording the real reference is what makes the row worth
+ * anything to whoever reconciles it next month.
+ *
+ * The amount is NOT settable, unlike an order's. An invoice is a fixed monthly
+ * fee, and a short transfer is not a partial month — there is no such thing as
+ * 60% of free delivery. Somebody who sent too little should be refused with
+ * that reason and asked to send the rest.
+ */
+export async function confirmSubscriptionInvoiceAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const invoiceId = String(formData.get('invoiceId') ?? '');
+    const reason = normaliseReason(formData.get('reason'));
+    const typed = String(formData.get('reference') ?? '').trim();
+
+    const invoice = await prisma.subscriptionInvoice.findUnique({
+      where: { id: invoiceId },
+      select: {
+        id: true,
+        reference: true,
+        amountCentavos: true,
+        submittedReference: true,
+        subscription: { select: { plan: { select: { name: true } } } },
+      },
+    });
+    if (!invoice) return { ok: false, message: 'No such bill.' };
+
+    const reference = typed || invoice.submittedReference || '';
+    if (!reference) {
+      // Confirming with nothing to point at is a month given away on somebody's
+      // memory. The statement line is the whole evidence trail.
+      return {
+        ok: false,
+        message:
+          'Type the reference you matched this against. The customer has not ' +
+          'sent one, and a confirmed month with no reference cannot be ' +
+          'reconciled against a statement later.',
+      };
+    }
+
+    const outcome = await settleInvoice({
+      invoiceId: invoice.id,
+      via: 'manual',
+      reference,
+      settledById: admin.id,
+    });
+
+    await recordAdminAction({
+      actorId: admin.id,
+      action: AdminAction.SUBSCRIPTION_INVOICE_CONFIRMED,
+      subjectType: 'SubscriptionInvoice',
+      subjectId: invoice.id,
+      subjectLabel: invoice.reference,
+      reason,
+      detail: {
+        amountCentavos: invoice.amountCentavos,
+        reference,
+        claimedReference: invoice.submittedReference,
+        renewsAt: outcome.renewsAt.toISOString(),
+        startedTheSubscription: outcome.startedTheSubscription,
+      },
+    });
+
+    revalidatePath('/admin/subscriptions');
+
+    return {
+      ok: true,
+      message: outcome.startedTheSubscription
+        ? `${formatCentavos(invoice.amountCentavos)} confirmed. Their ` +
+          `${invoice.subscription.plan.name} is on and benefits apply from now.`
+        : `${formatCentavos(invoice.amountCentavos)} confirmed. Their plan runs ` +
+          `on, and the next bill goes out a week before it ends.`,
+    };
+  });
+}
+
+/**
+ * The reference did not check out.
+ *
+ * Does NOT cancel the bill, on purpose — the same choice `refusePaymentAction`
+ * makes for an order, and for the same reason. A mistyped digit is the
+ * likeliest explanation, the money may well be sitting in the account, and the
+ * subscription keeps its deadline so a corrected reference still saves it.
+ *
+ * The reason reaches the SUBSCRIBER verbatim, in a notification and on their
+ * own screen. Worth knowing before writing "nope" in it.
+ */
+export async function refuseSubscriptionInvoiceAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const invoiceId = String(formData.get('invoiceId') ?? '');
+    const reason = normaliseReason(formData.get('reason'));
+
+    const invoice = await prisma.subscriptionInvoice.findUnique({
+      where: { id: invoiceId },
+      select: { id: true, reference: true, submittedReference: true },
+    });
+    if (!invoice) return { ok: false, message: 'No such bill.' };
+
+    await refuseInvoiceClaim({ invoiceId: invoice.id, reason });
+
+    await recordAdminAction({
+      actorId: admin.id,
+      action: AdminAction.SUBSCRIPTION_INVOICE_REFUSED,
+      subjectType: 'SubscriptionInvoice',
+      subjectId: invoice.id,
+      subjectLabel: invoice.reference,
+      reason,
+      detail: { refusedReference: invoice.submittedReference },
+    });
+
+    revalidatePath('/admin/subscriptions');
+
+    return {
+      ok: true,
+      message:
+        'Refused, and the subscriber has been told why in those words. The ' +
+        'bill is still open, so a corrected reference will come back here.',
+    };
+  });
+}
+
+/**
+ * The money is no longer owed.
+ *
+ * The one decision here that forgoes revenue rather than judging a reference:
+ * a bill raised in error, a subscriber being comped instead, a plan withdrawn
+ * mid-period. It compare-and-sets on `settledAt`, so a transfer confirmed at
+ * this exact moment wins and this refuses — which is the right way round, as
+ * voiding a bill somebody has already paid would leave the term paid for and
+ * the money unaccounted.
+ */
+export async function voidSubscriptionInvoiceAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const invoiceId = String(formData.get('invoiceId') ?? '');
+    const reason = normaliseReason(formData.get('reason'));
+
+    const invoice = await prisma.subscriptionInvoice.findUnique({
+      where: { id: invoiceId },
+      select: { id: true, reference: true, amountCentavos: true },
+    });
+    if (!invoice) return { ok: false, message: 'No such bill.' };
+
+    await voidInvoice({ invoiceId: invoice.id, reason });
+
+    await recordAdminAction({
+      actorId: admin.id,
+      action: AdminAction.SUBSCRIPTION_INVOICE_VOIDED,
+      subjectType: 'SubscriptionInvoice',
+      subjectId: invoice.id,
+      subjectLabel: invoice.reference,
+      reason,
+      detail: { amountCentavos: invoice.amountCentavos },
+    });
+
+    revalidatePath('/admin/subscriptions');
+
+    return {
+      ok: true,
+      message:
+        `${invoice.reference} is cancelled and ` +
+        `${formatCentavos(invoice.amountCentavos)} is no longer owed. Their ` +
+        'plan still ends on its current date unless somebody extends it.',
     };
   });
 }

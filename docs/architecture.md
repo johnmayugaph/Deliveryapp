@@ -1574,11 +1574,10 @@ Two things make it not that.
 peso balance cannot express "you are two orders from Tapat", and a status band
 cannot be paid out. That distinction is what the second ledger earns.
 
-**And credit-back is a Plus benefit.** Plus is priced but still cannot be sold,
-because a subscription needs a recurring charge and a bank transfer somebody
-makes by hand is not one. So today a customer who orders every week and is not
-paying earns nothing at all for it. Points fill exactly that gap, with no
-payment rail.
+**And credit-back is a Plus benefit.** Plus can now be sold — by transfer, one
+month at a time (§6) — but it is still a paid tier, and a customer who orders
+every week without subscribing earns nothing for it. Points fill exactly that
+gap, for the people who never buy a plan, and need no payment rail at all.
 
 ### Points are not spendable
 
@@ -2151,22 +2150,28 @@ cap). It stays off until there is a decision to launch it.
 the pricing engine, the plan screen, and `enrollInPlan()`. `npm run plan:activate
 -- <slug>` flips it; nothing else turns the tier on.
 
-**A paid subscription cannot be created.** This is not an omission, it is the
-credits constraint holding. The app has two money rails — cash a rider collects
-against a specific order, and credits, which are rewards we grant and which are
-*spendable on orders only*, enforced in the ledger, in SQL triggers, and in
-tests. Neither can bill ₱99 a month. `resolveSubscriptionCharger()` in
-`src/lib/subscriptions/payment.ts` therefore has no implementations and throws;
-`enrollInPlan({ origin: PAID })` refuses at the door, and the plan screen says
-why rather than offering a button that would fail. The alternative — a stub that
-records a charge nobody made — is the same failure mode as an SMS "sender" that
-prints to a console in production.
+**A paid subscription can now be created — by transfer.** For most of this
+project it could not, and the reason is worth keeping: the app has two money
+rails, cash a rider collects against a specific order, and credits, which are
+rewards we grant and which are *spendable on orders only*, enforced in the
+ledger, in SQL triggers and in tests. Neither can bill ₱99 a month, and a stub
+charger that recorded a charge nobody made would be the same failure mode as an
+SMS "sender" that prints to a console in production.
+
+What changed is not the constraint, it is that a third rail exists which is
+honest about what it is: `ManualSubscriptionRail` asks the customer to send a
+transfer quoting a bill's reference, and a person confirms it. It needs the same
+three `PAYMENT_TRANSFER_*` variables the checkout transfer uses, and no provider
+account — see *The subscription rail* below for what that costs. With none of
+them set, `resolveSubscriptionRail()` returns null, `enrollInPlan({ origin:
+PAID })` refuses at the door, and `/plus` says why rather than offering a button
+that would fail.
 
 So `UserSubscription.origin` is required, with no default:
 
 | Origin | Means | Available today |
 | --- | --- | --- |
-| `PAID` | Charged to a payment method | No — needs a gateway |
+| `PAID` | Billed monthly, collected by transfer | Yes, with `PAYMENT_TRANSFER_*` set |
 | `COMPED` | Given deliberately to a named person | Yes |
 | `PROMOTIONAL` | Given by a campaign | Yes |
 
@@ -2178,38 +2183,116 @@ how that choice stops being a choice. The seed now creates an ops admin
 (`0917 000 9999`) because without an account holding one of those roles, neither
 a grant nor a ledger ADJUSTMENT is possible at all.
 
-**One live subscription per person**, where ACTIVE and PAST_DUE both count as
-live. Checked in `enrollInPlan()` for the error message and enforced by a partial
-unique index in `prisma/sql/subscriptions.sql`, because a double-clicked button
-beats any check-then-write.
+**One live subscription per person**, where THREE statuses count as live:
+ACTIVE (paid up), PAST_DUE (a renewal went unpaid) and PENDING_PAYMENT (the
+first period has not been paid). The last one confers nothing and still occupies
+the slot, because somebody with an unpaid enrolment starting a second one is how
+you get two bills and two rows competing to supply benefits. Checked in
+`enrollInPlan()` for the error message and enforced by a partial unique index in
+`prisma/sql/subscriptions.sql`, because a double-clicked button beats any
+check-then-write.
 
-### Renewal
+`BENEFIT_CONFERRING_STATUSES` is a **separate, shorter list**: `[ACTIVE]`. The
+gap between the two lists is the whole content of the paid rail, and a unit test
+asserts it is never empty — collapsing them would either give away unpaid months
+or make an unpaid signup invisible to the billing sweep.
 
-`sweepDueSubscriptions()` runs from the same cron as the order timeouts. It is
-**record-keeping, not enforcement**: the pricing engine already requires
-`renewsAt > now`, so a lapsed subscription stops conferring benefits the instant
-it lapses whether or not the cron has run. A cron that has not run for an hour
-must not hand out an hour of unpaid benefits.
+### The subscription rail
 
-`decideRenewal()` is pure, and the two origins differ:
+**`SubscriptionInvoice` is the near-ledger under all of it.** A named month,
+with the price *copied* at issue and made immutable by a trigger: raising the
+plan's price changes what future bills say and never what somebody already owes.
+It is unique on `(subscriptionId, periodStart)`, which is what makes issuing
+idempotent — the sweep runs every minute and a second call for the same period
+must find the existing row rather than bill the customer again. Its five states
+(OPEN, AWAITING_REVIEW, OVERDUE, SETTLED, VOID) are **derived** from timestamps
+rather than stored, the same discipline as a wallet's balance and a gift card's
+status.
+
+**A bill goes out `INVOICE_LEAD_DAYS` (7) BEFORE the period it pays for.** That
+one choice deletes a whole category of difficulty. Bill on the boundary instead
+and you have to decide what happens while a payment is in flight: cut benefits
+off instantly and a customer whose transfer is an hour behind loses their free
+delivery; keep them on during a "grace period" and you are handing out the
+product on an unpaid month. Billing ahead means the customer pays while still
+inside the month they already paid for, so there is no window to have an opinion
+about.
+
+`prisma/sql/subscriptions.sql` and `prisma/sql/subscription_invoices.sql` hold
+the guards: a settlement is all-or-nothing *and* names the reference it was
+matched against, a bill cannot be both paid and cancelled, a cancellation names
+its reason, a first period cannot be waited on by anything but a PAID row, and
+the amount, period and identity are immutable after issue.
+
+**Two rails, one invoice.** `SubscriptionRail` in `src/lib/subscriptions/rails/`
+has two arms and only one implementation. A REQUESTED rail asks the customer to
+pay each period; an AUTHORISED rail charges a stored, revocable, expiring
+`PaymentMandate`. Both settle the same invoice, which is the point of having
+built invoices first — nothing downstream knows which arm collected the money.
+`collect()` takes the invoice and an idempotency key rather than a user and an
+amount, because the previous seam's signature would have let a retried webhook
+charge the same month twice.
+
+**What the manual rail costs, said out loud.** It is not recurring billing: the
+customer must remember every month, and somebody on our side must confirm every
+transfer. That is one person, per subscriber, per month. `/admin/subscriptions`
+shows the confirmation count for exactly that reason — twenty is a coffee's
+worth of attention, four hundred is a job, and at that point a provider's fee is
+cheaper than the person. The same screen shows **what is billed against what has
+actually arrived**, because MRR on this rail is a ceiling and the gap between
+the two numbers is the collection rate.
+
+### Billing and lapsing
+
+`sweepSubscriptionBilling()` runs from the same cron as the order timeouts, and
+does two things in this order: **raise the bills, then tidy what went unpaid.**
+The order is load-bearing — a subscription inside its lead window must get its
+invoice even on a pass that is about to decide something about it, or a sweep
+that has not run for a week would lapse somebody who was never billed.
+
+It remains **record-keeping, not enforcement**: the pricing engine requires
+`status = ACTIVE` and `renewsAt > now`, so a lapsed subscription stops conferring
+benefits the instant it lapses whether or not the cron has run. A cron that has
+not run for an hour must not hand out an hour of unpaid benefits.
+
+`decideLapse()` is pure, and the three cases differ:
 
 - **A grant does not renew itself.** It expires at its term, and `endedAt` is set
   to `renewsAt` — when the term ended, not when the cron noticed. Re-granting is
   a deliberate act, the same way approving a fleet partner for a second service
   is.
-- **A paid subscription** whose charge fails goes PAST_DUE and stays live for
-  `PAST_DUE_GRACE_DAYS` (3), so a card that fails on a Friday has the weekend to
-  be fixed. That path is unreachable today; it is written and tested anyway, so
-  the day a provider lands it is already right.
+- **A paid subscription with a collectable bill** goes PAST_DUE and can be
+  revived by paying within `RECOVERY_DAYS` (5). Note what that is *not*: it is
+  not a period during which benefits continue — they stopped at the boundary. An
+  earlier version of this document claimed the grace existed "so a card that
+  fails on a Friday has the weekend", which was never true, because a PAST_DUE
+  row has a `renewsAt` in the past and the pricing engine refused it on both
+  counts.
+- **An unpaid FIRST period ends outright**, with no recovery window. There is no
+  term to protect and nothing was ever conferred, so the enrolment is let go and
+  its bill is voided — which also stops a late transfer resurrecting it.
+
+When a subscription reaches a terminal status the sweep **voids its outstanding
+bills**. Leaving one collectable would keep chasing somebody for a plan they no
+longer have, and would let a late payment silently resurrect an expired row.
 
 ### Cancelling
 
-Immediate, not at period end: every subscription that exists today is a grant, so
-there is nothing paid-for to run down. When a gateway lands, a paid cancellation
-should keep its benefits until `renewsAt`, which means setting `endedAt` to
-`renewsAt` in `cancelSubscription()` and relaxing the `endedAt: null` filter in
-`getActiveSubscription()`. Both are named in the code so the change is one search
-away.
+Immediate, not at period end. That was uncontroversial when every subscription
+was a grant with nothing paid-for to run down; with a paid rail it is a choice,
+and it is still this one — a customer who taps "end the plan" and is told
+benefits stop immediately has been told the truth, which is worth more than the
+fraction of a month they lose. When cancellation should instead run to the
+boundary, `cancelSubscription()` sets `endedAt` to `renewsAt` and the
+`endedAt: null` filter in `getActiveSubscription()` relaxes; both are named in
+the code so the change is one search away.
+
+`cancelSubscription()` also **voids any unpaid bill**, in the same transaction.
+Without that, cancelling left a collectable invoice behind: the customer kept
+being asked for a month they no longer had, and confirming a late transfer would
+have flipped the row back to ACTIVE. A CANCELLED row is not in
+`LIVE_SUBSCRIPTION_STATUSES`, so the sweep never revisits it and this is the only
+place that can.
 
 ### The plan screen
 
@@ -2220,11 +2303,25 @@ will not honour. A subscriber also sees month-to-date consumption, read from the
 `SubscriptionBenefitUsage` rows the engine writes — not a second tally that could
 disagree with the first.
 
+When something is owed, the bill is the **first** thing on the screen, above the
+benefit list: what to send, where, the reference to quote and the date it is due.
+It also carries the sentence that matters most on this rail — *this is a transfer
+you make each month, not a card on file* — because every subscription anybody has
+ever held works the other way round, and a customer who assumes that here will
+lose their benefits on a month they believed was covered. Saying it plainly costs
+some sign-ups; it costs fewer than a lapse nobody saw coming.
+
+A PENDING_PAYMENT enrolment says **"Waiting for payment"**, not "Active", and the
+benefit list says none of it is on yet — with the month-to-date usage lines
+hidden, since "8 left" on a plan that confers nothing is a promise. The
+alternative is somebody arriving at checkout expecting free delivery and finding
+out from the total.
+
 **A known trade-off:** pulling a plan stops benefits for existing subscribers
-immediately, because `getActiveSubscription()` requires an active plan. That is
-right while every subscription is a grant, and wrong the moment somebody has
-paid for the month — revisit it with the gateway. `/plus` marks the state
-(*"Naka-pause ang plan"*) rather than showing a plan that quietly does nothing.
+immediately, because `getActiveSubscription()` requires an active plan. That was
+right while every subscription was a grant and is wrong now that somebody may
+have paid for the month — revisit it before the first plan is withdrawn. `/plus`
+marks the state rather than showing a plan that quietly does nothing.
 
 ---
 

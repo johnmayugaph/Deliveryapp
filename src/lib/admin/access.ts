@@ -188,4 +188,7 @@ export const ADMIN_ACTION_LABEL: Readonly<Record<AdminAction, string>> = {
   [AdminAction.PROMO_CODE_ACTIVATION_CHANGED]: 'Promo code switched on or off',
   [AdminAction.GIFT_CARD_ISSUED]: 'Gift card issued',
   [AdminAction.GIFT_CARD_VOIDED]: 'Gift card cancelled',
+  [AdminAction.SUBSCRIPTION_INVOICE_CONFIRMED]: 'Subscription transfer confirmed',
+  [AdminAction.SUBSCRIPTION_INVOICE_REFUSED]: 'Claimed subscription transfer refused',
+  [AdminAction.SUBSCRIPTION_INVOICE_VOIDED]: 'Subscription bill cancelled',
 };

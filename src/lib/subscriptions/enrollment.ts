@@ -6,10 +6,10 @@ import {
 } from '@prisma/client';
 import { prisma, type PrismaTransactionClient } from '@/lib/prisma';
 import { currentPeriodStart } from '@/lib/pricing/checkout';
-import {
-  NoSubscriptionPaymentRailError,
-  isPaidEnrollmentAvailable,
-} from '@/lib/subscriptions/payment';
+import { addOneMonth, firstPeriodFor } from '@/lib/subscriptions/billing-policy';
+import { isPaidEnrollmentAvailable } from '@/lib/subscriptions/rails';
+import { NoSubscriptionPaymentRailError } from '@/lib/subscriptions/payment';
+import { voidInvoice } from '@/lib/subscriptions/billing';
 
 /**
  * Getting onto a plan, and off it.
@@ -27,10 +27,31 @@ import {
  *    grows until nobody can say who is on it.
  */
 
-/** ACTIVE and PAST_DUE both occupy the one-live-subscription slot. */
+/**
+ * The three statuses that occupy the one-live-subscription slot.
+ *
+ * PENDING_PAYMENT is in here and confers nothing, which looks like a
+ * contradiction and is not: it holds the slot so that somebody with an
+ * unfinished enrolment cannot start a second one and end up with two bills.
+ * Kept in step with the partial unique index in `prisma/sql/subscriptions.sql`
+ * — a status that is live for one and not the other makes an enrolment
+ * unsavable.
+ */
 export const LIVE_SUBSCRIPTION_STATUSES: readonly SubscriptionStatus[] = [
+  SubscriptionStatus.PENDING_PAYMENT,
   SubscriptionStatus.ACTIVE,
   SubscriptionStatus.PAST_DUE,
+];
+
+/**
+ * The statuses that actually confer benefits. Exactly one.
+ *
+ * Named so the claim is greppable rather than implied by a `where` clause
+ * three modules away. `getActiveSubscription` in the pricing engine is the
+ * enforcement; this is the statement.
+ */
+export const BENEFIT_CONFERRING_STATUSES: readonly SubscriptionStatus[] = [
+  SubscriptionStatus.ACTIVE,
 ];
 
 export class PlanNotLaunchedError extends Error {
@@ -80,29 +101,13 @@ export class NotSubscribedError extends Error {
 /**
  * One month on, clamped to the length of the target month.
  *
- * A subscription started on 31 January renews on 28 February, not on 3 March.
- * Adding 30 days instead would drift the billing date earlier every month,
- * which is the kind of thing nobody notices until a customer is charged twice
- * in one calendar month.
+ * Re-exported from `billing-policy.ts`, where it now lives, so that nothing
+ * which already imported it from here had to change. It moved because the
+ * billing rules need it and they must not import this module: `enrollment.ts`
+ * reaches for `prisma`, and a pure rule module that pulls in the database
+ * client cannot be read from a client component.
  */
-export function addOneMonth(from: Date): Date {
-  const day = from.getUTCDate();
-  const year = from.getUTCFullYear();
-  const month = from.getUTCMonth();
-  const lastDayOfTargetMonth = new Date(Date.UTC(year, month + 2, 0)).getUTCDate();
-
-  return new Date(
-    Date.UTC(
-      year,
-      month + 1,
-      Math.min(day, lastDayOfTargetMonth),
-      from.getUTCHours(),
-      from.getUTCMinutes(),
-      from.getUTCSeconds(),
-      from.getUTCMilliseconds(),
-    ),
-  );
-}
+export { addOneMonth } from '@/lib/subscriptions/billing-policy';
 
 /**
  * The subscription occupying this account's one live slot, if any.
@@ -131,20 +136,47 @@ export interface EnrollInput {
   now?: Date;
 }
 
+export class PlanIsFreeError extends Error {
+  constructor(planName: string) {
+    super(
+      `${planName} is priced at nothing, so there is no bill to raise. Set a ` +
+        'monthly price, or grant it as a COMPED subscription — a ₱0 invoice is ' +
+        'not an invoice.',
+    );
+    this.name = 'PlanIsFreeError';
+  }
+}
+
 /**
  * Puts an account on a plan.
  *
- * PAID is refused while no payment provider is configured — see
- * `payment.ts` for why a stub is worse than a refusal.
+ * ### The first period is behind the first payment
+ *
+ * A PAID enrolment lands in `PENDING_PAYMENT` with `renewsAt` set to the
+ * moment the first bill is due — NOT a month out. That is the whole of this
+ * change and it is worth being blunt about why.
+ *
+ * The previous version created the row `ACTIVE` with `renewsAt` a month ahead,
+ * which was harmless only because PAID enrolment was refused at the door for
+ * want of a gateway. The day a rail landed, that line would have handed a
+ * month of free deliveries to anybody who tapped Subscribe and then never
+ * paid. It is the same mistake `OrderStatus.PENDING_PAYMENT` exists to
+ * prevent for food: a prepaid thing is not a thing until the money arrives.
+ *
+ * A GRANT still starts ACTIVE immediately with a month on the clock. There is
+ * nothing to collect, so there is nothing to wait for.
  */
 export async function enrollInPlan(input: EnrollInput) {
   const now = input.now ?? new Date();
 
-  if (input.origin === SubscriptionOrigin.PAID && !isPaidEnrollmentAvailable()) {
+  const isGrant = input.origin !== SubscriptionOrigin.PAID;
+
+  // Still refused when there is nowhere to send the money — the check moved
+  // to the new rail rather than disappearing. Selling a plan and then being
+  // unable to say how to pay for it is worse than not offering it.
+  if (!isGrant && !isPaidEnrollmentAvailable()) {
     throw new NoSubscriptionPaymentRailError();
   }
-
-  const isGrant = input.origin !== SubscriptionOrigin.PAID;
   if (isGrant && (!input.grantedByUserId || !input.grantNote?.trim())) {
     throw new GrantNeedsAttributionError();
   }
@@ -163,22 +195,35 @@ export async function enrollInPlan(input: EnrollInput) {
     throw new PlanNotLaunchedError(plan.name);
   }
 
+  // A ₱0 plan cannot be billed, and an invoice for nothing would fail the
+  // amount guard inside a cron rather than here where somebody can read it.
+  if (!isGrant && plan.monthlyPriceCentavos <= 0) {
+    throw new PlanIsFreeError(plan.name);
+  }
+
   const existing = await liveSubscription(input.userId);
   if (existing) {
     throw new AlreadySubscribedError();
   }
+
+  // A grant starts now and runs a month. A paid enrolment starts when the
+  // money arrives, so its term is the payment deadline and `settleInvoice`
+  // moves it — see `nextRenewsAt`.
+  const firstPeriod = firstPeriodFor(now, addOneMonth);
 
   try {
     return await prisma.userSubscription.create({
       data: {
         userId: input.userId,
         planId: plan.id,
-        status: SubscriptionStatus.ACTIVE,
+        status: isGrant
+          ? SubscriptionStatus.ACTIVE
+          : SubscriptionStatus.PENDING_PAYMENT,
         origin: input.origin,
         grantedByUserId: isGrant ? input.grantedByUserId : null,
         grantNote: isGrant ? input.grantNote?.trim() : null,
         startedAt: now,
-        renewsAt: addOneMonth(now),
+        renewsAt: isGrant ? addOneMonth(now) : firstPeriod.dueAt,
       },
       include: { plan: { include: { benefits: true } } },
     });
@@ -198,11 +243,22 @@ export async function enrollInPlan(input: EnrollInput) {
 /**
  * Ends a subscription now.
  *
- * Now, not at the end of the period: every subscription that exists today is a
- * grant, so there is nothing paid-for to run down. When a gateway lands, a paid
- * cancellation should keep its benefits until `renewsAt` — which means setting
- * `endedAt` to `renewsAt` here and relaxing the `endedAt: null` filter in
- * `getActiveSubscription`. Both are named so the change is one search away.
+ * Now, not at the end of the period. That was uncontroversial when every
+ * subscription was a grant with nothing paid-for to run down; with a paid rail
+ * it is a choice, and it is still this one — a customer who taps "end the
+ * plan" and is told benefits stop immediately has been told the truth, which
+ * is worth more than the fraction of a month they lose. When a gateway lands
+ * and cancellation is expected to run to the boundary, this is where it
+ * changes: set `endedAt` to `renewsAt` and relax the `endedAt: null` filter in
+ * `getActiveSubscription`.
+ *
+ * **It also cancels any unpaid bill**, in the same transaction. Without that,
+ * cancelling leaves a collectable invoice behind: the customer keeps being
+ * asked for a month they no longer have, and confirming a late transfer would
+ * flip the row back to ACTIVE — the same resurrection the sweep voids invoices
+ * to prevent when a term expires. A CANCELLED row is not in
+ * `LIVE_SUBSCRIPTION_STATUSES`, so the sweep never revisits it and this is the
+ * only place that can.
  */
 export async function cancelSubscription(input: {
   userId: string;
@@ -220,15 +276,42 @@ export async function cancelSubscription(input: {
     throw new NotSubscribedError();
   }
 
-  return db.userSubscription.update({
-    where: { id: existing.id },
-    data: {
-      status: SubscriptionStatus.CANCELLED,
-      cancelledAt: now,
-      endedAt: now,
-      grantNote: input.reason?.trim() ? input.reason.trim() : existing.grantNote,
-    },
-  });
+  const reason = input.reason?.trim();
+
+  const run = async (tx: PrismaTransactionClient) => {
+    const cancelled = await tx.userSubscription.update({
+      where: { id: existing.id },
+      data: {
+        status: SubscriptionStatus.CANCELLED,
+        cancelledAt: now,
+        endedAt: now,
+        grantNote: reason ? reason : existing.grantNote,
+      },
+    });
+
+    const outstanding = await tx.subscriptionInvoice.findMany({
+      where: { subscriptionId: existing.id, settledAt: null, voidedAt: null },
+      select: { id: true },
+    });
+    for (const invoice of outstanding) {
+      await voidInvoice(
+        {
+          invoiceId: invoice.id,
+          reason: `The plan was cancelled before this was paid${
+            reason ? `: ${reason}` : ''
+          }`,
+          now,
+        },
+        tx,
+      );
+    }
+
+    return cancelled;
+  };
+
+  // An outer transaction wins: a caller that already has one is cancelling as
+  // part of something bigger, and nesting would commit half of it.
+  return input.client ? run(input.client) : prisma.$transaction(run);
 }
 
 export interface BenefitUsageLine {

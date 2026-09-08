@@ -153,6 +153,58 @@ export const KIND_POLICY: Readonly<Record<NotificationKind, KindPolicy>> = {
     urgency: NotificationUrgency.INFORMATIONAL,
     channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
   },
+  /**
+   * The bill. SMS as well as push, and it is the only money-in notification
+   * that gets one.
+   *
+   * The justification is that this message is the ONLY thing standing between
+   * a subscriber and losing their benefits, it arrives a week ahead so it is
+   * actionable, and it carries everything needed to pay from inside a transfer
+   * app — so a customer with notifications off and the app uninstalled can
+   * still keep their plan. A push nobody sees costs us a subscription; the
+   * text costs a few centavos.
+   */
+  [NotificationKind.SUBSCRIPTION_INVOICE_DUE]: {
+    urgency: NotificationUrgency.INFORMATIONAL,
+    channels: [
+      NotificationChannel.IN_APP,
+      NotificationChannel.PUSH,
+      NotificationChannel.SMS,
+    ],
+  },
+  /**
+   * The lapse. No SMS: at this point the benefits have already stopped, so the
+   * message is informational rather than actionable, and a text about money
+   * owed reads as a debt collection letter for a ₱99 optional extra.
+   */
+  [NotificationKind.SUBSCRIPTION_PAST_DUE]: {
+    urgency: NotificationUrgency.INFORMATIONAL,
+    channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
+  },
+  /**
+   * The confirmation. Push, because somebody is waiting for it — they sent
+   * money to a stranger's account number and nothing has acknowledged it yet.
+   * No SMS: the payment is done, so there is nothing left to act on, and the
+   * one text a subscriber gets per month should be the bill.
+   */
+  [NotificationKind.SUBSCRIPTION_PAYMENT_CONFIRMED]: {
+    urgency: NotificationUrgency.INFORMATIONAL,
+    channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
+  },
+  /**
+   * The refusal. Actionable — the bill is still open and a corrected reference
+   * fixes it — so it gets the same three channels as the bill itself. A
+   * refusal nobody reads is a subscriber who believes they have paid, right up
+   * until their benefits stop.
+   */
+  [NotificationKind.SUBSCRIPTION_PAYMENT_REFUSED]: {
+    urgency: NotificationUrgency.INFORMATIONAL,
+    channels: [
+      NotificationChannel.IN_APP,
+      NotificationChannel.PUSH,
+      NotificationChannel.SMS,
+    ],
+  },
 
   /**
    * Something is failing that was not failing before.
