@@ -39,6 +39,40 @@ export interface OrderMoney {
 }
 
 /**
+ * Every way the customer paid less than the gross, which TARA absorbed.
+ *
+ * This sum used to live inline in `accrueOrderSettlement`, and it was the only
+ * copy — which was fine until a shop's own screen needed to tell it what the
+ * platform had covered on an order. A second copy of this expression is a
+ * screen that can disagree with what settlement actually paid, and the
+ * disagreement would surface as a shop being told a number that does not
+ * match its balance.
+ *
+ * Every one of these reduces what the CUSTOMER paid and none of them reduce
+ * the shop's subtotal or the rider's fee. Credits are in here for the same
+ * reason as the discounts: TARA granted them, so spending them is TARA's cost.
+ *
+ * A test reads the `Order` model and asserts every discount-shaped column is
+ * named here, because a fifth one added and forgotten would silently come out
+ * of a partner's pay.
+ */
+export interface OrderAbsorbed {
+  promoDiscountCentavos: number;
+  subscriptionDiscountCentavos: number;
+  loyaltyDiscountCentavos: number;
+  walletCreditAppliedCentavos: number;
+}
+
+export function platformAbsorbedCentavos(order: OrderAbsorbed): number {
+  return (
+    order.promoDiscountCentavos +
+    order.subscriptionDiscountCentavos +
+    order.loyaltyDiscountCentavos +
+    order.walletCreditAppliedCentavos
+  );
+}
+
+/**
  * The gross value of an order: what it is worth to everybody together, before
  * TARA gives any of it away.
  *

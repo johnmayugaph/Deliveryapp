@@ -5,6 +5,11 @@ import { loadMerchantHistory } from '@/lib/merchant/queue';
 import { summariseDetails } from '@/lib/orders/details';
 import { statusPresentation } from '@/lib/orders/status-presentation';
 import { formatCentavos } from '@/lib/money';
+import { orderBenefitView } from '@/lib/merchant/order-benefits';
+import {
+  AbsorbedTotalNote,
+  OrderBenefitNote,
+} from '@/components/merchant/OrderBenefitNote';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,6 +32,20 @@ export default async function MerchantHistoryPage({
     loadMerchantHistory(access.store.id),
     storeReviews(access.store.id),
   ]);
+
+  /* One view per order, computed once — the total under the list is the sum of
+     exactly the rows above it, rather than a second pass that could differ. */
+  const rows = history.map((entry) => ({
+    ...entry,
+    view: orderBenefitView(entry.order, entry.benefits),
+  }));
+  const absorbedCentavos = rows.reduce(
+    (sum, row) => sum + row.view.absorbedCentavos,
+    0,
+  );
+  const discountedCount = rows.filter(
+    (row) => row.view.absorbedCentavos > 0,
+  ).length;
 
   const ratings = (
     <div className="px-4 pt-4">
@@ -54,7 +73,7 @@ export default async function MerchantHistoryPage({
       {ratings}
       <h2 className="px-4 pb-1 pt-5 text-[13px] font-semibold">Finished orders</h2>
       <ul className="divide-y divide-black/5">
-        {history.map(({ order, service }) => {
+        {rows.map(({ order, service, view }) => {
           const { label, tone } = statusPresentation(order.status);
           return (
             <li key={order.id} className="bg-surface px-4 py-3">
@@ -85,10 +104,15 @@ export default async function MerchantHistoryPage({
               {order.cancellationReason ? (
                 <p className="mt-1 text-[11px] text-rose-700">{order.cancellationReason}</p>
               ) : null}
+              <OrderBenefitNote view={view} />
             </li>
           );
         })}
       </ul>
+      <AbsorbedTotalNote
+        absorbedCentavos={absorbedCentavos}
+        orderCount={discountedCount}
+      />
     </main>
   );
 }

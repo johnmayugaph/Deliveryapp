@@ -142,16 +142,15 @@ describe('a tier discount really does not reduce the shop payout', () => {
 
   it('feeds every discount, the loyalty one included, into that one input', () => {
     // The arithmetic above is only reached if `accrueOrderSettlement` actually
-    // passes the loyalty discount as the platform's cost. That wiring is a
-    // single expression and has no return value to assert on, so it is checked
-    // where it lives.
+    // passes the platform's whole cost. That wiring has no return value to
+    // assert on, so it is checked where it lives — but against the shared
+    // function's NAME rather than a copy of its body, so extracting or
+    // reordering the sum cannot break this test for nothing.
     const accrual = readFileSync(
       path.join(process.cwd(), 'src/lib/settlement/accrual.ts'),
       'utf8',
     );
-    expect(accrual).toMatch(
-      /discountedCentavos:[\s\S]{0,200}order\.loyaltyDiscountCentavos/,
-    );
+    expect(accrual).toMatch(/discountedCentavos: platformAbsorbedCentavos\(order\)/);
   });
 });
 

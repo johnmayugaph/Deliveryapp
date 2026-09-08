@@ -1,7 +1,12 @@
 import { SettlementEntryType, type Order } from '@prisma/client';
 import { prisma, type PrismaTransactionClient } from '@/lib/prisma';
 import { partnerEarningsCentavos } from '@/lib/fleet/offer-policy';
-import { collectorFor, splitOrderValue, type OrderSplit } from '@/lib/settlement/policy';
+import {
+  collectorFor,
+  platformAbsorbedCentavos,
+  splitOrderValue,
+  type OrderSplit,
+} from '@/lib/settlement/policy';
 import { recordSettlementEntry } from '@/lib/settlement/ledger';
 
 /**
@@ -100,11 +105,11 @@ export async function accrueOrderSettlement(
     // them. A loyalty tier's discount is the platform's cost exactly as a
     // plan's is: the shop still gets its subtotal and the rider still gets the
     // fee nobody was charged.
-    discountedCentavos:
-      order.promoDiscountCentavos +
-      order.subscriptionDiscountCentavos +
-      order.loyaltyDiscountCentavos +
-      order.walletCreditAppliedCentavos,
+    //
+    // Through the shared function rather than inline, because the shop's own
+    // History screen now reports this figure back to it — and a screen that
+    // computes it separately is a screen that can disagree with the balance.
+    discountedCentavos: platformAbsorbedCentavos(order),
   });
 
   let storeEntryWritten = false;

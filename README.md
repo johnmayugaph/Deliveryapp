@@ -160,6 +160,13 @@ Tabs a member's role cannot open are not shown. Payouts is the only screen
 that refuses outright — Menu, Staff and Settings admit a staff member and
 degrade to read-only, which is why they are still listed for one.
 
+On the **History** tab, a finished order that had a discount says so and says
+who paid for it — the benefit, the status that conferred it, and the amount,
+with one line under the list confirming the shop's own share was untouched. It
+describes the benefit rather than the customer on purpose: a tier is derived
+from recent points and is not stored on the order, so an old receipt cannot
+honestly name one where no benefit applied.
+
 The **Regulars** tab answers the two questions a shop has about TARA's loyalty
 statuses: how much of its business comes from customers who have earned one,
 and what those benefits cost the shop — which is nothing, because the shop is

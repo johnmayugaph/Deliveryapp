@@ -35,6 +35,7 @@ import {
 } from '@/lib/pricing/benefits';
 import { sourcedBenefitsFor } from '@/lib/pricing/checkout';
 import { formatCentavos } from '@/lib/money';
+import { platformAbsorbedCentavos } from '@/lib/settlement/policy';
 
 /**
  * Loyalty tier benefits.
@@ -1049,8 +1050,35 @@ describe('the seams each perk is read at', () => {
   });
 
   it('absorbs the tier discount against the platform share, like every other', () => {
-    const code = codeOnly('src/lib/settlement/accrual.ts');
-    expect(code).toMatch(/order\.loyaltyDiscountCentavos/);
+    /**
+     * This used to grep `accrual.ts` for `order.loyaltyDiscountCentavos`, and
+     * broke the moment that sum was extracted into a shared function — for no
+     * behavioural reason at all. Asked of the function instead: a tier
+     * discount is one of the things the platform absorbs, and it counts the
+     * same as a plan's.
+     */
+    const zero = {
+      promoDiscountCentavos: 0,
+      subscriptionDiscountCentavos: 0,
+      loyaltyDiscountCentavos: 0,
+      walletCreditAppliedCentavos: 0,
+    };
+    expect(platformAbsorbedCentavos({ ...zero, loyaltyDiscountCentavos: 4_000 })).toBe(
+      4_000,
+    );
+    // The same peso off, whichever source gave it.
+    expect(
+      platformAbsorbedCentavos({ ...zero, subscriptionDiscountCentavos: 4_000 }),
+    ).toBe(4_000);
+    // And they add rather than one shadowing the other.
+    expect(
+      platformAbsorbedCentavos({
+        ...zero,
+        loyaltyDiscountCentavos: 4_000,
+        promoDiscountCentavos: 1_500,
+        walletCreditAppliedCentavos: 500,
+      }),
+    ).toBe(6_000);
   });
 
   it('names it as the tier on the receipt, never as Plus', () => {

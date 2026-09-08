@@ -2,6 +2,7 @@ import { OrderStatus, type Order, type Service } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { allowedTransitions, isActorPermitted } from '@/lib/orders/state-machine';
 import { OrderActor } from '@prisma/client';
+import type { AppliedBenefitRow } from '@/lib/merchant/order-benefits';
 
 /**
  * The merchant order queue.
@@ -119,11 +120,25 @@ export async function loadMerchantQueue(storeId: string): Promise<MerchantQueue>
   };
 }
 
-/** Recently finished orders, for the history screen. */
+/**
+ * Recently finished orders, for the history screen.
+ *
+ * The applied-benefit rows come with them, plus the tier each one came from
+ * where that tier still exists. It is one query rather than one per row, and
+ * the join is what lets a finished order name the status that conferred a
+ * benefit — the customer's tier itself is derived live and is NOT what an old
+ * order should be described by.
+ */
 export async function loadMerchantHistory(
   storeId: string,
   options: { limit?: number } = {},
-): Promise<{ order: Order; service: Service }[]> {
+): Promise<
+  {
+    order: Order;
+    service: Service;
+    benefits: AppliedBenefitRow[];
+  }[]
+> {
   const rows = await prisma.order.findMany({
     where: {
       status: { notIn: [...QUEUE_STATUSES] },
@@ -131,9 +146,32 @@ export async function loadMerchantHistory(
     },
     orderBy: { createdAt: 'desc' },
     take: options.limit ?? 50,
-    include: { service: true },
+    include: {
+      service: true,
+      appliedBenefits: {
+        orderBy: { createdAt: 'asc' },
+        select: {
+          source: true,
+          displayLabel: true,
+          amountCentavos: true,
+          tierBenefit: { select: { tier: { select: { name: true } } } },
+        },
+      },
+    },
   });
-  return rows.map(({ service, ...order }) => ({ order: order as Order, service }));
+
+  return rows.map(({ service, appliedBenefits, ...order }) => ({
+    order: order as Order,
+    service,
+    benefits: appliedBenefits.map((row) => ({
+      source: row.source,
+      displayLabel: row.displayLabel,
+      amountCentavos: row.amountCentavos,
+      // Null once the tier is gone — its benefit rows cascade with it — and
+      // the label and the source still survive on the order itself.
+      tierName: row.tierBenefit?.tier.name ?? null,
+    })),
+  }));
 }
 
 /** Today's counts, for the header. */

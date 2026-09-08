@@ -1,6 +1,5 @@
 import { formatCentavos } from '@/lib/money';
 import {
-  MIN_ORDERS_FOR_A_SHARE,
   anyTierJumpsTheQueue,
   shareIsMeaningful,
 } from '@/lib/merchant/tier-view';

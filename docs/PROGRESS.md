@@ -4415,3 +4415,93 @@ customer, absent for the stranger in the same queue), every screen state, and
 the seven-tab/six-tab difference between an owner and a staff member.
 
 1953 tests pass; typecheck, lint and build clean.
+
+---
+
+## Phase 49 — What a finished order tells the shop that cooked it
+
+The Regulars tab claims a customer's status costs a shop nothing. This is the
+half that makes that claim checkable one order at a time — worth more than a
+green box, because a shop can pick the order it remembers and see that the
+discount on it came out of TARA's share.
+
+### What a past order knows, and what it must not claim
+
+A customer's tier is derived from points earned in a rolling window. It is not
+stored on the order. So for an order from three months ago there is no way to
+say what tier that customer held at the time, and using today's tier would be a
+fabrication about a receipt.
+
+What IS durable is `OrderAppliedBenefit`, which snapshots `displayLabel`,
+`amountCentavos` and `source` at placement, precisely so a receipt survives the
+benefit row being edited or deleted. So the honest statement is about the
+BENEFIT rather than the customer: a status benefit applied, it was called this,
+it took off this much — and it came from this tier, recoverable only while that
+tier still exists, because a tier's benefit rows cascade with it.
+
+That was verified rather than assumed: deleting the tier mid-script leaves the
+label, the source and the amount intact on the order and the tier simply
+unnamed. An order from a Tapat customer who ordered below the free-delivery
+minimum reports nothing at all, which is correct — nothing happened on it, and
+the aggregate on the other tab is where that question belongs.
+
+### One definition of what the platform absorbed
+
+The four-way discount sum lived inline in `accrueOrderSettlement` and was the
+only copy — fine until a shop's own screen needed to report the same figure
+back to it. A second copy is a screen that can disagree with a balance, and the
+disagreement surfaces as a shop being told a number that does not match what it
+was paid. It is `platformAbsorbedCentavos` now, in `settlement/policy.ts`, used
+by both.
+
+The compiler cannot catch a **fifth** discount column added to the schema and
+forgotten there, and forgetting it means the amount silently comes out of a
+partner's pay. So a test reads the `Order` model, pulls out every
+discount-shaped column, and asserts each one appears in the function.
+
+Two existing tests broke on the extraction, both because they grepped
+`accrual.ts` for the expression's text rather than asking what it computed.
+Re-anchored on the arithmetic — a refactor with no behavioural change should
+not break a test.
+
+### What the browser corrected
+
+An order whose only discount was a promo code read: *"Customer paid ₱100.00
+less — TARA covered it. **The rest** was a promo code or credits."* There was
+no rest; that was all of it, and a shop would reasonably go looking for the
+missing part. Two wordings now, chosen on whether any benefit line is listed
+above it.
+
+The flag behind that sentence matters more than the wording: a promo code and
+spent credits live on the order's own columns, not as `OrderAppliedBenefit`
+rows, so without it the itemised lines would not add up to the headline figure.
+
+### A correction to the previous phase
+
+Phase 48 said "typecheck, lint and build clean". The build was **not** clean:
+`TierStandingPanel.tsx` imported `MIN_ORDERS_FOR_A_SHARE` and referenced it
+only in a comment, and `next build` fails on an unused import. `npm run lint`
+reported it correctly — the output was inspected with `tail -2`, which showed
+only the trailing info footer and hid the error above it. Fixed here, and the
+four gates are checked by exit code from now on rather than by reading the tail
+of their output.
+
+### Verified in four places
+
+**Eighteen new unit tests** (1971 total), the sharpest being the negatives: no
+tier named where none is provable, nothing claimed for a regular whose order
+earned no benefit, no tier invented for a subscription benefit, and no
+shortfall flagged for a credit-back line that takes nothing off the bill.
+
+**Five mutations, all killed**: credits dropped from the absorbed sum, every
+order marked as having a status benefit, the unaccounted-for difference no
+longer flagged, a subscription benefit described as a status, and the promise
+hedged with "usually".
+
+**Eighteen live-database checks** across four orders — ordinary, tier-only,
+promo-only, and both at once — then the tier deleted to prove the receipt
+survives it.
+
+**A browser** on that data, which is where the "the rest" wording was caught.
+
+1971 tests pass; lint, typecheck, tests and build all exit zero.
