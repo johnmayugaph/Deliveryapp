@@ -114,7 +114,12 @@ export default async function OrderDetailPage({
     { label: 'Delivery fee', centavos: order.deliveryFeeCentavos, sign: 1 },
     { label: 'Service fee', centavos: order.serviceFeeCentavos, sign: 1 },
     { label: 'Small order fee', centavos: order.smallOrderFeeCentavos, sign: 1 },
-    { label: 'Surge', centavos: order.surgeCentavos, sign: 1 },
+    {
+      // The band's own name, so a receipt read next month still says WHY.
+      label: order.surgeLabel ?? 'Busy at the time',
+      centavos: order.surgeCentavos,
+      sign: 1,
+    },
     { label: 'Tip', centavos: order.tipCentavos, sign: 1 },
     { label: 'Promo', centavos: order.promoDiscountCentavos, sign: -1 },
     { label: 'Plus benefits', centavos: order.subscriptionDiscountCentavos, sign: -1 },

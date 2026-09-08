@@ -73,7 +73,7 @@ export default async function AdminOrderPage({
     ['Delivery fee', order.deliveryFeeCentavos],
     ['Service fee', order.serviceFeeCentavos],
     ['Small-order fee', order.smallOrderFeeCentavos],
-    ['Surge', order.surgeCentavos],
+    [order.surgeLabel ? `Surge (${order.surgeLabel})` : 'Surge', order.surgeCentavos],
     ['Tip', order.tipCentavos],
   ];
   const discounts: [string, number][] = [

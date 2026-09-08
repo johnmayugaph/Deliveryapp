@@ -352,6 +352,8 @@ model Service {
   faqCategories    FaqCategory[]
   fleetApprovals   FleetPartnerServiceVerification[]
   deliveryFeeRules DeliveryFeeRule[]
+  surgeBands       SurgeBand[]
+  surgeSnapshots   SurgeSnapshot[]
   interest         ServiceInterest[]
 
   @@index([isActive, sortOrder])
@@ -374,6 +376,8 @@ model City {
   stores           Store[]
   deliveryFeeRules DeliveryFeeRule[]
   serviceInterest  ServiceInterest[]
+  surgeBands       SurgeBand[]
+  surgeSnapshots   SurgeSnapshot[]
 
   @@index([isActive, name])
 }
@@ -832,6 +836,104 @@ model MenuItemImage {
 /// this table and contains no numbers of its own. A city with no rule for a
 /// service simply cannot be quoted, which is the correct failure — better than
 /// silently applying a Manila rate in Cebu.
+/// One step of a surge ladder: "at this much unmet demand, add this much".
+///
+/// Keyed exactly like `DeliveryFeeRule` — service plus an optional city, where
+/// a city-specific set beats the fallback — because a Friday night in Manila
+/// and a Tuesday in a small city are not the same market and should not share
+/// a number.
+///
+/// **Steps rather than a multiplier.** A continuous multiplier moves the fee on
+/// every page refresh: a customer sees ₱43.17, then ₱44.02, and concludes the
+/// price is being made up. A step is explainable to both sides of the market —
+/// "when it is busy, riders get ₱20 more" — and it holds still long enough to
+/// be quoted.
+///
+/// **There are no rows by default, and that means surge is off.** The same
+/// discipline as a commission of zero: a default ladder would have started
+/// charging customers more the moment this shipped.
+model SurgeBand {
+  id String @id @default(cuid())
+
+  serviceType ServiceKey
+  service     Service    @relation(fields: [serviceType], references: [key])
+
+  /// Null means "every city where the service is live" — a fallback ladder.
+  /// A city's own ladder always wins, and wins ENTIRELY: the two are never
+  /// merged, because half of one ladder and half of another is a ladder nobody
+  /// designed.
+  cityId String?
+  city   City?   @relation(fields: [cityId], references: [id])
+
+  /// Orders waiting for a rider, per rider available, at or above which this
+  /// step applies. 1.5 means "three orders waiting for every two free riders".
+  minOrdersPerRider Float
+
+  /// Added to the delivery fee, and paid ENTIRELY to the rider. Capped in
+  /// `prisma/sql/surge.sql` — a surge larger than most orders' whole fee is a
+  /// typo, and a typo here overcharges a customer.
+  surgeCentavos Int
+
+  /// Shown to the customer and the rider: "Busy", "Very busy". The reason
+  /// attached to the money, because a fee with no name reads as a mistake.
+  label String
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// One step per threshold per service per city.
+  @@unique([serviceType, cityId, minOrdersPerRider])
+  @@index([serviceType, isActive])
+}
+
+/// What the market looked like when surge was last measured.
+///
+/// Surge is computed by the maintenance cron and READ from here by quotes,
+/// rather than measured during a quote. Three reasons, all of them about not
+/// lying to somebody:
+///
+///   1. **A quote and the placement that follows it agree.** Checkout re-quotes
+///      before placing, so a live measurement could show ₱39 and charge ₱59
+///      seconds later. Reading a snapshot means the figure holds still.
+///   2. **There is no client input to tamper with.** The alternative — trusting
+///      a quoted surge posted back by the browser — lets anybody send zero.
+///   3. **Every charge can be explained afterwards.** The inputs are on the
+///      row: at 19:32, Manila had 7 orders waiting and 3 riders free, so the
+///      ladder said Busy and ₱20.
+///
+/// Append-only in spirit and in the guard: a history of what the market did is
+/// worth having when a customer asks why their fee was higher last Friday.
+model SurgeSnapshot {
+  id String @id @default(cuid())
+
+  serviceType ServiceKey
+  service     Service    @relation(fields: [serviceType], references: [key])
+
+  cityId String
+  city   City   @relation(fields: [cityId], references: [id])
+
+  /// Orders in the dispatch queue with nobody assigned.
+  ordersWaiting   Int
+  /// Riders online, approved for this service, not suspended, and not already
+  /// carrying an order.
+  ridersAvailable Int
+  /// `ordersWaiting / ridersAvailable`, or the orders count when there are no
+  /// riders at all — see `ordersPerRider()`.
+  ratio           Float
+
+  /// The step that applied, and what it added. Null label means no step
+  /// matched and no surge was charged.
+  surgeCentavos Int     @default(0)
+  bandLabel     String?
+
+  createdAt DateTime @default(now())
+
+  /// Read by every quote: the newest row for this service and city.
+  @@index([serviceType, cityId, createdAt(sort: Desc)])
+}
+
 model DeliveryFeeRule {
   id String @id @default(cuid())
 
@@ -1045,22 +1147,31 @@ model Order {
   addresses OrderAddress[]
 
   // --- fee breakdown, all in CENTAVOS (integer). Never store money as float.
-  subtotalCentavos             Int    @default(0)
-  deliveryFeeCentavos          Int    @default(0)
-  serviceFeeCentavos           Int    @default(0)
-  smallOrderFeeCentavos        Int    @default(0)
-  surgeCentavos                Int    @default(0)
-  tipCentavos                  Int    @default(0)
+  subtotalCentavos             Int     @default(0)
+  deliveryFeeCentavos          Int     @default(0)
+  serviceFeeCentavos           Int     @default(0)
+  smallOrderFeeCentavos        Int     @default(0)
+  surgeCentavos                Int     @default(0)
+  /// The name of the surge band that produced `surgeCentavos` — "Busy", "Very
+  /// busy" — copied onto the order at placement rather than looked up later.
+  ///
+  /// Because a receipt has to stay readable after the bands are edited or
+  /// deleted, and after the snapshot it was priced from has been pruned. A
+  /// receipt that reads "Surge ₱20" with no reason is exactly the unexplained
+  /// fee the labels exist to prevent, and the only moment the reason is
+  /// certainly available is the moment the charge is made.
+  surgeLabel                   String?
+  tipCentavos                  Int     @default(0)
   /// Promo/voucher discount, stored positive and subtracted.
-  promoDiscountCentavos        Int    @default(0)
+  promoDiscountCentavos        Int     @default(0)
   /// Discount attributable to an active subscription benefit, kept separate so
   /// we can measure what the tier actually costs us.
-  subscriptionDiscountCentavos Int    @default(0)
+  subscriptionDiscountCentavos Int     @default(0)
   /// Credits spent on this order. Mirrors the ORDER_PAYMENT ledger entry.
-  walletCreditAppliedCentavos  Int    @default(0)
+  walletCreditAppliedCentavos  Int     @default(0)
   /// What the customer owes after everything above.
-  totalCentavos                Int    @default(0)
-  currency                     String @default("PHP")
+  totalCentavos                Int     @default(0)
+  currency                     String  @default("PHP")
 
   paymentMethod PaymentMethod
   paymentStatus PaymentStatus @default(PENDING)
@@ -2172,6 +2283,16 @@ enum AdminAction {
   /// the per-service decision because it is not a judgement about documents —
   /// it stops everything at once, and it is reversible.
   FLEET_SUSPENSION_CHANGED
+  /// A surge step was created. Audited because from this moment customers in
+  /// that city pay more when the market tightens, and the question a complaint
+  /// raises is who decided that and when.
+  SURGE_BAND_CREATED
+  /// A surge step's threshold, amount or name was changed.
+  SURGE_BAND_CHANGED
+  /// A surge step was switched off or back on. Kept distinct from a change
+  /// because "surge was on at 6pm" is the fact a dispute turns on, and it
+  /// should be answerable without reading a diff of amounts.
+  SURGE_BAND_ACTIVATION_CHANGED
 }
 
 /// One privileged action, and why.

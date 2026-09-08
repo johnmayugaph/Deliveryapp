@@ -17,6 +17,8 @@ import { isPrepaid } from '@/lib/payments/policy';
 import { getLifecycle } from '@/lib/orders/transitions';
 import { commitBenefitUsage, quoteOrderPrice, type PriceQuote } from '@/lib/pricing/checkout';
 import { quoteDeliveryFee, type DeliveryQuote } from '@/lib/pricing/delivery-fee';
+import { currentSurge } from '@/lib/pricing/surge';
+import type { SurgeCharge } from '@/lib/pricing/surge-policy';
 import { spendOnOrder } from '@/lib/wallet/ledger';
 import { bumpAddressUsage } from '@/lib/addresses/usage';
 import { generateOrderNumber } from '@/lib/reference-numbers';
@@ -64,6 +66,31 @@ export class AddressNotUsableError extends Error {
   }
 }
 
+/**
+ * The market got busier between rendering the price and placing the order.
+ *
+ * The alternative was charging the higher figure, which is the one thing this
+ * whole feature is arranged to prevent: a customer reads ₱49, taps once, and
+ * is billed ₱69. So placement refuses, the screen re-quotes, and the customer
+ * agrees to the new number or does not. Never charging more than was shown is
+ * worth an occasional retry.
+ *
+ * Only fires upward. A surge that FELL between render and placement charges
+ * the lower amount without comment.
+ */
+export class SurgeChangedError extends Error {
+  constructor(
+    readonly shownCentavos: number,
+    readonly nowCentavos: number,
+  ) {
+    super(
+      'It got busier while you were ordering, so the fee went up. ' +
+        'Check the new total and place the order again.',
+    );
+    this.name = 'SurgeChangedError';
+  }
+}
+
 export class InsufficientCreditsForPaymentError extends Error {
   constructor(readonly shortfallCentavos: number) {
     super(
@@ -100,6 +127,19 @@ export interface CheckoutInput {
   tipCentavos?: number;
   includeCutlery?: boolean;
   merchantNotes?: string;
+  /**
+   * The surge the customer was SHOWN, as a ceiling on what placement may
+   * charge. Set by the checkout screen from the quote it rendered.
+   *
+   * This is a client-supplied number and is treated accordingly: it is never
+   * used as a price, only compared against the surge placement independently
+   * looked up. So the only thing a tampered value can do is make placement
+   * REFUSE — sending a lower figure than the real one does not buy a cheaper
+   * order, it buys an error. Absent means "charge whatever is current", which
+   * is right for a caller with no screen (a script, a test) and wrong for a
+   * customer, which is why the form always sends it.
+   */
+  acceptedSurgeCentavos?: number;
 }
 
 export interface CheckoutQuote {
@@ -109,6 +149,8 @@ export interface CheckoutQuote {
   items: FoodItemSnapshot[];
   merchantPreparationMinutes: number;
   delivery: DeliveryQuote;
+  /** What the market added, and why — for the line on the customer's bill. */
+  surge: SurgeCharge;
   price: PriceQuote;
   /** Set when `paymentMethod` is WALLET_CREDIT but the balance falls short. */
   creditShortfallCentavos: number;
@@ -231,6 +273,16 @@ export async function quoteCheckout(input: CheckoutInput): Promise<CheckoutQuote
   // Tips are the one amount the customer does set, so bound it.
   const tipCentavos = Math.max(0, Math.min(Math.floor(input.tipCentavos ?? 0), 100_000));
 
+  // Surge is READ, never measured here. The market is counted once a minute by
+  // the cron and written to a snapshot; a quote looks up the newest one. That
+  // is what makes the number on the checkout screen and the number placement
+  // charges the same number — counting the queue per quote would let them
+  // disagree by a few seconds and show one price while charging another.
+  //
+  // Keyed on the STORE's city, matching the delivery fee rule the surge is
+  // added to: a rider is drawn to a job by where it starts.
+  const surge = await currentSurge(ServiceKey.FOOD, store.cityId);
+
   const price = await quoteOrderPrice({
     serviceType: ServiceKey.FOOD,
     customerId: input.customerId,
@@ -239,6 +291,7 @@ export async function quoteCheckout(input: CheckoutInput): Promise<CheckoutQuote
     baseDeliveryFeeCentavos: delivery.deliveryFeeCentavos,
     serviceFeeCentavos: delivery.serviceFeeCentavos,
     smallOrderFeeCentavos: delivery.smallOrderFeeCentavos,
+    surgeCentavos: surge.surgeCentavos,
     tipCentavos,
     // Credits cover as much as they can; the engine caps at what is owed.
     requestedWalletCreditCentavos: input.useCredits ? Number.MAX_SAFE_INTEGER : 0,
@@ -255,6 +308,7 @@ export async function quoteCheckout(input: CheckoutInput): Promise<CheckoutQuote
     items,
     merchantPreparationMinutes: store.preparationMinutes,
     delivery,
+    surge,
     price,
     creditShortfallCentavos,
   };
@@ -278,6 +332,19 @@ export async function placeOrder(input: CheckoutInput): Promise<{
   quote: CheckoutQuote;
 }> {
   const quote = await quoteCheckout(input);
+
+  // Before anything is written: never charge more surge than was displayed.
+  // The re-quote above is authoritative for the PRICE; this only decides
+  // whether to proceed at it.
+  if (
+    input.acceptedSurgeCentavos !== undefined &&
+    quote.surge.surgeCentavos > input.acceptedSurgeCentavos
+  ) {
+    throw new SurgeChangedError(
+      input.acceptedSurgeCentavos,
+      quote.surge.surgeCentavos,
+    );
+  }
 
   if (quote.creditShortfallCentavos > 0) {
     throw new InsufficientCreditsForPaymentError(quote.creditShortfallCentavos);
@@ -319,6 +386,8 @@ export async function placeOrder(input: CheckoutInput): Promise<{
           serviceFeeCentavos: quote.price.serviceFeeCentavos,
           smallOrderFeeCentavos: quote.price.smallOrderFeeCentavos,
           surgeCentavos: quote.price.surgeCentavos,
+          // The reason, alongside the money, for the life of the receipt.
+          surgeLabel: quote.surge.label,
           tipCentavos: quote.price.tipCentavos,
           promoDiscountCentavos: quote.price.promoDiscountCentavos,
           subscriptionDiscountCentavos: quote.price.subscriptionDiscountCentavos,

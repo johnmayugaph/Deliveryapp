@@ -7,9 +7,11 @@
  * Closes dispatch offers nobody answered, offers waiting orders to their best
  * candidates, expires orders that have waited too long in a state their
  * lifecycle declares a timeout for (refunding any credits they consumed), ends
- * subscriptions whose term has run out, tells anybody who asked for a vertical
- * that it is now live where they are, delivers whatever is waiting in the
- * notification outbox, and prunes spent login codes and dead sessions.
+ * subscriptions whose term has run out, measures how many orders are waiting
+ * per available rider and writes a surge snapshot for each configured market,
+ * tells anybody who asked for a vertical that it is now live where they are,
+ * delivers whatever is waiting in the notification outbox, and prunes spent
+ * login codes and dead sessions.
  *
  * Dispatch has no background worker, so how quickly a partner sees an offer is
  * bounded by how often this runs. Every minute or two is right.
@@ -26,6 +28,7 @@ async function main() {
     expiredOffers,
     dispatched,
     expired,
+    surge,
     subscriptions,
     launchAnnouncements,
     errorAlerts,
@@ -49,6 +52,13 @@ async function main() {
     } else {
       console.log(`${result.orderNumber}: offered to ${result.offersCreated} partner(s).`);
     }
+  }
+
+  if (surge.measured > 0) {
+    console.log(
+      `Surge: measured ${surge.measured} service/city market(s), ` +
+        `${surge.surging} above a band. See /admin/surge.`,
+    );
   }
 
   for (const result of subscriptions) {

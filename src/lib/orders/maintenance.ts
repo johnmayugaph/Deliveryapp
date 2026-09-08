@@ -11,6 +11,10 @@ import { ALL_STATUS_TIMEOUTS } from '@/lib/orders/transitions';
 import { grantCredit, refundToCredits } from '@/lib/wallet/ledger';
 import { recordCashCollected } from '@/lib/payments/manual';
 import { accrueOrderSettlement } from '@/lib/settlement/accrual';
+import {
+  recordSurgeSnapshots,
+  type SnapshotPassResult,
+} from '@/lib/pricing/surge';
 import { heldForCustomerCentavos } from '@/lib/payments/events';
 import { resolvePaymentRail } from '@/lib/payments/rails';
 import { pruneSessions, pruneVerifications } from '@/lib/auth/prune';
@@ -749,6 +753,7 @@ export async function runMaintenance(): Promise<{
   expiredOffers: number;
   dispatched: FanOutResult[];
   expired: ExpiredOrderResult[];
+  surge: SnapshotPassResult;
   subscriptions: RenewalOutcome[];
   launchAnnouncements: LaunchAnnouncementResult;
   errorAlerts: ErrorAlertResult;
@@ -768,6 +773,11 @@ export async function runMaintenance(): Promise<{
   const expiredOffers = await expireDispatchOffers();
   const dispatched = await fanOutDispatchOffers();
   const expired = await expireStaleOrders();
+  // AFTER the timeout sweep, deliberately. An order that has just been
+  // cancelled for sitting unclaimed is no longer competing for a rider, and
+  // counting it would charge the next customer surge for pressure that has
+  // already been released.
+  const surge = await recordSurgeSnapshots();
   // Subscriptions are swept after the order work: a lapsed subscription already
   // grants nothing (the pricing engine checks `renewsAt`), so this is
   // record-keeping and can wait behind anything a customer is watching.
@@ -808,6 +818,7 @@ export async function runMaintenance(): Promise<{
     expiredOffers,
     dispatched,
     expired,
+    surge,
     subscriptions,
     launchAnnouncements,
     errorAlerts,

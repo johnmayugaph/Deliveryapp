@@ -21,6 +21,11 @@ import {
   type AdminActionResult,
 } from '@/lib/admin/access';
 import { recordAdjustment } from '@/lib/wallet/ledger';
+import {
+  SURGE_CEILING_CENTAVOS,
+  firstDescendingStep,
+  ladderFor,
+} from '@/lib/pricing/surge-policy';
 import { centavosFromPesoInput, formatCentavos } from '@/lib/money';
 import { cancelSubscription } from '@/lib/subscriptions/enrollment';
 import {
@@ -1661,6 +1666,295 @@ export async function setStoreCommissionAction(
     return {
       ok: true,
       message: `${store.name} now pays ${(basisPoints / 100).toFixed(2)}% on food. Existing orders keep what they settled at.`,
+    };
+  });
+}
+
+// --- Surge steps -------------------------------------------------------------
+
+/**
+ * Parses and bounds the fields of a surge step.
+ *
+ * The bounds are the same ones `prisma/sql/surge.sql` enforces, checked here
+ * so an operator gets a sentence instead of a constraint-violation stack. The
+ * database remains the enforcement: this is the error message, not the rule.
+ */
+function readBandFields(formData: FormData):
+  | { ok: true; minOrdersPerRider: number; surgeCentavos: number; label: string }
+  | { ok: false; message: string } {
+  const threshold = Number(String(formData.get('minOrdersPerRider') ?? '').trim());
+  if (!Number.isFinite(threshold) || threshold <= 0) {
+    return {
+      ok: false,
+      message:
+        'Write the threshold as orders per available rider, like 1.5 — and above zero, ' +
+        'or the step would apply when nothing is happening.',
+    };
+  }
+  if (threshold > 100) {
+    return { ok: false, message: 'A threshold above 100 orders per rider will never be met.' };
+  }
+
+  const surgeCentavos = centavosFromPesoInput(String(formData.get('surgePesos') ?? ''));
+  if (surgeCentavos === null) {
+    return { ok: false, message: 'Write the amount in pesos, like 20 or 20.50.' };
+  }
+  if (surgeCentavos <= 0) {
+    return {
+      ok: false,
+      message: 'A step that adds nothing is not a step. Switch it off instead.',
+    };
+  }
+  if (surgeCentavos > SURGE_CEILING_CENTAVOS) {
+    return {
+      ok: false,
+      message:
+        `The most one step may add is ${formatCentavos(SURGE_CEILING_CENTAVOS)}. ` +
+        'A surge larger than a whole fare is usually a decimal point in the wrong place.',
+    };
+  }
+
+  const label = String(formData.get('label') ?? '').trim().slice(0, 40);
+  if (label.length === 0) {
+    return {
+      ok: false,
+      message:
+        'Give the step a name the customer will read next to the charge, like "Busy". ' +
+        'A fee with no name reads as a mistake.',
+    };
+  }
+
+  return { ok: true, minOrdersPerRider: threshold, surgeCentavos, label };
+}
+
+/** Warns when a ladder now reads backwards, without refusing the save. */
+async function ladderWarning(
+  serviceType: ServiceKey,
+  cityId: string | null,
+): Promise<string> {
+  const bands = await prisma.surgeBand.findMany({
+    where: { serviceType, isActive: true, OR: [{ cityId }, { cityId: null }] },
+  });
+  // Check the ladder as a quote would see it: for a fallback step that means
+  // any city, and there is no single city to test, so the fallback rows alone
+  // are the ladder.
+  const ladder = cityId === null
+    ? bands.filter((band) => band.cityId === null)
+    : ladderFor(bands, cityId);
+  const descending = firstDescendingStep(ladder);
+  if (!descending) return '';
+  return (
+    ` Note: "${descending.label}" adds less than the step below it, so it will ` +
+    'never be reached — pricing takes the largest amount the market has earned, ' +
+    'never a smaller one for a busier market.'
+  );
+}
+
+/**
+ * Adds a surge step.
+ *
+ * A city step and a national step at the same threshold are both allowed, and
+ * the city one wins ENTIRELY where it exists — the two ladders are never
+ * merged. Which is why this refuses a duplicate within one ladder rather than
+ * across both.
+ */
+export async function createSurgeBandAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const reason = normaliseReason(formData.get('reason'));
+
+    const serviceType = String(formData.get('serviceType') ?? '') as ServiceKey;
+    if (!Object.values(ServiceKey).includes(serviceType)) {
+      return { ok: false, message: 'Pick a service.' };
+    }
+    // Empty means the fallback ladder: every city where the service is live.
+    const rawCity = String(formData.get('cityId') ?? '').trim();
+    const cityId = rawCity === '' ? null : rawCity;
+
+    const fields = readBandFields(formData);
+    if (!fields.ok) return fields;
+
+    const existing = await prisma.surgeBand.findFirst({
+      where: { serviceType, cityId, minOrdersPerRider: fields.minOrdersPerRider },
+    });
+    if (existing) {
+      return {
+        ok: false,
+        message:
+          `There is already a step at ${fields.minOrdersPerRider} orders per rider ` +
+          `in this ladder ("${existing.label}"). Edit that one instead.`,
+      };
+    }
+
+    const band = await prisma.$transaction(async (tx) => {
+      const created = await tx.surgeBand.create({
+        data: {
+          serviceType,
+          cityId,
+          minOrdersPerRider: fields.minOrdersPerRider,
+          surgeCentavos: fields.surgeCentavos,
+          label: fields.label,
+        },
+      });
+      await recordAdminAction(
+        {
+          actorId: admin.id,
+          action: AdminAction.SURGE_BAND_CREATED,
+          subjectType: 'SurgeBand',
+          subjectId: created.id,
+          subjectLabel: `${serviceType} ${cityId ?? 'all cities'} @ ${fields.minOrdersPerRider}`,
+          reason,
+          detail: {
+            minOrdersPerRider: fields.minOrdersPerRider,
+            surgeCentavos: fields.surgeCentavos,
+            label: fields.label,
+          },
+        },
+        tx,
+      );
+      return created;
+    });
+
+    revalidatePath('/admin/surge');
+    return {
+      ok: true,
+      message:
+        `Added "${band.label}": ${formatCentavos(band.surgeCentavos)} at ` +
+        `${band.minOrdersPerRider} orders per available rider. It takes effect at the ` +
+        'next measurement, within a minute or two.' +
+        (await ladderWarning(serviceType, cityId)),
+    };
+  });
+}
+
+/** Edits a step's threshold, amount or name. */
+export async function updateSurgeBandAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const reason = normaliseReason(formData.get('reason'));
+
+    const bandId = String(formData.get('bandId') ?? '');
+    const band = await prisma.surgeBand.findUnique({ where: { id: bandId } });
+    if (!band) return { ok: false, message: 'No such surge step.' };
+
+    const fields = readBandFields(formData);
+    if (!fields.ok) return fields;
+
+    const clash = await prisma.surgeBand.findFirst({
+      where: {
+        serviceType: band.serviceType,
+        cityId: band.cityId,
+        minOrdersPerRider: fields.minOrdersPerRider,
+        id: { not: band.id },
+      },
+    });
+    if (clash) {
+      return {
+        ok: false,
+        message: `"${clash.label}" already sits at that threshold in this ladder.`,
+      };
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.surgeBand.update({
+        where: { id: band.id },
+        data: {
+          minOrdersPerRider: fields.minOrdersPerRider,
+          surgeCentavos: fields.surgeCentavos,
+          label: fields.label,
+        },
+      });
+      await recordAdminAction(
+        {
+          actorId: admin.id,
+          action: AdminAction.SURGE_BAND_CHANGED,
+          subjectType: 'SurgeBand',
+          subjectId: band.id,
+          subjectLabel: band.label,
+          reason,
+          detail: {
+            before: {
+              minOrdersPerRider: band.minOrdersPerRider,
+              surgeCentavos: band.surgeCentavos,
+              label: band.label,
+            },
+            after: {
+              minOrdersPerRider: fields.minOrdersPerRider,
+              surgeCentavos: fields.surgeCentavos,
+              label: fields.label,
+            },
+          },
+        },
+        tx,
+      );
+    });
+
+    revalidatePath('/admin/surge');
+    return {
+      ok: true,
+      message:
+        `Updated "${fields.label}". Orders already placed keep what they were ` +
+        'charged — this changes the next measurement onwards.' +
+        (await ladderWarning(band.serviceType, band.cityId)),
+    };
+  });
+}
+
+/**
+ * Switches a step on or off.
+ *
+ * Kept separate from editing, and audited separately, because "was surge on in
+ * Manila at 6pm?" is the question a complaint actually asks, and it should be
+ * answerable without reading a diff of amounts.
+ *
+ * Off is how surge is turned off: a step with no rows can never charge, and
+ * there is deliberately no way to configure a step that adds nothing.
+ */
+export async function setSurgeBandActiveAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const reason = normaliseReason(formData.get('reason'));
+
+    const bandId = String(formData.get('bandId') ?? '');
+    const isActive = String(formData.get('isActive') ?? '') === 'true';
+
+    const band = await prisma.surgeBand.findUnique({ where: { id: bandId } });
+    if (!band) return { ok: false, message: 'No such surge step.' };
+    if (band.isActive === isActive) {
+      return {
+        ok: false,
+        message: `"${band.label}" is already ${isActive ? 'on' : 'off'}.`,
+      };
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.surgeBand.update({ where: { id: band.id }, data: { isActive } });
+      await recordAdminAction(
+        {
+          actorId: admin.id,
+          action: AdminAction.SURGE_BAND_ACTIVATION_CHANGED,
+          subjectType: 'SurgeBand',
+          subjectId: band.id,
+          subjectLabel: band.label,
+          reason,
+          detail: { before: band.isActive, after: isActive },
+        },
+        tx,
+      );
+    });
+
+    revalidatePath('/admin/surge');
+    return {
+      ok: true,
+      message:
+        `"${band.label}" is now ${isActive ? 'on' : 'off'}. ` +
+        'The change reaches quotes at the next measurement.',
     };
   });
 }

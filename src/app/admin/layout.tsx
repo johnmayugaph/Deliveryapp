@@ -66,6 +66,9 @@ export default async function AdminLayout({
             <Link href="/admin/settlement" className="hover:text-brand-700">
               Settlement
             </Link>
+            <Link href="/admin/surge" className="hover:text-brand-700">
+              Surge
+            </Link>
             <Link href="/admin/support" className="hover:text-brand-700">
               Support
             </Link>

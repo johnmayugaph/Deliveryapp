@@ -84,6 +84,11 @@ export function CheckoutForm({
   const [isQuoting, setIsQuoting] = useState(false);
   const [placeError, setPlaceError] = useState<string | null>(null);
   const [isPlacing, startPlacing] = useTransition();
+  // Bumped when placement is refused because the market got busier. It is in
+  // the re-quote key, so the refusal is immediately followed by the screen
+  // showing the NEW total — a refusal that left the old price on screen would
+  // just be a button that stopped working.
+  const [requoteNonce, setRequoteNonce] = useState(0);
 
   const formInput: CheckoutFormInput | null =
     cart.storeId && dropoffAddressId
@@ -117,6 +122,7 @@ export function CheckoutForm({
     paymentMethod,
     useCredits,
     tipCentavos,
+    requoteNonce,
   });
 
   useEffect(() => {
@@ -173,12 +179,20 @@ export function CheckoutForm({
     setPlaceError(null);
 
     startPlacing(async () => {
-      const result = await placeOrderAction(formInput);
+      const result = await placeOrderAction({
+        ...formInput,
+        // The surge on the screen the customer is looking at, as a ceiling.
+        // Placement re-quotes and refuses rather than charging more than this.
+        acceptedSurgeCentavos: quote?.surge.surgeCentavos ?? 0,
+      });
       if (result.ok) {
         clear();
         router.push(`/orders/${result.orderId}?placed=1`);
       } else {
         setPlaceError(result.message);
+        if (result.code === 'SURGE_CHANGED') {
+          setRequoteNonce((nonce) => nonce + 1);
+        }
       }
     });
   }
@@ -432,6 +446,17 @@ export function CheckoutForm({
             {quote.price.smallOrderFeeCentavos > 0 ? (
               <Line label="Small order fee" centavos={quote.price.smallOrderFeeCentavos} />
             ) : null}
+            {quote.price.surgeCentavos > 0 ? (
+              // Its own line with the band's own name — "Busy", "Very busy" —
+              // rather than folded into the delivery fee. A fee that appears
+              // without a name reads as a mistake, and a customer comparing
+              // today's total against last week's needs to be able to see
+              // which line moved.
+              <Line
+                label={quote.surge.label ?? 'Busy right now'}
+                centavos={quote.price.surgeCentavos}
+              />
+            ) : null}
             {quote.price.tipCentavos > 0 ? (
               <Line label="Tip" centavos={quote.price.tipCentavos} />
             ) : null}
@@ -455,6 +480,14 @@ export function CheckoutForm({
               <dt>Total</dt>
               <dd className="tabular-nums">{formatCentavos(quote.price.totalCentavos)}</dd>
             </div>
+
+            {quote.price.surgeCentavos > 0 ? (
+              <p className="mt-1.5 text-[11px] text-ink-muted">
+                {quote.surge.label} — more orders than riders right now. The
+                extra {formatCentavos(quote.price.surgeCentavos)} goes to your
+                rider.
+              </p>
+            ) : null}
 
             {quote.price.creditBackCentavos > 0 ? (
               <p className="mt-1.5 text-[11px] text-emerald-700">

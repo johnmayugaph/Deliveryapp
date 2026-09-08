@@ -1245,20 +1245,184 @@ selected only the fee and the tip. Once surge became the rider's it would have
 been missing from those totals while appearing on the job list — two figures on
 one screen, disagreeing.
 
-### Nothing sets surge
+### What sets surge
 
-`quoteOrderPrice` accepts `surgeCentavos` and no caller passes it, so every
-order in the database has zero. This rule therefore governs orders that do not
-exist yet, and the change is retroactively invisible: no rider is owed a
-backfill.
+The rule this section once said was missing. Nothing about the paragraph above
+changed: surge still goes entirely to the rider, and the split still needed no
+edit. What follows is the decision about **when** and **how much**.
 
-What is missing is the pricing decision, not the plumbing — **when** surge
-applies and **how much**. That is a product and economics question (demand
-against available riders, weather, time of day, a cap so a customer is never
-surprised) and it wants a rule somebody can explain to both sides of the
-market. `DeliveryFeeRule` is where it would live; the rider's screens already
-break the figure down, so the day it is set a rider sees "₱39.00 fee + ₱25.00
-surge + ₱20.00 tip" without another change.
+## Surge pricing — a fee that has to be explainable
+
+Surge is the only number in this app that goes UP on a customer who did nothing
+except open the app at a busy moment. That makes it the number most likely to
+be experienced not as pricing but as the app inventing a figure, and every
+decision below follows from one requirement: a customer who asks *"why is it
+₱79 instead of ₱49?"* gets an answer, and gets the same answer twice.
+
+### Steps, not a multiplier
+
+A continuous 1.3× moves the fee on every page refresh. A customer sees ₱43.17,
+then ₱44.02, and concludes the price is being made up — which, from where they
+are standing, is indistinguishable from what is happening. A **step** is a flat
+peso amount with a name — "Busy, +₱20" — that holds still while the market
+wobbles underneath it.
+
+Steps live in `SurgeBand`: a service, an optional city, a threshold in orders
+per available rider, an amount, and a label the customer reads. The keying is
+`DeliveryFeeRule`'s, one layer up: a city's steps win **entirely** over the
+national fallback, never merged, because half of one ladder and half of another
+is a ladder nobody designed and a price no operator could predict from either
+screen they configured.
+
+### Off unless somebody turned it on
+
+**No `SurgeBand` rows means no surge.** Not a default multiplier of 1.0 — no
+mechanism at all. Surge is a policy decision about a particular market, and the
+code has no business having an opinion by default. Same posture as commission
+starting at zero.
+
+There is also deliberately no way to configure a step that adds ₱0: the console
+refuses it and so does `surge_band_step_sane`. That is what makes "off"
+unambiguous — surge is off where no step exists or every step is switched off,
+and never because a step quietly adds nothing.
+
+### Measured on a schedule, not per quote
+
+Counting the dispatch queue inside a quote means the checkout screen and the
+placement a few seconds later can disagree, and the customer is shown one price
+and charged another. So the maintenance sweep measures the market once a minute
+and writes a `SurgeSnapshot`; **quotes read the newest snapshot and never
+count anything themselves.**
+
+Three things fall out of that, and all three are the point:
+
+- The number on the screen and the number charged are the same number, because
+  `placeOrder` re-quotes through the same `quoteCheckout` that rendered it.
+- There is no client input to tamper with — the price comes from a row the
+  customer cannot reach.
+- Every charge stays explainable from its stored inputs. A complaint about a
+  fee at 6pm is answered from the snapshot rows, not from what the market
+  happens to look like when somebody gets round to reading the ticket.
+
+The ratio is orders in `AWAITING_RIDER_ASSIGNMENT` divided by riders who are
+online, approved for the service, not suspended and not already carrying a job.
+Two of those groupings are choices worth naming. An order's city is its
+**pickup** city — a rider is drawn to a job by where it starts, and the fee rule
+surge is added to is already keyed on the store's city. A rider's city is their
+**home** city, which is a compromise: live coordinates say where they are this
+minute, but a rider between jobs may be anywhere and a rider with no fix would
+vanish from the count entirely — and a count that omits available riders
+overstates the pressure and overcharges the customer.
+
+Zero riders is deliberately **not** treated as "no market, no surge". One rider
+with eight orders queued is at the ceiling; if that rider ending their shift
+took the surge to zero, the price would fall at the exact moment the wait got
+longest. So with no riders each waiting order counts as its own unit of
+pressure, which is continuous with the one-rider case. An empty market — no
+orders, no riders — is still zero, which is the honest reading of 3am.
+
+### Every uncertainty resolves to not charging
+
+No bands, no snapshot, a snapshot past the five-minute window, a snapshot from
+the future, a step capped to nothing: all of them are ₱0. The failure mode of
+this feature is "we missed a chance to pay riders more", never "we billed
+somebody for a market condition we could not confirm".
+
+Five minutes is four missed sweeps. Past that the reading describes a market
+that has moved, and a surge nobody can still observe is indistinguishable from
+an invented one.
+
+### Monotonic by construction
+
+Among the steps whose threshold a ratio has met, `selectBand` takes the
+**largest amount**, not the highest threshold. Those are the same answer for
+any ladder that climbs, which is every ladder anybody means to write. They
+differ only when one is mistyped — 1.5 → ₱30, 2.0 → ₱10 — and there the
+difference matters: highest-threshold-met would charge a busier market *less*,
+so a customer watching the queue grow would watch the price fall, and no screen
+could explain it.
+
+The cost is that a mistyped high step cannot be undercut by adding a lower one;
+it has to be corrected. `firstDescendingStep` exists so the console can point
+at the mistake, on the market table and again when the step is saved.
+
+### Never more than was shown
+
+A snapshot can roll over between rendering checkout and tapping the button. The
+alternative to handling that is charging the higher figure, which is the one
+thing this whole arrangement exists to prevent. So `CheckoutInput` carries
+`acceptedSurgeCentavos` — the surge the screen displayed — and placement
+refuses with `SurgeChangedError` if the fresh figure exceeds it. The screen
+re-quotes on that refusal, so the customer is looking at the new total before
+they try again.
+
+It is a client-supplied number and is treated as one: **never used as a price,
+only compared against the figure placement independently looked up.** The only
+thing a tampered value can do is cause a refusal — sending a lower figure than
+the real one buys an error, not a cheaper order. A surge that *fell* is charged
+at the lower amount without comment.
+
+### The charge and its reason travel together
+
+`Order.surgeLabel` is copied from the band at placement rather than looked up
+later, because a receipt has to stay readable after the bands are edited and
+after the snapshot it was priced from is gone. "Surge ₱20" with no reason is
+exactly the unexplained fee the labels exist to prevent, and the only moment
+the reason is certainly available is the moment the charge is made.
+
+Two CHECK constraints enforce the pairing — `order_surge_has_a_reason` and
+`surge_snapshot_surge_has_a_reason`, both spelling `(surge = 0) = (label IS
+NULL)`. Money with no name means something wrote a surge without going through
+the quote; a name over ₱0 means a screen saying "Busy" above nothing.
+
+### Capped in SQL
+
+One step may add at most ₱100 (`SURGE_CEILING_CENTAVOS`, mirrored by
+`surge_band_step_sane` and asserted equal by a test). Deliberately below the
+₱250 fee ceiling the seed ships: a surge larger than the whole fare is not a
+busy Friday, it is a decimal point in the wrong place — someone typing `1000`
+meaning ₱10. The constraint cannot know which, so it refuses the row and
+somebody reads the error. `capSurge` clamps again in the arithmetic, so a step
+saved before the ceiling was lowered cannot escape it.
+
+### One bug this found
+
+`currentSurge` originally bounded its query with `createdAt >= now - window` —
+fast, and wrong. An aged-out snapshot simply did not match, so the rule saw
+`null` and answered `NO_SNAPSHOT`: *"the market has not been measured yet"* for
+a market that had been measured all day until the cron died. The one failure the
+console exists to reveal, reported as its opposite — and it made the `STALE`
+branch dead code in the only path that reaches it.
+
+The bound bought nothing anyway. `@@index([serviceType, cityId, createdAt(sort:
+Desc)])` makes "newest row for this market" a single index seek at any table
+size. Found against the real database; the console now shows Manila charging,
+Quezon City **stale** and Makati **no snapshot** as three different states,
+which is the distinction an operator needs.
+
+### The console
+
+`/admin/surge` answers two questions that look like one. *How busy is it?* is
+measured live on load, because a screen may move — nobody is billed from it.
+*What is a customer being charged?* comes from the newest snapshot, the
+identical read a quote does.
+
+Showing them side by side is the point. When the live ratio has earned ₱40 and
+the charge column says ₱0, exactly two things can be true: the market moved in
+the last few seconds, or the sweep has stopped and surge has quietly switched
+itself off. The second is invisible from anywhere else in the app, precisely
+because every uncertainty here resolves to charging nothing — the right default,
+and a silent one. Hence the "last measured" stat and an alert when it is older
+than the window.
+
+The console lists cities with **no** ladder as well, which is wider than what
+the cron measures: the sweep skips pairs with no bands, since a snapshot for one
+would be a zero written every minute, but an operator deciding *where* to add a
+step needs to see exactly those markets. Adding, editing and switching a step
+each demand a reason and write their own `AdminAction`, and activation is
+audited separately from amounts because *"was surge on in Manila at 6pm?"* is
+the question a complaint actually asks and it should be answerable without
+reading a diff.
 
 ## 6. Subscription tier
 
@@ -3017,7 +3181,7 @@ sense as an undrained outbox, and says which command to run.
 
 ## Verification
 
-Database-free, in CI (`npm run verify`) — **1289 tests across 38 files**. The
+Database-free, in CI (`npm run verify`) — **1360 tests across 39 files**. The
 table below names the ones that carry a rule rather than a case; the rest cover
 a single feature each and are named for it.
 
@@ -3041,6 +3205,7 @@ a single feature each and are named for it.
 | `live-tracking.test.ts` | The four gates on a rider's position, the share throttle including a held fix, distance wording, and greps for the privacy boundary and the map's honesty |
 | `payments.test.ts` | The no-top-up rule per instrument and in the database, the prepaid hold across every lifecycle, event signs, the derived status including a short payment, and what the rider is told to collect |
 | `settlement.test.ts` | The order-value split proved exhaustive over every combination of fees, tips and commission; who holds the money per payment method; the cash round trip netting to zero; and the payout ceiling |
+| `surge-pricing.test.ts` | The step ladder proved monotonic across the whole ratio range on a mistyped ladder as well as a good one, the ceiling agreeing with the SQL guard, every uncertainty resolving to ₱0, a free-delivery benefit not reaching the rider's surge, and greps that the sweep measures after the timeout pass and the screen sends the figure it displayed |
 | `menu-options.test.ts` | Server-authoritative choice pricing, group bounds, satisfiability, and every tamper case |
 | `menu-photos.test.ts` | Magic-byte sniffing, dimension limits, and the bytes never entering a page payload |
 | `fleet-verification.test.ts` | Who may decide an application, per-service independence, and what the partner is told |

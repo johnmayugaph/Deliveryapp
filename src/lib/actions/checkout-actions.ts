@@ -30,6 +30,12 @@ export interface CheckoutFormInput {
   tipCentavos?: number;
   includeCutlery?: boolean;
   merchantNotes?: string;
+  /**
+   * The surge the screen displayed. A ceiling, never a price — see
+   * `CheckoutInput.acceptedSurgeCentavos`. Placement refuses if the market has
+   * got busier since, rather than billing more than was shown.
+   */
+  acceptedSurgeCentavos?: number;
 }
 
 export type QuoteResult =
@@ -49,7 +55,16 @@ export async function quoteCheckoutAction(input: CheckoutFormInput): Promise<Quo
 
 export type PlaceOrderResult =
   | { ok: true; orderId: string; orderNumber: string }
-  | { ok: false; message: string };
+  | {
+      ok: false;
+      message: string;
+      /**
+       * Set when the refusal was the market getting busier mid-checkout. The
+       * screen needs to tell that apart from every other failure, because the
+       * fix is to show the new price rather than to try the old one again.
+       */
+      code?: 'SURGE_CHANGED';
+    };
 
 export async function placeOrderAction(input: CheckoutFormInput): Promise<PlaceOrderResult> {
   try {
@@ -62,7 +77,11 @@ export async function placeOrderAction(input: CheckoutFormInput): Promise<PlaceO
 
     return { ok: true, orderId: order.id, orderNumber: order.orderNumber };
   } catch (error) {
-    return { ok: false, message: toUserMessage(error) };
+    const message = toUserMessage(error);
+    if (error instanceof Error && error.name === 'SurgeChangedError') {
+      return { ok: false, message, code: 'SURGE_CHANGED' };
+    }
+    return { ok: false, message };
   }
 }
 
@@ -139,6 +158,9 @@ function toUserMessage(error: unknown): string {
     'NotAuthenticatedError',
     'OnboardingIncompleteError',
     'NoDeliveryFeeRuleError',
+    // "It got busier while you were ordering" — written for the customer, and
+    // the message they need in order to know to look at the total again.
+    'SurgeChangedError',
     'IllegalTransitionError',
     'MissingTransitionReasonError',
     'ServiceDetailsNotImplementedError',

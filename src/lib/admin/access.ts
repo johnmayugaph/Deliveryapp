@@ -177,4 +177,7 @@ export const ADMIN_ACTION_LABEL: Readonly<Record<AdminAction, string>> = {
   [AdminAction.SETTLEMENT_REMITTANCE_RECORDED]: 'Cash handed in by a rider recorded',
   [AdminAction.SETTLEMENT_ADJUSTED]: 'Partner balance corrected',
   [AdminAction.STORE_COMMISSION_CHANGED]: 'Store commission rate changed',
+  [AdminAction.SURGE_BAND_CREATED]: 'Surge step added',
+  [AdminAction.SURGE_BAND_CHANGED]: 'Surge step edited',
+  [AdminAction.SURGE_BAND_ACTIVATION_CHANGED]: 'Surge step switched on or off',
 };

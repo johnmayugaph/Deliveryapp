@@ -2571,3 +2571,146 @@ Four in a real browser: ₱84.00 on the job screen with the breakdown beneath it
 and a plain job showing the figure with no breakdown at all.
 
 1289 tests pass; typecheck, lint and build clean.
+
+## Phase 35 — Surge pricing
+
+Phase 34 gave the surge to the rider and then admitted the honest gap: nothing
+set it. `quoteOrderPrice` took a `surgeCentavos` no caller passed, every order
+in the database held zero, and I declined to invent the rule because it is a
+product and economics question rather than a plumbing one.
+
+This is the rule.
+
+### The requirement that decided everything
+
+Surge is the only number in this app that goes UP on a customer who did nothing
+except open it at a busy moment. So the whole feature is arranged around one
+demand: **a customer who asks why it is ₱79 instead of ₱49 gets an answer, and
+gets the same answer twice.**
+
+Four choices follow.
+
+**Steps, not a multiplier.** A continuous 1.3× moves the fee on every refresh —
+₱43.17, then ₱44.02 — and a price that will not hold still reads as a price
+being made up. A step is a flat peso amount with a name: "Busy, +₱20".
+
+**Off unless somebody turned it on.** No `SurgeBand` rows means no mechanism at
+all, the same posture as commission starting at zero. And there is deliberately
+no way to configure a step that adds ₱0 — both the console and
+`surge_band_step_sane` refuse it — so "off" is unambiguous rather than
+something a ₱0 row could fake.
+
+**Measured on a schedule, read by quotes.** The maintenance sweep counts the
+market once a minute and writes a `SurgeSnapshot`; a quote reads the newest one
+and counts nothing itself. `placeOrder` re-quotes through the same
+`quoteCheckout` that rendered the screen, so the displayed price and the charged
+price are the same code path. There is nothing for a client to tamper with, and
+a complaint about a fee at 6pm is answered from the snapshot rows.
+
+**Every uncertainty resolves to not charging.** No bands, no snapshot, a reading
+older than five minutes, a snapshot from the future, a step capped to nothing —
+all ₱0. The failure mode is "we missed a chance to pay riders more", never "we
+billed somebody for a market condition we could not confirm".
+
+### Monotonic by construction
+
+Among the steps a ratio has met, selection takes the **largest amount**, not the
+highest threshold. Identical on any ladder that climbs; different only when one
+is mistyped — 1.5 → ₱30, 2.0 → ₱10 — and there highest-threshold-met would
+charge a busier market *less*. A customer watching the queue grow would watch
+the price fall, and no screen could explain that. `firstDescendingStep` exists
+so the console can point at the mistake instead.
+
+### Never more than was shown
+
+A snapshot can roll over between rendering checkout and tapping the button. The
+alternative to handling it is charging the higher figure, which is precisely
+what this feature exists to prevent — so placement carries the surge the screen
+displayed, refuses with `SurgeChangedError` if the fresh figure is higher, and
+the screen re-quotes so the new total is on it before the second tap.
+
+That accepted figure is client-supplied and treated as such: **compared, never
+used as a price.** A tampered value can only cause a refusal — a lower number
+buys an error, not a cheaper order. A surge that *fell* is charged lower without
+comment.
+
+### The charge and its reason travel together
+
+`Order.surgeLabel` is copied from the band at placement, because a receipt has
+to stay readable after the bands are edited and the snapshot is gone. Two CHECK
+constraints spell the pairing on the order and on the snapshot: money with no
+name means something wrote a surge without going through a quote, and a name
+over ₱0 means a screen saying "Busy" above nothing.
+
+### Zero riders is not zero surge
+
+One rider with eight orders queued is at the ceiling. If that rider ending their
+shift took the surge to zero, the price would fall at the exact moment the wait
+got longest. So with no riders each waiting order counts as its own unit of
+pressure — continuous with the one-rider case. An empty market is still zero,
+which is the honest reading of 3am.
+
+### A bug the real database found
+
+`currentSurge` bounded its lookup with `createdAt >= now - window`. Fast, and
+wrong: an aged-out snapshot did not match, so the rule saw `null` and answered
+`NO_SNAPSHOT` — *"the market has not been measured yet"* — for a market measured
+all day until the cron died. The one failure the console exists to reveal,
+reported as its opposite, and it made the `STALE` branch dead code in the only
+path reaching it. The bound bought nothing: the index makes "newest row for this
+market" a single seek at any size. The console now shows charging, **stale** and
+**no snapshot** as three different states.
+
+Two fixture bugs are worth recording for the same reason they cost time before:
+the live-database run built its waiting orders by copying a template's addresses
+and so filed the pressure in whichever city the template was in, not the store's;
+and the browser run navigated to a dish page by a guessed link, landed back on
+the store with an empty cart, and reported it as a missing surge line. Both were
+the check being wrong, not the code.
+
+### The console
+
+`/admin/surge` measures the market live for the screen and reads the snapshot for
+the charge, side by side. When the live ratio has earned ₱40 and the charge says
+₱0, exactly two things can be true — the market just moved, or the sweep has
+stopped — and the second is invisible everywhere else precisely because every
+uncertainty here resolves to charging nothing. Hence a "last measured" stat and
+an alert when it is past the window. Cities with no ladder are listed too, wider
+than what the cron measures, because those are the markets where a step gets
+added. Adding, editing and switching a step each demand a reason; activation is
+audited separately from amounts, because "was surge on in Manila at 6pm?" is the
+question a complaint asks.
+
+### Verified in three places
+
+**71 unit tests** (26 more than the ratio rule alone): the ladder monotonic
+across the whole range on a mistyped ladder as well as a good one, the ceiling
+agreeing with the SQL guard, the boundary at exactly five minutes, a snapshot
+from the future refused, every path producing a labelled ₱0 checked against the
+constraint that forbids one, a free-delivery benefit **not** reaching the
+rider's surge, and greps that the sweep measures after the timeout pass and that
+the screen actually sends the figure it displayed. Three of those greps were
+confirmed to fail by mutating the seams they guard.
+
+**Ten SQL-guard checks** against the live database: two fallback steps at one
+threshold refused while a city step at the same threshold is allowed, a ₱150
+step, a step at zero orders per rider, a step adding nothing, a blank label, a
+snapshot charging with no reason, a label over a zero, and a negative rider
+count — each refusal naming the constraint that fired.
+
+**Nineteen more against the live database**: the sweep counting two waiting
+orders and one free rider, a rider on a job counting as unavailable, the quote
+carrying the surge and its label, the total higher by exactly the surge,
+placement refused above the displayed figure and accepted at it, the order guard
+refusing money with no reason, a stale reading told apart from a market never
+measured, and **the rider accrued the fee plus the whole surge** (₱64.00 =
+₱39.00 + ₱25.00).
+
+**Seventeen in a real browser**: "Sobrang busy ₱50.00" on its own line with the
+sentence saying the extra goes to the rider; the band raised and re-measured
+while the page sat open, the tap refused, no order written at the price the
+customer never saw, and the screen re-quoted from ₱419.00 to ₱449.00 before the
+second tap went through; the receipt naming the charge; and the console showing
+the market, the charge, and the stopped-sweep alert.
+
+1360 tests pass; typecheck, lint and build clean.
