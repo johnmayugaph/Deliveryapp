@@ -55,6 +55,13 @@ brands do with a logo.
    identifiers and quantities. `quoteCheckout()` is the only thing that prices a
    cart, and placement calls it again for the number it charges.
 
+## Deploying it
+
+- **[docs/LAUNCH.md](./docs/LAUNCH.md)** — the twelve steps, in order, with the
+  traps marked. Start here if you are putting this live.
+- **[docs/DEPLOY.md](./docs/DEPLOY.md)** — the reference: every command with its
+  measured output, and why each step is shaped the way it is.
+
 ## Getting started
 
 Requires Node ≥ 20.11 and PostgreSQL. `psql` must be on `PATH` to apply the SQL

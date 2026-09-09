@@ -1,13 +1,23 @@
 # Deploying TARA
 
-Every command in this file was run against a real database and a real
-production build during a deployment rehearsal, and the output quoted is what
-came back. Nothing here is a plan. Where the rehearsal found something broken,
-it says so and says what was changed.
+Every **npm script** in this file was run against a real database and a real
+production build, twice — once at the first rehearsal and again after thirteen
+further phases — and the output quoted is what came back. Where a rehearsal
+found something broken, it says so and says what was changed.
+
+**One honest exception, and it matters before you follow this.** The
+`docker compose` wrappers around those scripts have **never been executed**:
+this environment has no Docker daemon, so the compose file is written and
+reviewed and unrun. Phase 19 is marked *"Built, never run"* in the checklist
+for exactly this reason. The inner commands are proven; the container
+orchestration around them is not. Budget time for `docker compose up` to
+need a fix on the first attempt.
 
 It is written for the shape in `docker-compose.yml` — one machine, Docker, a
 reverse proxy in front. On a managed platform the sequence is the same; only
-how you invoke the two images differs.
+how you invoke the two images differs. **If you want the linear
+do-this-then-that version, read [LAUNCH.md](./LAUNCH.md); this file is the
+reference that explains why each step is shaped the way it is.**
 
 ---
 

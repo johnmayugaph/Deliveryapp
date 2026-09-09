@@ -54,7 +54,7 @@ brief's changes already folded in.
 | 16 | A CAPTCHA on the login screen | ✅ Done |
 | 17 | Error monitoring | ✅ Done |
 | 18 | Backups, and the drill that proves them | ✅ Done |
-| 19 | The Dockerfile, compose and CI | ✅ Built, never run |
+| 19 | The Dockerfile, compose and CI | ✅ Built, **never run** — no Docker daemon here; see LAUNCH.md step 5 |
 | 20 | Support that reaches a person: threads, a public channel, a queue, an alert | ✅ Done |
 | 21 | Store staff: invite by number, a first owner from the console, an owner who cannot vanish | ✅ Done |
 | 22 | A map for the shop's pin, and three other ways to set it | ✅ Done |
