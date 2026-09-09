@@ -377,7 +377,7 @@ describe('the map’s own honesty', () => {
     // repeat and invisible until somebody looks at a screen.
     for (const file of [
       'src/components/orders/RiderMap.tsx',
-      'src/components/admin/LocationPicker.tsx',
+      'src/components/geo/LocationPicker.tsx',
     ]) {
       expect(codeOnly(file), file).toMatch(/import 'leaflet\/dist\/leaflet\.css'/);
     }

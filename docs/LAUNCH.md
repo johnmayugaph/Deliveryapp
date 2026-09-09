@@ -11,6 +11,11 @@ starts lying — the defect this project has spent a dozen phases removing from
 its own screens — so the rule here is: **the runbook owns the commands and the
 reasoning, this file owns the order.**
 
+**Want to see it work before spending anything?** [DRY-RUN.md](./DRY-RUN.md)
+is the same product walked end to end on an allowlist of test numbers, with no
+gateway and no top-up. Fourteen steps, every number measured. It postpones
+step 1 rather than replacing it.
+
 **Before anything:** [DEPLOY.md](./DEPLOY.md) is honest that the
 `docker compose` wrappers have never been executed. The npm scripts inside them
 are proven twice over; the container orchestration is not. Budget for

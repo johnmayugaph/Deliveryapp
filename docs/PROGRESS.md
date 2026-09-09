@@ -6477,3 +6477,105 @@ Two negative controls, since the mutation round is not in this loop:
   and that the codes appear nowhere in the serialised output — then asserts the
   codes ARE in the parsed entries, so "no codes leaked" cannot pass by the
   parser having returned nothing.
+
+---
+
+## The dry run, and the two things it found
+
+The allowlist made a rehearsal free, so the rehearsal was run: an empty
+PostgreSQL 16 database to *money reconciling to the centavo*, on a production
+standalone build with no SMS gateway configured at all. `docs/DRY-RUN.md` is
+the result — fourteen steps, every command and every number in it executed in
+the order printed.
+
+It found two things, which is the argument for having done it rather than
+having written it.
+
+### There was no way to add a delivery address
+
+`/checkout` refuses an order with no address and links to `/addresses` saying
+**"Add an address"**. `/addresses` answered **"No saved addresses yet."** and
+offered nothing at all — no form, no button, no route to one anywhere in the
+customer app.
+
+Why nobody noticed: `prisma/seed.ts` writes addresses for the demo accounts, so
+every previous walk-through had one. `npm run db:purge-demo` removes them, and
+purging is the **first** thing a real deployment does. So the gap was invisible
+in development and blocking in production, which is the worst available
+combination and the same shape as the fail-closed session bug from phase 8.
+
+The fix is `lib/addresses/entry.ts` (pure), `lib/actions/address-actions.ts`
+and `components/address/AddressForm.tsx`. Three details worth keeping:
+
+- **The province is not asked for.** `City` already carries it, so it is read
+  off the chosen city on the server. A second field for it is a way for the two
+  to disagree.
+- **The pin is required, and the bounds check is the one that earns its keep.**
+  A transposed pair is two valid floats and a point in the sea off Somalia,
+  where the distance-based delivery fee is enormous rather than obviously
+  wrong. It does not fail; it charges the wrong money. `isInPhilippines`
+  refuses it.
+- **The first address is the default, with no checkbox.** `/checkout`
+  pre-selects the default, so a book where nothing is default costs the first
+  order an extra decision. A control that cannot change the outcome would be a
+  lie, so on a first address the screen says the outcome instead.
+
+The action reads only `isActive` cities — an address in a city this deployment
+does not deliver in is a book entry every checkout then refuses — and clears
+the previous default in the **same transaction** as the write, because two
+defaults would make the checkout pre-selection depend on row order.
+
+### The address screen was telling customers about a shop
+
+`LocationPicker` was written for the store form and its copy was fixed:
+**"Where the shop is"**, and under the map *"Every delivery fee from this shop
+is measured from here."* Reused on the customer's address screen, it said that
+to somebody adding their own home. The heading and the sentence are props now,
+defaulting to the store wording; the address form passes *"Where the rider
+should come"*. Same defect class as the rest of this audit — a screen making a
+claim about the wrong subject — and the component moved from
+`components/admin/` to `components/geo/` to stop the next reuse importing a
+customer control out of the admin folder.
+
+### What the rehearsal measured
+
+| | |
+| --- | --- |
+| `db:setup` on an empty database | 57 migrations, 20 guard files → 64 tables / 90 CHECK constraints / 21 triggers |
+| Seeded | 5 cities, 5 services, 2 fee rules, 6 demo accounts, 3 demo stores |
+| `db:purge-demo -- --confirm` | purged 6 accounts and 3 stores; cities, services, fee rules, plans, FAQ survive |
+| Four accounts created through the allowlist | all four `/welcome` → `/`, `roles: {CUSTOMER}` |
+| `admin:grant` | `CUSTOMER -> CUSTOMER, ADMIN` |
+| One FOOD order, 0.4 km | ₱100 + ₱39 + ₱10 + ₱20 = **₱169.00** |
+| `/fleet/earnings` | holding **₱130.00** · earned ₱39.00 · collected ₱169.00 |
+| `/merchant/<id>/payouts` | TARA owes you **₱100.00** |
+| `/admin/settlement` | we owe **₱100.00** · cash held by riders **₱130.00** |
+
+**₱130 = ₱100 + ₱30**, with commission at 0.00% — so TARA's ₱30 is the service
+fee and the small-order fee, and the rider keeps the ₱39 delivery fee.
+
+### Three operational facts the guide now states because they cost time here
+
+- **The throttles apply to test numbers.** Three codes per number per fifteen
+  minutes, forty-five seconds apart. A rehearsal that signs the same number in
+  repeatedly runs out, and the login screen simply stops offering a code field.
+  `PhoneVerification` is not append-only, so `DELETE FROM "PhoneVerification"`
+  is the reset — and it is named in the guide rather than left to be rediscovered.
+- **A new shop is created hidden.** The owner can sign in, see the store and
+  write a menu, and customers still cannot find it. The merchant header does
+  say so; the guide now has a step for it.
+- **A dispatch offer lives 60 seconds.** Have `/fleet` open before running the
+  sweep, or re-run it.
+
+### Verified
+
+18 new tests, 2415 in total; lint, typecheck, tests and build all exit zero.
+The browser round is the whole of the section above — a production build, a
+live database, and one order walked through four roles.
+
+One negative control on the new tests: the "never asks for the province" check
+reads the `AddressEntryInput` interface body, and its first version sliced to
+the start of the NEXT declaration, swallowing a doc comment that legitimately
+says "province" — so it failed against correct code. Narrowed to the interface
+body, with an assertion that the slice contains `isPickupCapable` so it cannot
+pass by having sliced nothing.

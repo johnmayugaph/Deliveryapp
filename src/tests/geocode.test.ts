@@ -335,7 +335,7 @@ describe('the wiring', () => {
     // rate-limited from here, and would put the third party one hop from the
     // customer. Nothing in this application talks to somebody else's API from
     // the browser.
-    const picker = codeOnly(source('src/components/admin/LocationPicker.tsx'));
+    const picker = codeOnly(source('src/components/geo/LocationPicker.tsx'));
     expect(picker).not.toMatch(/nominatim|fetch\(/i);
     expect(picker).toMatch(/searchAddressAction/);
   });
@@ -359,7 +359,7 @@ describe('the wiring', () => {
 
   it('hides the box entirely when there is no geocoder', () => {
     // Rather than rendering a search field that can only ever fail.
-    expect(codeOnly(source('src/components/admin/LocationPicker.tsx'))).toMatch(
+    expect(codeOnly(source('src/components/geo/LocationPicker.tsx'))).toMatch(
       /searchAvailable \? \(/,
     );
     expect(codeOnly(source('src/app/admin/stores/page.tsx'))).toMatch(
@@ -371,7 +371,7 @@ describe('the wiring', () => {
     // The picker is rendered INSIDE it. A nested form is invalid HTML: the
     // browser unnests it and the outer form starts submitting on the wrong
     // button. So the action is dispatched directly.
-    const picker = codeOnly(source('src/components/admin/LocationPicker.tsx'));
+    const picker = codeOnly(source('src/components/geo/LocationPicker.tsx'));
     expect(picker).not.toMatch(/<form/);
     expect(picker).toMatch(/startTransition\(\(\) => search\(payload\)\)/);
   });
@@ -381,12 +381,12 @@ describe('the wiring', () => {
     // passed to a form's `action` prop. Called bare it works AND logs an
     // error — the worst of both, in the console of a page whose whole purpose
     // is to be trusted with a shop's coordinates. A browser found this.
-    const picker = codeOnly(source('src/components/admin/LocationPicker.tsx'));
+    const picker = codeOnly(source('src/components/geo/LocationPicker.tsx'));
     expect(picker).toMatch(/startTransition/);
   });
 
   it('does not submit the store form when somebody presses Enter to search', () => {
-    const picker = codeOnly(source('src/components/admin/LocationPicker.tsx'));
+    const picker = codeOnly(source('src/components/geo/LocationPicker.tsx'));
     const handlers = picker.match(/event\.key === 'Enter'/g) ?? [];
     // One for the search box, one for the paste box.
     expect(handlers.length).toBe(2);
@@ -394,7 +394,7 @@ describe('the wiring', () => {
 
   it('credits Nominatim, which it asks for like the tiles do', () => {
     expect(GEOCODER_CREDIT).toMatch(/OpenStreetMap|Nominatim/);
-    expect(codeOnly(source('src/components/admin/LocationPicker.tsx'))).toMatch(
+    expect(codeOnly(source('src/components/geo/LocationPicker.tsx'))).toMatch(
       /GEOCODER_CREDIT/,
     );
   });

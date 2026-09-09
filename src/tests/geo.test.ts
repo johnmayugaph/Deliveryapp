@@ -184,7 +184,7 @@ describe('reading a pasted link', () => {
 // -----------------------------------------------------------------------------
 
 describe('the map picker', () => {
-  const picker = source('src/components/admin/LocationPicker.tsx');
+  const picker = source('src/components/geo/LocationPicker.tsx');
 
   it('shares its bounds with the server that validates them', () => {
     // A picker that lets somebody drop a pin the server then rejects is worse
@@ -306,7 +306,7 @@ describe('where the tiles come from', () => {
   it('is read on the server, not baked into the bundle', () => {
     // A `NEXT_PUBLIC_` variable is inlined at build time, so it would freeze
     // whatever was set during `docker build` — see the note in the Dockerfile.
-    const picker = codeOnly(source('src/components/admin/LocationPicker.tsx'));
+    const picker = codeOnly(source('src/components/geo/LocationPicker.tsx'));
     expect(picker).not.toMatch(/process\.env/);
     expect(codeOnly(source('src/app/admin/stores/page.tsx'))).toMatch(/tileSource\(\)/);
   });

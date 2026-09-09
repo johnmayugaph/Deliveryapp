@@ -57,6 +57,9 @@ brands do with a logo.
 
 ## Deploying it
 
+- **[docs/DRY-RUN.md](./docs/DRY-RUN.md)** — the rehearsal: deploy and walk one
+  order end to end **without paying for SMS**. Fourteen steps, every number
+  measured. Start here if you want to see it work before you spend anything.
 - **[docs/LAUNCH.md](./docs/LAUNCH.md)** — the twelve steps, in order, with the
   traps marked. Start here if you are putting this live.
 - **[docs/DEPLOY.md](./docs/DEPLOY.md)** — the reference: every command with its

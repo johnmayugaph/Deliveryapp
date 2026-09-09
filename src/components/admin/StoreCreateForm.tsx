@@ -4,7 +4,7 @@ import { useActionState, useEffect, useState } from 'react';
 import type { ServiceKey } from '@prisma/client';
 import type { AdminActionResult } from '@/lib/admin/access';
 import { createStoreAction } from '@/lib/actions/admin-actions';
-import { LocationPicker } from '@/components/admin/LocationPicker';
+import { LocationPicker } from '@/components/geo/LocationPicker';
 import type { TileSource } from '@/lib/geo/tiles';
 
 /**

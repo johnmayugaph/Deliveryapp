@@ -26,7 +26,14 @@ import {
 import { searchAddressAction } from '@/lib/actions/geocode-actions';
 
 /**
- * Dropping a pin on a shop.
+ * Dropping a pin on a place.
+ *
+ * Used for two things now — a shop's location and a customer's delivery
+ * address — so the heading and the sentence under the map are PROPS rather
+ * than fixed copy. They were fixed, and the customer address screen rendered
+ * "Where the shop is / Every delivery fee from this shop is measured from
+ * here" at somebody adding their own home. Same defect class as everything
+ * else in this audit: a screen making a claim about the wrong subject.
  *
  * The coordinates matter more than they look: every delivery fee from this
  * store is computed from them, so a transposed pair does not fail — it quietly
@@ -63,7 +70,7 @@ const FIELD =
   'mt-1 w-full rounded-lg border border-black/10 bg-surface px-2.5 py-1.5 text-[13px]';
 
 export function LocationPicker({
-  /** Centre of the chosen city, so the map opens near the shop. */
+  /** Centre of the chosen city, so the map opens near the place. */
   centre,
   /** Changes when the city select changes, so the map can follow — once. */
   centreKey,
@@ -74,11 +81,17 @@ export function LocationPicker({
    * deployment with search switched off never renders a box that cannot work.
    */
   searchAvailable,
+  heading = 'Where the shop is',
+  help = 'Tap the map, or drag the pin. Every delivery fee from this shop is measured from here, so put it on the building rather than the street.',
 }: {
   centre?: Coordinate | undefined;
   centreKey?: string | undefined;
   tiles: TileSource;
   searchAvailable: boolean;
+  /** Heading above the map. Defaults to the store wording. */
+  heading?: string;
+  /** The sentence under the map, saying why the pin matters HERE. */
+  help?: string;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
@@ -331,7 +344,7 @@ export function LocationPicker({
   return (
     <div className="space-y-2">
       <span className="text-[11px] font-semibold text-ink-muted">
-        Where the shop is
+        {heading}
       </span>
 
       {searchAvailable ? (
@@ -425,8 +438,7 @@ export function LocationPicker({
       </div>
 
       <p className="text-[11px] leading-relaxed text-ink-faint">
-        Tap the map, or drag the pin. Every delivery fee from this shop is
-        measured from here, so put it on the building rather than the street.
+        {help}
       </p>
 
       <div className="flex flex-wrap items-end gap-2">
