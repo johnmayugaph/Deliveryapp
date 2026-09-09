@@ -2,7 +2,8 @@ import Link from 'next/link';
 import { PaymentMethod } from '@prisma/client';
 import { requireScreen } from '@/lib/auth/access';
 import { listAddressBook } from '@/lib/addresses/usage';
-import { getSpendableCentavos } from '@/lib/wallet/ledger';
+import { readCreditsBalance } from '@/lib/wallet/ledger';
+import { creditsState } from '@/lib/wallet/held';
 import { CheckoutForm } from '@/components/cart/CheckoutForm';
 import { resolvePaymentRail } from '@/lib/payments/rails';
 
@@ -23,10 +24,14 @@ export default async function CheckoutPage() {
      session goes to /login and comes back here. */
   const user = await requireScreen('checkout');
 
-  const [addresses, spendableCreditsCentavos] = await Promise.all([
+  const [addresses, wallet] = await Promise.all([
     listAddressBook({ userId: user.id }),
-    getSpendableCentavos(user.id),
+    readCreditsBalance(user.id),
   ]);
+  /* Only for the first paint. Every quote carries the live state, and the form
+     prefers it — a balance rendered from page load is a balance that stops
+     being true the moment anything happens to it. */
+  const credits = creditsState(wallet, new Date());
 
   // Read on the server and reduced to a label before it crosses to the client:
   // the account name and number are configuration, and they belong on the
@@ -61,7 +66,7 @@ export default async function CheckoutPage() {
             cityName: address.city?.name ?? null,
             isDefault: address.isDefault,
           }))}
-          spendableCreditsCentavos={spendableCreditsCentavos}
+          credits={credits}
           // The transfer appears only when there is an account to send money
           // to. Offering a payment method the deployment cannot receive takes
           // an order nobody can pay, which is worse than not offering it.

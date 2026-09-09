@@ -16,6 +16,12 @@ import { describeChoices } from '@/lib/merchant/option-policy';
 import { PromoField } from '@/components/cart/PromoField';
 import { promoDisplay } from '@/lib/promo/policy';
 import { describeWithheld } from '@/lib/pricing/benefits';
+import {
+  describeHold,
+  shortHoldNote,
+  spendableFrom,
+  type CreditsState,
+} from '@/lib/wallet/held';
 
 export interface CheckoutAddressOption {
   id: string;
@@ -53,12 +59,18 @@ const TIP_OPTIONS = [0, 2_000, 5_000, 10_000];
  */
 export function CheckoutForm({
   addresses,
-  spendableCreditsCentavos,
+  credits: creditsAtLoad,
   paymentMethods,
   transferLabel,
 }: {
   addresses: CheckoutAddressOption[];
-  spendableCreditsCentavos: number;
+  /**
+   * The customer's credits as of page load, used ONLY until the first quote
+   * lands. Every quote carries the live state and it wins — see `credits`
+   * below. Passing a snapshot and rendering it as current was the defect:
+   * the figure was fixed at page load while the money was not.
+   */
+  credits: CreditsState;
   paymentMethods: PaymentMethod[];
   /**
    * The configured wallet's name — "GCash", "Maya" — or null when no prepaid
@@ -210,6 +222,25 @@ export function CheckoutForm({
       </p>
     );
   }
+
+  /* THE LIVE FIGURE. `price.credits` is recomputed on every quote and was
+     already being returned and thrown away, while the screen rendered the
+     page-load prop beside it. That is the whole defect: credits arriving
+     mid-checkout — a gift card redeemed in another tab, points turned into
+     credits, a refund landing — could not be spent because the checkbox was
+     gated on the stale number; and credits that went to zero, including a
+     wallet frozen while the customer sat here, left a checkbox that ticked
+     and silently applied nothing.
+
+     The prop is the fallback for the moment before the first quote. */
+  const credits = quote?.price.credits ?? creditsAtLoad;
+  const spendableCreditsCentavos = spendableFrom(credits);
+  const holdNote = describeHold(credits, formatCentavos, (date) =>
+    date.toLocaleDateString('en-PH', {
+      day: 'numeric',
+      month: 'long',
+    }),
+  );
 
   const creditsShort = (quote?.creditShortfallCentavos ?? 0) > 0;
   const canPlace = quote !== null && !isQuoting && !creditsShort && !isPlacing;
@@ -411,8 +442,11 @@ export function CheckoutForm({
                   : PAYMENT_LABELS[method]}
               </span>
               {method === PaymentMethod.WALLET_CREDIT ? (
+                /* "held" rather than "₱0.00 available", which was the
+                   specific falsehood: the money is there and the screen
+                   said it was not. */
                 <span className="ml-auto text-[11px] text-ink-muted tabular-nums">
-                  {formatCentavos(spendableCreditsCentavos)} available
+                  {shortHoldNote(credits, formatCentavos)}
                 </span>
               ) : null}
             </label>
@@ -449,6 +483,15 @@ export function CheckoutForm({
               </span>
             </span>
           </label>
+        ) : null}
+
+        {/* Why the credits they know they have are not on offer. Said here,
+            beside the option it disables, rather than only on the Credits
+            screen — this is where somebody is counting on them. */}
+        {holdNote ? (
+          <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-900">
+            {holdNote}
+          </p>
         ) : null}
 
         {creditsShort ? (

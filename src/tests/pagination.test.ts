@@ -192,9 +192,14 @@ describe('both screens are actually wired to it', () => {
   });
 
   it('keeps the credits balance off the page, since it is the whole ledger', () => {
-    // Paging the history must not page the figure it explains.
-    expect(credits).toMatch(/getSpendableCentavos\(user\.id\)/);
-    expect(credits).not.toMatch(/getSpendableCentavos\([^)]*before/);
+    /* Paging the history must not page the figure it explains. The reader is
+       `readCreditsBalance` now rather than `getSpendableCentavos` — the second
+       reports zero for a held wallet, which is right for a bill and wrong as a
+       balance — but the property under test is unchanged: whatever reads the
+       balance is not given the cursor. */
+    expect(credits).toMatch(/readCreditsBalance\(user\.id\)/);
+    expect(credits).not.toMatch(/readCreditsBalance\([^)]*before/);
+    expect(credits).not.toMatch(/getSpendableCentavos/);
   });
 });
 

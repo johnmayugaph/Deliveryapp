@@ -5478,3 +5478,104 @@ the same trap as `tsx` in a scratch script. Both are arguments for checking all
 four gates by exit code rather than trusting the one that ran fastest.
 
 2202 tests pass; lint, typecheck, tests and build all exit zero.
+
+## Checkout: the number that was not live, and the balance that read as gone
+
+Checkout is the screen where the app asks for money, and it is built so that
+**every peso comes from the server quote** — `quoteCheckoutAction`, the same
+function placement calls. That held up under reading. One number did not.
+
+### The live figure was already there, and the screen rendered a snapshot
+
+`spendableCreditsCentavos` was fetched once on the server, passed to
+`CheckoutForm` as a prop, and rendered as though current — beside the Credits
+option ("₱250.00 available"), inside the "Use my credits" label, and as the
+condition deciding whether that checkbox exists at all.
+
+Meanwhile the quote returns its own `spendableCreditsCentavos` on **every**
+re-quote, computed from the same reader, and nothing read it. Third instance of
+plumbed-but-never-wired in this project, after the merchant card's `etaAt` and
+`MerchantStage.isUrgent`.
+
+Two consequences, and the second is the one that matters:
+
+- Credits arriving while the customer sits on checkout — a gift card redeemed
+  in another tab, points turned into credits, a refund landing — **could not be
+  spent**, because the checkbox is gated on the page-load number. No control,
+  and nothing to suggest a reload would help.
+- Credits going to zero left a checkbox that ticked and **silently applied
+  nothing**. The quote correctly applied ₱0, so no Credits line appeared in the
+  breakdown, so there was nothing on screen to explain it. A control that looks
+  like it works and does nothing.
+
+### A held balance read as no balance
+
+`getSpendableCentavos` returns zero for a frozen wallet, which is the right
+answer to the question checkout asks. Its comment said the consequence was
+handled:
+
+> The balance itself is unchanged and the credits screen still shows it, with
+> the reason — money that has vanished from the screen is a support ticket,
+> money that is visible and held is an explanation.
+
+**The credits screen calls that same function.** It showed ₱0.00 and said
+nothing, while the ledger rows immediately below it added up to something else.
+Grep found freeze copy in exactly two places in the app: `/recover`, at the
+moment of recovery, and the admin console. So somebody who recovers their
+account on Monday and opens Credits on Tuesday saw a zero balance with no
+reason — precisely the support ticket the comment describes avoiding. Prose
+about a gate, rotting beside the gate. Fourth instance of that class here.
+
+`src/lib/wallet/held.ts` is pure and imports nothing: `CreditsState` is
+`NONE | SPENDABLE | HELD`, and HELD keeps the amount, because the money is
+still theirs. `readCreditsBalance` returns the balance and the spendable figure
+separately; `getSpendableCentavos` is now a thin wrapper over it and its
+comment says plainly that its zero is not a balance to render.
+
+The two freezes get different sentences, and the difference is `frozenUntil`:
+
+- **Set** — the recovery cooling-off period. It ends on its own, on a date that
+  can be named, and nobody needs contacting.
+- **NULL** — a fraud review. It ends when a person ends it. Naming a date would
+  be inventing one, so it names support instead. A made-up date turns one
+  disappointment into two.
+
+`holdIsInForce` duplicates `freezeIsInForce` rather than importing it, because
+a client component imports this module and the original is reached from
+Prisma-facing code. A duplicated rule is only safe while something checks the
+copies agree, so a test walks six cases through both — including the boundary,
+where a hold expiring exactly now is over in both.
+
+### Verified
+
+**Thirty-one new units** (2233 total). One pinned test had to be re-anchored
+rather than loosened: the pagination suite asserted `getSpendableCentavos` on
+the credits page, and the reader changed. The property it was testing — the
+thing reading the balance is not handed the cursor — is unchanged, so it now
+asserts that about `readCreditsBalance` and additionally that
+`getSpendableCentavos` appears nowhere on either screen.
+
+**A browser through the real flow** — cart built by clicking the actual Add
+button on the store page, not by hand-writing localStorage — across three
+wallet states:
+
+- *Spendable*: "₱1,300.00 available", checkbox offered.
+- *Held with a date*: "₱1,300.00 **held**", no checkbox, and *"₱1,300.00 is
+  held until September 12… Nothing has been taken."* on both screens.
+- *Held indefinitely*: "₱1,300.00 held" and *"…held while we check something on
+  your account. It has not gone anywhere — message support…"*, with no date
+  invented.
+
+**A negative control, with the detection made explicit.** The walk now flags
+two things rather than leaving me to read the text: a hero reading ₱0.00, and a
+held balance the hero says nothing about. Run against the restored old code it
+fired both. That matters because with the mutation round dropped, a browser
+check I only eyeball is a check that cannot fail — and this is the second time
+in two phases that writing the assertion down caught something a glance would
+have passed.
+
+2233 tests pass; lint, typecheck, tests and build all exit zero. Fixtures
+removed and the wallet thawed.
+
+**Still unread on the customer side:** `/orders/[orderId]` (tracking),
+`/profile`, `/notifications`, `/plus`, `/points`, `/search` and the store page.

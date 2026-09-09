@@ -2,7 +2,12 @@ import { BenefitSource, SubscriptionStatus, type ServiceKey } from '@prisma/clie
 import { prisma, type PrismaTransactionClient } from '@/lib/prisma';
 import { assertNonNegativeInteger, CURRENCY } from '@/lib/money';
 import { assertServiceOrderable } from '@/lib/services/registry';
-import { getSpendableCentavos } from '@/lib/wallet/ledger';
+import { readCreditsBalance } from '@/lib/wallet/ledger';
+import {
+  creditsState,
+  spendableFrom,
+  type CreditsState,
+} from '@/lib/wallet/held';
 import {
   applyBenefits,
   type AppliedBenefitLine,
@@ -97,6 +102,14 @@ export interface PriceQuote {
   subscriptionBenefitsDropped: boolean;
   /** Credits available but not spent, so the UI can offer them. */
   spendableCreditsCentavos: number;
+  /**
+   * The customer's balance and whether it is held, as of this quote.
+   *
+   * Beside the spendable figure rather than instead of it: a held balance is
+   * zero-spendable and non-zero owned, and checkout has to show one number and
+   * explain the other. Without this the screen could only render the zero.
+   */
+  credits: CreditsState;
 }
 
 /** First instant of the current calendar month, UTC. Benefit caps reset here. */
@@ -199,7 +212,9 @@ export async function quoteOrderPrice(input: PriceQuoteInput): Promise<PriceQuot
 
   // Credits last: capped at what is actually owed, so a balance can zero a bill
   // but never create a payable of less than nothing.
-  const spendableCreditsCentavos = await getSpendableCentavos(input.customerId);
+  const wallet = await readCreditsBalance(input.customerId);
+  const credits = creditsState(wallet, new Date());
+  const spendableCreditsCentavos = spendableFrom(credits);
   const requested = Math.max(0, input.requestedWalletCreditCentavos ?? 0);
   const walletCreditAppliedCentavos = Math.min(
     requested,
@@ -232,6 +247,7 @@ export async function quoteOrderPrice(input: PriceQuoteInput): Promise<PriceQuot
     loyaltyTierName: loyalty.tier?.name ?? null,
     subscriptionBenefitsDropped,
     spendableCreditsCentavos,
+    credits,
   };
 }
 

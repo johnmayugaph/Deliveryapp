@@ -15,6 +15,11 @@ import {
 
 export { InvalidLedgerEntryError } from '@/lib/wallet/rules';
 export { freezeIsInForce } from '@/lib/wallet/rules';
+import {
+  creditsState,
+  spendableFrom,
+  type WalletFacts,
+} from '@/lib/wallet/held';
 
 /**
  * The credits ledger.
@@ -262,24 +267,56 @@ export async function getWalletForUser(userId: string): Promise<Wallet | null> {
   return prisma.wallet.findUnique({ where: { userId } });
 }
 
-/** Spendable credits. Read from the ledger, never from the cached column. */
-export async function getSpendableCentavos(userId: string): Promise<number> {
+/**
+ * The balance and whether anything is holding it, in one read.
+ *
+ * Separated from `getSpendableCentavos` because the two answer different
+ * questions and conflating them was a defect: a frozen wallet reports zero
+ * SPENDABLE, which is right for a bill, and rendering that zero as the
+ * customer's balance told somebody their money was gone. `creditsState` turns
+ * this into what a screen should say.
+ */
+export async function readCreditsBalance(
+  userId: string,
+  now: Date = new Date(),
+): Promise<WalletFacts & { spendableCentavos: number }> {
   const wallet = await prisma.wallet.findUnique({
     where: { userId },
     select: { id: true, isFrozen: true, frozenUntil: true },
   });
-  // A frozen balance reports zero SPENDABLE, which is what checkout asks for.
-  // The balance itself is unchanged and the credits screen still shows it,
-  // with the reason — money that has vanished from the screen is a support
-  // ticket, money that is visible and held is an explanation.
-  if (!wallet || freezeIsInForce(wallet, new Date())) {
-    return 0;
+  if (!wallet) {
+    return {
+      balanceCentavos: 0,
+      isFrozen: false,
+      frozenUntil: null,
+      spendableCentavos: 0,
+    };
   }
   const aggregate = await prisma.walletTransaction.aggregate({
     where: { walletId: wallet.id },
     _sum: { amountCentavos: true },
   });
-  return Math.max(0, aggregate._sum.amountCentavos ?? 0);
+  const facts: WalletFacts = {
+    balanceCentavos: Math.max(0, aggregate._sum.amountCentavos ?? 0),
+    isFrozen: wallet.isFrozen,
+    frozenUntil: wallet.frozenUntil,
+  };
+  return {
+    ...facts,
+    spendableCentavos: spendableFrom(creditsState(facts, now)),
+  };
+}
+
+/**
+ * Spendable credits. Read from the ledger, never from the cached column.
+ *
+ * Zero for a frozen wallet, which is the right answer to "how much can go
+ * against this bill" and NOT a number to render as a balance — a screen
+ * showing it as one tells a customer their money is gone. Use
+ * `readCreditsBalance` where a person will read the figure.
+ */
+export async function getSpendableCentavos(userId: string): Promise<number> {
+  return (await readCreditsBalance(userId)).spendableCentavos;
 }
 
 /**

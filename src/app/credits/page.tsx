@@ -1,10 +1,11 @@
 import Link from 'next/link';
 import { WalletTransactionType } from '@prisma/client';
 import { requireScreen } from '@/lib/auth/access';
+import { creditsState, describeHold } from '@/lib/wallet/held';
 import { fetchCount, pageOf, readCursor } from '@/lib/pagination/pages';
 import { OlderPager, StrandedPage } from '@/components/ui/OlderPager';
 import {
-  getSpendableCentavos,
+  readCreditsBalance,
   listWalletTransactions,
   WALLET_CONSTRAINTS,
 } from '@/lib/wallet/ledger';
@@ -48,13 +49,23 @@ export default async function CreditsPage({
      below is paged, and it needed to be: the rows that EXPLAIN the figure at
      the top of this screen were the ones that fell off the end at fifty. */
   const cursor = readCursor((await searchParams).before);
-  const [balanceCentavos, fetched] = await Promise.all([
-    getSpendableCentavos(user.id),
+  const [wallet, fetched] = await Promise.all([
+    readCreditsBalance(user.id),
     listWalletTransactions(user.id, {
       limit: fetchCount(),
       before: cursor,
     }),
   ]);
+  /* The BALANCE, not the spendable figure. `getSpendableCentavos` reports zero
+     for a held wallet — correct for a bill, and a lie as a balance. This
+     screen showed that zero while its own ledger rows below it added up to
+     something else, and said nothing about a hold: the comment on that
+     function claimed this screen explained it, and no code here ever did. */
+  const credits = creditsState(wallet, new Date());
+  const balanceCentavos = wallet.balanceCentavos;
+  const holdNote = describeHold(credits, formatCentavos, (date) =>
+    date.toLocaleDateString('en-PH', { day: 'numeric', month: 'long' }),
+  );
   const {
     rows: transactions,
     olderCursor,
@@ -70,6 +81,11 @@ export default async function CreditsPage({
         <p className="mt-1 text-3xl font-bold tabular-nums">
           {formatCentavos(balanceCentavos)}
         </p>
+        {holdNote ? (
+          <p className="mt-2 rounded-lg bg-white/15 px-3 py-2 text-xs leading-relaxed text-white">
+            {holdNote}
+          </p>
+        ) : null}
         <p className="mt-2 text-xs leading-relaxed text-white/80">
           Rewards from us — promos, referral bonuses, gift cards and refunds.
           Spend them on any order in the app.
