@@ -2,6 +2,12 @@ import { OrderStatus, type Order, type Service } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { allowedTransitions, isActorPermitted } from '@/lib/orders/state-machine';
 import { OrderActor } from '@prisma/client';
+import { platformAbsorbedCentavos } from '@/lib/settlement/policy';
+import {
+  REPORT_WINDOW_DAYS,
+  SETTLED_STATUSES,
+  reportWindowStart,
+} from '@/lib/merchant/reporting';
 import type { AppliedBenefitRow } from '@/lib/merchant/order-benefits';
 
 /**
@@ -120,6 +126,32 @@ export async function loadMerchantQueue(storeId: string): Promise<MerchantQueue>
   };
 }
 
+export interface HistoryRow {
+  order: Order;
+  service: Service;
+  benefits: AppliedBenefitRow[];
+}
+
+export interface MerchantHistory {
+  rows: HistoryRow[];
+  windowDays: number;
+  /** Finished orders in the window, whether or not they fit on the screen. */
+  totalInWindow: number;
+  /**
+   * What TARA absorbed across the WHOLE window, from a separate aggregate.
+   *
+   * Not a sum of `rows`. Summing the rendered rows made the figure mean "the
+   * most recent fifty orders" while reading as a period total, so it moved
+   * whenever the cap did — and it could never agree with the Regulars tab,
+   * which aggregates ninety days.
+   */
+  absorbedCentavos: number;
+  /** How many orders in the window carried a discount. */
+  discountedCount: number;
+}
+
+const HISTORY_ROW_LIMIT = 50;
+
 /**
  * Recently finished orders, for the history screen.
  *
@@ -128,50 +160,85 @@ export async function loadMerchantQueue(storeId: string): Promise<MerchantQueue>
  * the join is what lets a finished order name the status that conferred a
  * benefit — the customer's tier itself is derived live and is NOT what an old
  * order should be described by.
+ *
+ * The window and the totals are the point of the second query. A row list is
+ * capped so a busy shop's screen stays a screen; a total that is capped with
+ * it is a total that means something else.
  */
 export async function loadMerchantHistory(
   storeId: string,
-  options: { limit?: number } = {},
-): Promise<
-  {
-    order: Order;
-    service: Service;
-    benefits: AppliedBenefitRow[];
-  }[]
-> {
-  const rows = await prisma.order.findMany({
-    where: {
-      status: { notIn: [...QUEUE_STATUSES] },
-      details: { path: ['storeId'], equals: storeId },
-    },
-    orderBy: { createdAt: 'desc' },
-    take: options.limit ?? 50,
-    include: {
-      service: true,
-      appliedBenefits: {
-        orderBy: { createdAt: 'asc' },
-        select: {
-          source: true,
-          displayLabel: true,
-          amountCentavos: true,
-          tierBenefit: { select: { tier: { select: { name: true } } } },
+  options: { limit?: number; windowDays?: number; now?: Date } = {},
+): Promise<MerchantHistory> {
+  const windowDays = options.windowDays ?? REPORT_WINDOW_DAYS;
+  const shown = options.limit ?? HISTORY_ROW_LIMIT;
+  const since = reportWindowStart(options.now ?? new Date(), windowDays);
+  const inWindow = {
+    details: { path: ['storeId'], equals: storeId },
+    createdAt: { gte: since },
+  } as const;
+
+  const [rows, totalInWindow, settled] = await Promise.all([
+    prisma.order.findMany({
+      where: { ...inWindow, status: { notIn: [...QUEUE_STATUSES] } },
+      orderBy: { createdAt: 'desc' },
+      take: shown,
+      include: {
+        service: true,
+        appliedBenefits: {
+          orderBy: { createdAt: 'asc' },
+          select: {
+            source: true,
+            displayLabel: true,
+            amountCentavos: true,
+            tierBenefit: { select: { tier: { select: { name: true } } } },
+          },
         },
       },
-    },
-  });
+    }),
+    prisma.order.count({
+      where: { ...inWindow, status: { notIn: [...QUEUE_STATUSES] } },
+    }),
+    /**
+     * SETTLED orders only, which is `COMPLETED` alone.
+     *
+     * The total used to include cancelled and expired orders, and every one of
+     * those had its discount counted as money TARA absorbed. Settlement
+     * accrues in the completion transaction and nowhere else, so a cancelled
+     * order cost TARA nothing — its refund went back to where the money came
+     * from. Only the four discount columns are read, because
+     * `platformAbsorbedCentavos` is what settlement itself was charged.
+     */
+    prisma.order.findMany({
+      where: { ...inWindow, status: { in: [...SETTLED_STATUSES] } },
+      select: {
+        promoDiscountCentavos: true,
+        subscriptionDiscountCentavos: true,
+        loyaltyDiscountCentavos: true,
+        walletCreditAppliedCentavos: true,
+      },
+    }),
+  ]);
 
-  return rows.map(({ service, appliedBenefits, ...order }) => ({
-    order: order as Order,
-    service,
-    benefits: appliedBenefits.map((row) => ({
-      source: row.source,
-      displayLabel: row.displayLabel,
-      amountCentavos: row.amountCentavos,
-      // Null once the tier is gone — its benefit rows cascade with it — and
-      // the label and the source still survive on the order itself.
-      tierName: row.tierBenefit?.tier.name ?? null,
+  const absorbedPerOrder = settled.map(platformAbsorbedCentavos);
+
+  return {
+    rows: rows.map(({ service, appliedBenefits, ...order }) => ({
+      order: order as Order,
+      service,
+      benefits: appliedBenefits.map((row) => ({
+        source: row.source,
+        displayLabel: row.displayLabel,
+        amountCentavos: row.amountCentavos,
+        // Null once the tier is gone — its benefit rows cascade with it — and
+        // the label and the source still survive on the order itself.
+        tierName: row.tierBenefit?.tier.name ?? null,
+      })),
     })),
-  }));
+    windowDays,
+    totalInWindow,
+    absorbedCentavos: absorbedPerOrder.reduce((sum, value) => sum + value, 0),
+    discountedCount: absorbedPerOrder.filter((value) => value > 0).length,
+  };
 }
 
 /** Today's counts, for the header. */

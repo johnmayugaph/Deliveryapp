@@ -7,6 +7,11 @@ import { statusPresentation } from '@/lib/orders/status-presentation';
 import { formatCentavos } from '@/lib/money';
 import { orderBenefitView } from '@/lib/merchant/order-benefits';
 import {
+  absorbedCountsFor,
+  cappedNote,
+  windowNote,
+} from '@/lib/merchant/reporting';
+import {
   AbsorbedTotalNote,
   OrderBenefitNote,
 } from '@/components/merchant/OrderBenefitNote';
@@ -33,19 +38,22 @@ export default async function MerchantHistoryPage({
     storeReviews(access.store.id),
   ]);
 
-  /* One view per order, computed once — the total under the list is the sum of
-     exactly the rows above it, rather than a second pass that could differ. */
-  const rows = history.map((entry) => ({
+  /*
+    One view per order for the rows; the TOTALS come from the loader.
+    
+    They used to be summed from these rows, with a comment saying that made the
+    total "the sum of exactly the rows above it". That was true and was the
+    problem: the rows are capped at fifty and were unbounded in time, so the
+    figure read as a period total while meaning "the recent fifty" — and it
+    counted cancelled orders, on which TARA absorbed nothing at all.
+  */
+  const rows = history.rows.map((entry) => ({
     ...entry,
     view: orderBenefitView(entry.order, entry.benefits),
+    wasSettled: absorbedCountsFor(entry.order.status),
   }));
-  const absorbedCentavos = rows.reduce(
-    (sum, row) => sum + row.view.absorbedCentavos,
-    0,
-  );
-  const discountedCount = rows.filter(
-    (row) => row.view.absorbedCentavos > 0,
-  ).length;
+  const period = windowNote(history.windowDays);
+  const capped = cappedNote(rows.length, history.totalInWindow);
 
   const ratings = (
     <div className="px-4 pt-4">
@@ -57,12 +65,12 @@ export default async function MerchantHistoryPage({
     </div>
   );
 
-  if (history.length === 0) {
+  if (rows.length === 0) {
     return (
       <main>
         {ratings}
         <p className="px-4 py-10 text-center text-sm text-ink-muted">
-          No finished orders yet.
+          No finished orders in {period}.
         </p>
       </main>
     );
@@ -71,9 +79,18 @@ export default async function MerchantHistoryPage({
   return (
     <main className="pb-8">
       {ratings}
-      <h2 className="px-4 pb-1 pt-5 text-[13px] font-semibold">Finished orders</h2>
+      <h2 className="px-4 pb-1 pt-5 text-[13px] font-semibold">
+        Finished orders
+      </h2>
+      {/* The period, always, and the cap only when it bites. A list that
+          silently stops at fifty rows is a list whose numbers mean something
+          different from what they look like they mean. */}
+      <p className="px-4 pb-1 text-[11px] text-ink-faint">
+        {period.charAt(0).toUpperCase() + period.slice(1)}
+        {capped ? ` · ${capped}` : ''}
+      </p>
       <ul className="divide-y divide-black/5">
-        {rows.map(({ order, service, view }) => {
+        {rows.map(({ order, service, view, wasSettled }) => {
           const { label, tone } = statusPresentation(order.status);
           return (
             <li key={order.id} className="bg-surface px-4 py-3">
@@ -104,14 +121,15 @@ export default async function MerchantHistoryPage({
               {order.cancellationReason ? (
                 <p className="mt-1 text-[11px] text-rose-700">{order.cancellationReason}</p>
               ) : null}
-              <OrderBenefitNote view={view} />
+              <OrderBenefitNote view={view} wasSettled={wasSettled} />
             </li>
           );
         })}
       </ul>
       <AbsorbedTotalNote
-        absorbedCentavos={absorbedCentavos}
-        orderCount={discountedCount}
+        absorbedCentavos={history.absorbedCentavos}
+        orderCount={history.discountedCount}
+        windowNote={period}
       />
     </main>
   );

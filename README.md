@@ -210,6 +210,15 @@ describes the benefit rather than the customer on purpose: a tier is derived
 from recent points and is not stored on the order, so an old receipt cannot
 honestly name one where no benefit applied.
 
+That screen and the Regulars tab report over the **same ninety days**, from one
+constant, and the History tab says so on the page — because both of them show
+what TARA absorbed on this shop's orders, and two such figures over two
+different periods are worse than one. The total counts **completed** orders
+only: settlement accrues in the completion transaction and nowhere else, so a
+cancelled order cost TARA nothing however large the discount on it was. It also
+comes from its own aggregate rather than from the rows on screen, so capping
+the list does not move it.
+
 The **Regulars** tab answers the two questions a shop has about TARA's loyalty
 statuses: how much of its business comes from customers who have earned one,
 and what those benefits cost the shop — which is nothing, because the shop is

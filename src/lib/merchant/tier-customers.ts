@@ -1,5 +1,6 @@
 import { LoyaltyEntryType, OrderStatus } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { REPORT_WINDOW_DAYS } from '@/lib/merchant/reporting';
 import { getProgramme, getTiersWithBenefits } from '@/lib/loyalty/programme';
 import { tierFor, tierWindowStart } from '@/lib/loyalty/policy';
 import {
@@ -53,7 +54,12 @@ export interface StoreTierStanding {
   programmeIsOn: boolean;
 }
 
-export const DEFAULT_WINDOW_DAYS = 90;
+/**
+ * Kept as a name for every existing caller, but no longer a number written
+ * down here: the History tab reports over the same period and the two had
+ * nothing tying them together. `reporting.ts` is the one place it lives.
+ */
+export const DEFAULT_WINDOW_DAYS = REPORT_WINDOW_DAYS;
 
 export async function storeTierStanding(
   storeId: string,

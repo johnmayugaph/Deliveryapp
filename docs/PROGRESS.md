@@ -4993,3 +4993,94 @@ back on the menu"* never reached anybody — the same defect this phase exists t
 fix, one layer up.
 
 2086 tests pass; lint, typecheck, tests and build all exit zero.
+
+## History: making the numbers on it mean something
+
+The History tab already said, per order, what a discount was and that TARA had
+covered it. The figures around those rows did not survive being read closely.
+
+### Two screens, two windows, one claim
+
+*Regulars* aggregates **ninety days of completed orders**. *History* took the
+**most recent fifty orders of any finished status, with no date bound at all**.
+Both then reported "what TARA absorbed on this shop's orders", and neither
+screen said what period it covered — so a shop comparing the two figures was
+comparing answers to different questions with nothing on either page to reveal
+it.
+
+`src/lib/merchant/reporting.ts` holds `REPORT_WINDOW_DAYS` and both screens
+import it; `tier-customers.ts` keeps its old exported name for callers but no
+longer writes the number down. The History tab now prints the period above the
+list, and prints the cap when the cap bites — *"The last 90 days · Showing the
+most recent 3 of 16"* — because a list that silently stops at fifty rows is a
+list whose totals mean something different from what they look like they mean.
+
+### Cancelled orders were counted as money TARA had spent
+
+`accrueOrderSettlement` is called from exactly one place, the completion path
+in `orders/maintenance.ts`. So `COMPLETED` is the only status on which TARA has
+actually paid for a discount: a cancelled order has no settlement entry, no
+commission taken, and its refund went back to where the money came from.
+
+History summed **every** finished order. A cancelled order that had a ₱50 promo
+on it added ₱50 to "what TARA covered", and its own row rendered the green note
+in full — *"Customer paid ₱50.00 less — TARA covered it"* — about an order the
+customer paid nothing for. `SETTLED_STATUSES` is now one list used by both the
+query and the per-row decision, and the note takes a `wasSettled` prop and
+renders nothing without it.
+
+### The total was a sum of the visible rows
+
+It was, under a comment saying that made it "the sum of exactly the rows above
+it". True, and precisely the problem: the rows are capped, so the figure moved
+whenever the cap did, and it could never agree with a ninety-day aggregate on
+another tab. It comes from its own query now — restricted to settled statuses,
+using `platformAbsorbedCentavos`, which is the definition settlement itself was
+charged rather than a fifth copy of the four-column sum.
+
+The sentence under the list changed with it. It said *"Across these 12
+orders"*, which sounded like the orders on screen and was in fact the
+discounted ones among the most recent fifty. It now names the period and the
+kind of order: *"Over the last 90 days, customers paid ₱50.00 less than the
+full price on 1 completed order."*
+
+### Verified in four places
+
+**Fourteen new units** (2100 total), and the shape of them matters more than
+the count. The whole `OrderStatus` enum is walked against the settled
+predicate, so a new terminal status — a partial completion, a return — fails a
+test rather than being silently counted or silently not. The predicate is
+checked against **where accrual is actually called**: exactly one call site,
+and none in the modules that must not have one. And the window constant is
+asserted equal across both screens with no literal `90` left in
+`tier-customers.ts` to drift from it.
+
+**Seven mutations, all killed on the first pass**: adding a cancellation to the
+settled list; giving Regulars its own `90` again; dropping the date bound from
+the history query; summing the rows for the total again; rendering the per-row
+note without `wasSettled`; recomputing the four-column sum inline instead of
+reusing settlement's own function; and silencing the cap notice.
+
+**Thirteen live-database checks** on a fixture built to isolate the bugs: a
+completed order and a cancelled order carrying the *same* ₱50 discount, one
+completed order five days outside the window, and one with no discount. The
+load-bearing assertions are that the absorbed total moves by ₱50 rather than
+₱100, that the out-of-window order is absent while the cancelled one is still
+listed — it is finished business and belongs on the list, it just is not a cost
+— and that capping the rows to one leaves both totals unchanged. Plus that the
+Regulars aggregate covers the same window and the same set of orders.
+
+**A browser**, which confirmed the completed row carries the note and the
+cancelled row carries only its reason, and — with the cap temporarily lowered
+and then restored — that the capped line renders.
+
+One thing worth recording from that pass: I read *"Free delivery · TARA Plus"*
+on a promo-labelled fixture row and started writing it up as a mislabelling
+bug. It was not. `BenefitSource` has exactly two members, `SUBSCRIPTION` and
+`LOYALTY_TIER` — promo codes are deliberately not benefit rows at all — so the
+`PROMO_CODE` I had invented in the fixture became `undefined`, Prisma used the
+column default, and the label was correct for the row that existed. `tsx`
+strips types rather than checking them, which is why an invalid enum member in
+a scratch script fails silently. The fixture was wrong; the screen was right.
+
+2100 tests pass; lint, typecheck, tests and build all exit zero.
