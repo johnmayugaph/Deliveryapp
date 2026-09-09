@@ -87,7 +87,7 @@ that `chown` was skipped.
 db:seed`. On a database created empty, in this order:
 
 ```
-56 migrations found in prisma/migrations
+57 migrations found in prisma/migrations
 All migrations have been successfully applied.
 Applied 20 guard file(s).
 Seeding TARA into …
@@ -100,7 +100,25 @@ and the result, counted directly:
 tables              64
 CHECK constraints   90
 triggers            21
-migrations applied  56
+migrations applied  57
+```
+
+These four numbers are re-measured on every rehearsal, and the migration count
+is the only one that has moved: it was 56 when this file was written and is 57
+since `20260909180000_menu_out_of_stock_since`. Tables, CHECK constraints and
+triggers are unchanged, which is the useful part — thirteen phases of screen
+work added one column and touched no guard.
+
+Count the CHECK constraints from `pg_constraint`, not from
+`information_schema.table_constraints`. The latter synthesises a CHECK row for
+every NOT NULL column, so it answers **619** on this schema against the real
+90, and a rehearsal that used it would report a wild discrepancy and go looking
+for a problem that is not there. (It did, on this one.)
+
+```
+SELECT count(*) FROM pg_constraint c
+  JOIN pg_namespace n ON n.oid = c.connamespace
+ WHERE c.contype = 'c' AND n.nspname = 'public';
 ```
 
 The guards are the third of those numbers. They are **not** in the Prisma

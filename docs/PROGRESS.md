@@ -6106,3 +6106,72 @@ esbuild strips types, and the typecheck failed. The same trap `CLAUDE.md`
 records for scratch scripts applies to test fixtures.
 
 2352 tests pass; lint, typecheck, tests and build all exit zero.
+
+## The second deployment rehearsal
+
+Phase 47 ran the dry run once. Thirteen phases of screen work have landed
+since, so it was run again — the same sequence, against a database created
+empty a minute earlier, with the real production build. The point of repeating
+it is that a runbook quoting measured output is only worth having if the
+output is still what comes back.
+
+**Everything the runbook claims still happens.** Not paraphrased: the exact
+strings. `db:setup` on an empty database, the purge warning about there being
+no administrator afterwards, `admin:grant` refusing a number nobody has
+answered and exiting 1, the sweep reporting `No stale orders.` with only
+`DATABASE_URL` and `AUTH_SECRET` set, the backup drill restoring into a
+throwaway database and checking it (`64 tables; 89 rows; ledger balances all
+match; append-only triggers present`).
+
+**One number had moved.** 56 migrations → **57**, from
+`20260909180000_menu_out_of_stock_since`. Tables (64), CHECK constraints (90)
+and triggers (21) are all unchanged, which is worth saying plainly: thirteen
+phases of reading screens and fixing what they claimed added one column and
+touched no guard. The runbook is corrected.
+
+**And the instrument was wrong again, for the fourth time in this project.**
+Counting CHECK constraints from `information_schema.table_constraints`
+answered **619** against the documented 90 — because it synthesises a CHECK row
+for every NOT NULL column, and this schema has 529 of those. For a moment that
+looked like a real and alarming discrepancy. `pg_constraint` with
+`contype = 'c'` answers 90. The corrected query is now in the runbook next to
+the numbers, because the next person to re-measure will reach for
+`information_schema` exactly as I did.
+
+### The fail-closed walk, each check with a control
+
+A check that only ever passes is the thing this project keeps finding, so every
+one of these was run in a pair — the failing condition AND the working one,
+same detector.
+
+| Check | Failing case | Control |
+| --- | --- | --- |
+| `/api/health` | **503** `{"ok":false,"database":"down"}` against a dead port | **200** `{"ok":true,"database":"up"}` |
+| A demo account in production | **307** → `/login?next=%2Fprofile` | a non-demo account: **200**, and the page carries their name and number |
+| Signed-out private screens | `/profile`, `/admin` **307** to `/login` with the right `next=` | — |
+| The wrongly-provisioned database | `/` answers **200** with *"No service is available in your area yet. We will come back to you."* | properly seeded: that string absent, and all five registry services render |
+| `operatingDataGaps()` | **5** gaps: no city, no active service, no fee rule, no programme, no surge band | seeded and purged: **2**, the loyalty programme and the surge bands, word for word as documented |
+
+The demo pair is the one that matters most, and it is the reason it was run as
+a pair: a 307 on its own would also be what a production build that had simply
+broken sessions would produce. The non-demo account signing in and rendering
+its own profile is what makes the 307 mean *"demo accounts are refused"*
+rather than *"nobody can sign in"*.
+
+**A `200` is not a passing check on its own, either.** The non-demo profile was
+confirmed by content — the person's name, their number formatted as
+`0917 000 7777`, the "Signed in on" device list, the recovery section — because
+a page that renders an error state also answers 200.
+
+### What the rehearsal incidentally proved about this session's work
+
+The profile screen rebuilt in the previous phase was exercised in a real
+production build against a database with no subscription plan active and no
+fleet record: the fleet row read **"Become a fleet partner"** (the
+`NOT_A_PARTNER` standing), the plan section was **absent entirely** — which is
+`planStanding` returning null rather than advertising a tier nobody can buy —
+and the word "Aktibo" appeared nowhere on a screen with no subscription. Three
+of the new rules, in production, on data that has never been near a test.
+
+`57` migrations, `20` guard files, `64` tables. 2352 tests pass; lint,
+typecheck, tests and build all exit zero.
