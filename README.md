@@ -173,6 +173,14 @@ shop is simply closed. The rules are gathered in
 places a customer's request reads them, so the panel cannot tell a shop it is
 open for business when checkout would refuse.
 
+The header of every merchant screen agrees with it. The Bukas/Sarado pill used
+to be emerald whenever the shop's own switch was on, so a shop TARA had taken
+off the app read *open* on six screens out of seven. It now turns amber when
+opening would change nothing, with one line under it naming the problem and a
+tap to Settings for the reason. The switch is never disabled — it is the shop's
+most urgent control and a kitchen that has run out of rice must still be able
+to stop orders.
+
 Two distinctions on that screen are load-bearing. Being *closed* is not a
 fault: a kitchen that shut at 10pm is told everything else is ready, with no
 button offered, because the switch is already in the header. And *nobody can

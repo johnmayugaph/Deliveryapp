@@ -4810,12 +4810,60 @@ row read **"Taking orders"** directly beneath "Customers cannot find your
 shop", flatly contradicting it; it says *Live here* now, which is a statement
 about the service, which is what the row is.
 
-### What is still not right
-
-The header toggle still shows only what the shop set. A hidden shop reads an
-emerald **Bukas** in the header of every merchant screen and has to open
-Settings to learn that nobody can see it. The panel is where the truth is, and
-the header is where a shop looks first — that gap is deliberate scope, not an
-oversight, and it belongs to the merchant shell rather than to this screen.
-
 2050 tests pass; lint, typecheck, tests and build all exit zero.
+
+## The shell: the header stops claiming the shop is fine
+
+The settings panel above was the right home for the detail and the wrong place
+for the news. The Bukas/Sarado pill sits in the header of all seven merchant
+screens and was emerald whenever the shop's own switch was on, whatever the
+customer path would actually do — so a shop taken off the app read **open** on
+six screens out of seven, and the only screen that knew better was the one
+nobody opens when orders are simply not arriving.
+
+The shell now loads the same storefront state and says two things with it.
+
+**One line, when there is something to say.** `shellAlert` returns a single
+sentence or null, and it is deliberately *not* the panel's headline: the
+settings screen renders both, and two identical sentences stacked reads as a
+rendering bug rather than as emphasis. It distinguishes *nobody can find your
+shop* from *orders cannot be completed*, because those are different phone
+calls. It is silent in two cases — a shop that is fine, and one that simply
+closed for the night, where the pill already reads Sarado and a warning strip
+about a switch somebody just tapped is noise that gets ignored when it matters.
+
+**A pill that stops looking like an all-clear.** `opensToOrders` is
+`readyWhenOpen`: whether turning the switch on would actually let an order
+through. When it would not, the pill is amber rather than emerald. The switch
+itself is *not* disabled — it is the shop's own control and the most urgent one
+they have, and a kitchen that has run out of rice must still be able to stop
+orders while something else is wrong. Colour is not the message; the strip is.
+
+`loadStorefront` is now request-cached and keyed on the store id rather than
+taking a `Store` row, because `requireStoreAccess` is not itself cached and two
+row objects for the same shop would have missed the cache and paid for every
+query twice on the one screen that renders both the shell and the panel.
+
+### Verified
+
+**Ten more units** (2060 total), the load-bearing ones being that the strip
+speaks up on a hidden shop *even while it is also closed* — otherwise closing
+for the night would hide the real fault until morning — and that the strip's
+sentence never appears verbatim in the panel.
+
+**Six more mutations, all killed**: silencing the strip on a hidden shop (the
+original bug); making it shout at a shop that merely closed; collapsing
+not-found into cannot-finish; pointing the pill back at the switch alone;
+disabling the switch on a hidden shop; and dropping the request cache.
+
+**A browser on the queue screen in four states** — emerald and silent, amber
+with *Nobody can find your shop right now*, rose and silent when closed, amber
+with *Orders cannot be completed right now* on an empty menu.
+
+That browser pass found one more blemish: on the settings screen the strip sat
+directly above the panel explaining it and still offered "Bakit? →" as a link
+to the page you were standing on. The line stays, because every merchant screen
+should agree on it; the dead link does not, which is the one reason the
+component reads the path at all.
+
+2060 tests pass; lint, typecheck, tests and build all exit zero.

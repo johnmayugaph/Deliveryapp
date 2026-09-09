@@ -22,7 +22,7 @@ export default async function MerchantSettingsPage({
 
   const [memberCount, storefront] = await Promise.all([
     prisma.storeMember.count({ where: { storeId: access.store.id } }),
-    loadStorefront(access.store),
+    loadStorefront(access.store.id),
   ]);
 
   return (

@@ -295,3 +295,24 @@ export function needsSupport(state: StorefrontState): boolean {
     (blocker) => STOREFRONT_BLOCKERS[blocker].fix.kind === 'SUPPORT',
   );
 }
+
+/**
+ * The one line worth interrupting every merchant screen with, or null.
+ *
+ * The Bukas/Sarado pill in the shell is emerald whenever the shop's own switch
+ * is on, whatever the customer path would actually do — so a shop taken off
+ * the app read "open" on six screens out of seven and had to go looking in
+ * Settings to find out otherwise. This is what the shell says instead, and it
+ * is deliberately NOT the panel's headline: on the settings screen the two
+ * would otherwise sit one above the other saying the same words.
+ *
+ * Silent in two cases. A shop that is fine needs no banner, and neither does
+ * one that simply closed for the night — the pill already reads Sarado, and a
+ * warning strip about a switch somebody just tapped is noise.
+ */
+export function shellAlert(state: StorefrontState): string | null {
+  if (state.orderable || state.readyWhenOpen) return null;
+  return state.listed
+    ? 'Orders cannot be completed right now.'
+    : 'Nobody can find your shop right now.';
+}

@@ -10,6 +10,7 @@ import {
   clearedBy,
   needsSupport,
   screenToOpen,
+  shellAlert,
   storefrontState,
   type StorefrontBlocker,
   type StorefrontFacts,
@@ -399,5 +400,118 @@ describe('what the panel actually renders', () => {
     expect(panel).toMatch(/needsSupport\(state\)/);
     // No hardcoded menu path: the link comes from the blocker that needs it.
     expect(panel).not.toMatch(/\/menu`/);
+  });
+});
+
+// --- The shell, which used to say the opposite ----------------------------
+
+describe('what the merchant shell says', () => {
+  it('says nothing on a shop that is fine', () => {
+    expect(shellAlert(storefrontState(facts()))).toBeNull();
+  });
+
+  it('says nothing on a shop that merely closed for the night', () => {
+    // The pill already reads Sarado. A warning strip about a switch somebody
+    // just tapped is noise, and noise is what gets ignored when it matters.
+    expect(shellAlert(storefrontState(facts({ isOpen: false })))).toBeNull();
+  });
+
+  it('says nobody can find the shop when the listings filter it out', () => {
+    /**
+     * The case this exists for. The pill was emerald whenever the shop's own
+     * switch was on, so a shop TARA had taken off the app read "open" on six
+     * screens out of seven, and the only screen that knew better was the one
+     * nobody opens when orders are simply not arriving.
+     */
+    const line = shellAlert(storefrontState(facts({ isVisible: false })));
+    expect(line).toMatch(/find your shop/i);
+  });
+
+  it('distinguishes not-found from found-but-cannot-finish', () => {
+    const unpriced = shellAlert(
+      storefrontState(facts({ services: [{ ...LIVE_FOOD, hasDeliveryPricing: false }] })),
+    );
+    expect(unpriced).toMatch(/cannot be completed/i);
+    expect(unpriced).not.toMatch(/find your shop/i);
+  });
+
+  it('speaks up even while the shop is also closed', () => {
+    // Otherwise closing for the night would hide the real fault until morning.
+    const line = shellAlert(
+      storefrontState(facts({ isVisible: false, isOpen: false })),
+    );
+    expect(line).toMatch(/find your shop/i);
+  });
+
+  it('never repeats the panel’s own headline word for word', () => {
+    /**
+     * The settings screen renders both, one above the other. Two identical
+     * sentences stacked reads as a rendering bug rather than as emphasis.
+     */
+    const panel = readFileSync(
+      path.join(process.cwd(), 'src/components/merchant/StorefrontPanel.tsx'),
+      'utf8',
+    );
+    for (const input of [
+      facts({ isVisible: false }),
+      facts({ services: [{ ...LIVE_FOOD, hasDeliveryPricing: false }] }),
+    ]) {
+      const line = shellAlert(storefrontState(input));
+      expect(line).not.toBeNull();
+      expect(panel, line!).not.toContain(line!);
+    }
+  });
+});
+
+describe('the shell reads the rule rather than the switch', () => {
+  const layout = readFileSync(
+    path.join(process.cwd(), 'src/app/merchant/[storeId]/layout.tsx'),
+    'utf8',
+  );
+  const toggle = readFileSync(
+    path.join(process.cwd(), 'src/components/merchant/StoreOpenToggle.tsx'),
+    'utf8',
+  );
+
+  it('hands the toggle whether opening would change anything', () => {
+    expect(layout).toMatch(/opensToOrders=\{storefront\.readyWhenOpen\}/);
+    expect(toggle).toMatch(/opensToOrders/);
+  });
+
+  it('keeps the switch usable rather than disabling it on a hidden shop', () => {
+    // It is the shop's own control, and the most urgent one they have. A
+    // kitchen that has run out of rice must still be able to stop orders even
+    // while something else is wrong.
+    expect(toggle).not.toMatch(/disabled=\{[^}]*opensToOrders/);
+    expect(toggle).toMatch(/disabled=\{isPending\}/);
+  });
+
+  it('does not offer a tap to the screen it is already on', () => {
+    /**
+     * Seen in a browser. On the settings screen the strip sat directly above
+     * the panel that explains it, still offering "Bakit? →" as a link to the
+     * page you were standing on. The line stays — every merchant screen should
+     * agree on it — and the dead link does not.
+     */
+    const alert = readFileSync(
+      path.join(process.cwd(), 'src/components/merchant/StorefrontAlert.tsx'),
+      'utf8',
+    );
+    expect(alert).toMatch(/usePathname\(\)/);
+    expect(alert).toMatch(/pathname === settings/);
+  });
+
+  it('shares the query with the page inside it', () => {
+    // The layout wraps seven screens; paying for these queries twice on the
+    // one screen that renders both would be a needless round trip on it.
+    const loader = readFileSync(
+      path.join(process.cwd(), 'src/lib/merchant/storefront.ts'),
+      'utf8',
+    );
+    expect(loader).toMatch(/cache\(async function loadStorefront/);
+    // Keyed on the id: `requireStoreAccess` is not cached, so two Store row
+    // objects for the same shop would have missed the cache entirely.
+    expect(loader).toMatch(/storeId: string/);
+    expect(layout).toMatch(/loadStorefront\(access\.store\.id\)/);
   });
 });

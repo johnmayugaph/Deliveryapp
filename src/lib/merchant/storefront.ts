@@ -1,4 +1,4 @@
-import type { Store } from '@prisma/client';
+import { cache } from 'react';
 import { prisma } from '@/lib/prisma';
 import { findDeliveryFeeRule } from '@/lib/pricing/delivery-fee';
 import { getAllServices, isOrderableIn } from '@/lib/services/registry';
@@ -16,8 +16,17 @@ import {
  * it: the store row, the registry, `findDeliveryFeeRule` and the availability
  * flag on the menu. Nothing is restated — a copy of any of these rules is a
  * copy that can tell a shop it is open for business when it is not.
+ *
+ * Cached per request, and keyed on the id rather than taking a `Store` row for
+ * that reason: the merchant shell and the page inside it both want this, and
+ * `requireStoreAccess` is not itself cached, so two different row objects for
+ * the same store would have missed the cache and paid for every query twice on
+ * every merchant screen.
  */
-export async function loadStorefront(store: Store): Promise<StorefrontState> {
+export const loadStorefront = cache(async function loadStorefront(
+  storeId: string,
+): Promise<StorefrontState> {
+  const store = await prisma.store.findUniqueOrThrow({ where: { id: storeId } });
   const [city, availableMenuItems, allServices] = await Promise.all([
     prisma.city.findUnique({
       where: { id: store.cityId },
@@ -60,4 +69,4 @@ export async function loadStorefront(store: Store): Promise<StorefrontState> {
     services,
     availableMenuItems,
   });
-}
+});

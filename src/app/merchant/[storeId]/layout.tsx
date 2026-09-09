@@ -6,6 +6,8 @@ import { MerchantTabs } from '@/components/merchant/MerchantTabs';
 import { StoreOpenToggle } from '@/components/merchant/StoreOpenToggle';
 import { NotificationBell } from '@/components/notifications/NotificationBell';
 import { STORE_ROLE_LABELS } from '@/lib/merchant/staff-policy';
+import { loadStorefront } from '@/lib/merchant/storefront';
+import { StorefrontAlert } from '@/components/merchant/StorefrontAlert';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,7 +36,12 @@ export default async function MerchantStoreLayout({
     notFound();
   }
 
-  const memberships = await getAccessibleStores();
+  const [memberships, storefront] = await Promise.all([
+    getAccessibleStores(),
+    // Request-cached, so the settings screen's own panel does not pay for
+    // these queries a second time on the one screen that renders both.
+    loadStorefront(access.store.id),
+  ]);
 
   return (
     <div className="min-h-dvh bg-surface-sunken pb-6">
@@ -57,9 +64,15 @@ export default async function MerchantStoreLayout({
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <NotificationBell userId={access.user.id} />
-            <StoreOpenToggle storeId={access.store.id} isOpen={access.store.isOpen} />
+            <StoreOpenToggle
+              storeId={access.store.id}
+              isOpen={access.store.isOpen}
+              opensToOrders={storefront.readyWhenOpen}
+            />
           </div>
         </div>
+
+        <StorefrontAlert state={storefront} storeId={access.store.id} />
 
         <MerchantTabs storeId={access.store.id} role={access.role} />
       </header>
