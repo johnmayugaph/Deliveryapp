@@ -11,21 +11,15 @@ import type { SmsEnv } from '@/lib/auth/sms/types';
  * spelled `SEMAPHORE_API_KEY` by hand, in six files. So "swap the provider"
  * meant editing copy in places nobody would think to grep.
  *
- * This is the one list. Adding a gateway is a file like `twilio.ts` plus an
- * entry here, and the compile-enforced `Record` means it cannot be added
- * without deciding what it needs, what to tell an operator, and where a
- * development stub can redirect it.
- *
- * Why a second provider is worth the trouble at all: **OTP is the single
- * point of failure for the whole product.** No SMS means nobody signs in —
- * not a customer, not a shop, not support, not you. An expired card on the
- * gateway account locks everybody out of the application, and the only
- * evidence is sends that throw. That is the same argument as keeping a proven
- * restore rather than a dump.
+ * This is the one list. There is exactly one gateway on it today. That is not
+ * an oversight and this file is not scaffolding for a second: it is where the
+ * variable names, the setup copy and the development redirect live, so that a
+ * screen can say what is missing without naming a vendor, and so that a swap
+ * is one entry rather than a hunt through six files.
  */
 
-/** Every gateway with an adapter. A seventh forces a decision below. */
-export type SmsProviderName = 'semaphore' | 'twilio';
+/** Every gateway with an adapter. A second forces the decisions below. */
+export type SmsProviderName = 'semaphore';
 
 export interface SmsProviderSpec {
   /** What a screen calls it. */
@@ -58,8 +52,8 @@ export interface SmsProviderSpec {
 /*
  * The BUILDERS live in `build.ts`, not here, and the split is not tidiness.
  * `describeSmsSetup()` is rendered by the login screen — the most-visited page
- * in the application — and a spec carrying a `build()` would drag both HTTP
- * adapters into that module graph to produce a string. This project has been
+ * in the application — and a spec carrying a `build()` would drag the HTTP
+ * adapter into that module graph to produce a string. This project has been
  * bitten by exactly that once already: the customer's tracking map failed
  * because a client component imported a list from a module that reached for
  * `next/headers`. Data here, construction there.
@@ -82,62 +76,27 @@ export const SMS_PROVIDERS: Readonly<Record<SmsProviderName, SmsProviderSpec>> =
     fix: 'SEMAPHORE_API_KEY=… (from semaphore.co → Account → API Keys)',
     isConfigured: (env) => hasAll(env, ['SEMAPHORE_API_KEY']),
   },
-  twilio: {
-    label: 'Twilio',
-    /**
-     * The account pair, and then one of two ways to say who it is from —
-     * checked in `isConfigured` rather than listed, because "either of these"
-     * is not something a flat list of required variables can express.
-     */
-    requires: ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN'],
-    optional: ['TWILIO_FROM_NUMBER', 'TWILIO_MESSAGING_SERVICE_SID'],
-    endpointVar: 'TWILIO_ENDPOINT',
-    fix:
-      'TWILIO_ACCOUNT_SID=… TWILIO_AUTH_TOKEN=… and one of ' +
-      'TWILIO_FROM_NUMBER / TWILIO_MESSAGING_SERVICE_SID',
-    isConfigured: (env) =>
-      hasAll(env, ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN']) &&
-      (hasAll(env, ['TWILIO_FROM_NUMBER']) ||
-        hasAll(env, ['TWILIO_MESSAGING_SERVICE_SID'])),
-  },
 };
 
-/** Declaration order, used when nothing says otherwise. */
-export const DEFAULT_SMS_PROVIDER_ORDER: readonly SmsProviderName[] = [
-  'semaphore',
-  'twilio',
-];
+/** Declaration order. What a screen listing gateways iterates. */
+export const SMS_PROVIDER_NAMES: readonly SmsProviderName[] = ['semaphore'];
 
 export function isSmsProviderName(value: string): value is SmsProviderName {
   return Object.prototype.hasOwnProperty.call(SMS_PROVIDERS, value);
 }
 
 /**
- * The order to try gateways in, from `SMS_PROVIDER_ORDER`.
+ * The gateway this deployment can actually use, or undefined.
  *
- * Two deliberate properties, both about not losing a working gateway to a
- * typo:
- *
- *  - An unrecognised name is **ignored**, not fatal. A stray comma must not
- *    stop a login screen from working.
- *  - A configured provider the variable does not mention is **appended**
- *    rather than dropped. Otherwise `SMS_PROVIDER_ORDER=twilio` would
- *    silently disable a working Semaphore account, which is the opposite of
- *    what somebody reordering their providers means.
+ * Singular, deliberately. With one adapter there is nothing to order and
+ * nothing to fall back to, and a function returning an array would let a
+ * second gateway be added later and then silently ignored — the first entry
+ * used, the rest dead. Adding one has to change this signature, which makes
+ * "what happens when two are configured" a decision somebody takes rather
+ * than one that gets taken for them.
  */
-export function smsProviderOrder(env: SmsEnv): readonly SmsProviderName[] {
-  const named = (env.SMS_PROVIDER_ORDER ?? '')
-    .split(',')
-    .map((part) => part.trim().toLowerCase())
-    .filter(isSmsProviderName);
-
-  const seen = new Set<SmsProviderName>(named);
-  return [...named, ...DEFAULT_SMS_PROVIDER_ORDER.filter((name) => !seen.has(name))];
-}
-
-/** The providers this deployment can actually use, in order. */
-export function configuredSmsProviders(env: SmsEnv): readonly SmsProviderName[] {
-  return smsProviderOrder(env).filter((name) => SMS_PROVIDERS[name].isConfigured(env));
+export function configuredSmsProvider(env: SmsEnv): SmsProviderName | undefined {
+  return SMS_PROVIDER_NAMES.find((name) => SMS_PROVIDERS[name].isConfigured(env));
 }
 
 /**
@@ -160,12 +119,10 @@ export function devEndpointFor(
  * anybody remembering to mention it.
  */
 export function describeSmsSetup(): string {
-  return DEFAULT_SMS_PROVIDER_ORDER.map((name) => SMS_PROVIDERS[name].fix).join(
-    ' — or — ',
-  );
+  return SMS_PROVIDER_NAMES.map((name) => SMS_PROVIDERS[name].fix).join(' — or — ');
 }
 
 /** Just the variable names, for a screen that lists what is unset. */
 export function smsRequiredVars(): readonly string[] {
-  return DEFAULT_SMS_PROVIDER_ORDER.flatMap((name) => SMS_PROVIDERS[name].requires);
+  return SMS_PROVIDER_NAMES.flatMap((name) => SMS_PROVIDERS[name].requires);
 }

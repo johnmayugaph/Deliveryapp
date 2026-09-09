@@ -6178,6 +6178,15 @@ typecheck, tests and build all exit zero.
 
 ## A second SMS gateway, and the selection that had only ever had one
 
+> **SUPERSEDED, in part — see "Taking the second gateway back out" below.** The
+> Twilio adapter, the fallback chain and `SMS_PROVIDER_ORDER` described in this
+> entry were removed the same week. The reason Twilio was added was that
+> Semaphore appeared to be unreachable; the link was broken, not the gateway.
+> The registry and the vendor-free selection this entry describes are still in
+> the tree. Everything below is left as written, because a record that quietly
+> edits itself is how a document starts lying about what happened.
+
+
 `SmsSender` was written to be swapped. Its own comment says the gateway is
 *"the part of this system most likely to be swapped: Philippine bulk-SMS
 gateways differ in price, sender-name registration, and reliability, and
@@ -6293,3 +6302,80 @@ a launch. The difference is that it can now be answered in an afternoon with a
 Twilio trial rather than after a week of carrier approval.
 
 2401 tests pass; lint, typecheck, tests and build all exit zero.
+
+---
+
+## Taking the second gateway back out
+
+Semaphore works. The evidence that it did not was a broken link, which is a
+different fact about a different thing, and the whole case for a second gateway
+rested on it: *"a Philippine branded sender name takes days of carrier approval,
+and until one exists nobody can sign in at all."* With the local gateway
+reachable and funded, Twilio was a second vendor, a second bill and a second
+set of credentials in every deployment, bought against an outage risk nobody
+has measured.
+
+So it is out: `twilio.ts`, `fallback.ts`, `SMS_PROVIDER_ORDER` and the
+`.env.example` block that named all three.
+
+### What was kept, and why that is not a half-revert
+
+The registry stayed. `SMS_PROVIDERS`, `describeSmsSetup()`, `devEndpointFor()`
+and the guard test that no vendor variable is spelled outside
+`src/lib/auth/sms/` were the *other* half of that phase, and their argument
+never depended on there being two gateways: before them, `SEMAPHORE_API_KEY`
+appeared by hand in twenty-two places across six files, including the sentence
+a stranded operator reads on the login screen. Reverting that would put the
+vendor's name back into the login screen's copy and into `/admin/health`, which
+is the codebase's standing rule about hardcoded lists pointed at a gateway
+instead of a service.
+
+What did change shape is the one thing that could have rotted quietly:
+
+```
+- configuredSmsProviders(env): readonly SmsProviderName[]
++ configuredSmsProvider(env):  SmsProviderName | undefined
+```
+
+An array-returning selector with one adapter behind it is a trap. Add a second
+gateway later, and it lands in position two of a list whose only consumer reads
+position one — a provider configured, visible on `/admin/health`, in nobody's
+inbox. Singular, the signature has to change, and "what happens when both are
+configured" becomes a decision somebody takes rather than one taken for them.
+This is the fourth time in this project that the safe move was to make the
+*type* refuse the ambiguity rather than to leave a comment about it.
+
+### What the docs now say instead
+
+`LAUNCH.md` steps 1, 2 and 4 and `DEPLOY.md`'s gateway section were rewritten
+around one account, and they say the uncomfortable part rather than dropping
+it: the gateway is a single point of failure for the entire product, this build
+does not hedge it, and the mitigations are keeping credit on the account and
+watching the balance. Two new traps are named that the two-gateway version had
+buried — an account with a live key and a zero balance sends nothing, and
+`SEMAPHORE_SENDER_NAME` set to a name that has not been approved yet makes the
+gateway reject **every** message (HTTP 422). That second one is the more
+dangerous: it turns a pending approval into an outage, and it looks like an
+application bug.
+
+### Verified
+
+The provider suite went from 49 tests to 25 — the Twilio wire assertions and
+the chain tests are gone, and nothing else was. What remains is the seam: the
+builder/spec parity in both directions, one endpoint-override variable per
+provider, empty-string-is-not-configured, the endpoint redirect honoured
+outside production and ignored inside it, and the sweep for a vendor variable
+spelled anywhere outside the SMS directory.
+
+Two negative controls, because the mutation round is not in this loop:
+
+- Appending `process.env.SEMAPHORE_API_KEY` to `lib/deploy/sign-in-readiness.ts`
+  fails the sweep. It is not vacuous.
+- The "no adapter reads `NODE_ENV`" check now finds its adapters by looking for
+  `implements SmsSender` rather than by a filename list — it names the two real
+  adapters (`console.ts`, `semaphore.ts`) and asserts it found more than zero,
+  because the first version of it swept the whole directory and failed on
+  `types.ts`, where `NODE_ENV` is a *type declaration* rather than an adapter
+  reading the environment.
+
+2377 tests pass; lint, typecheck, tests and build all exit zero.

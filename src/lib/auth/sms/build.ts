@@ -1,5 +1,4 @@
 import { SemaphoreSmsSender } from '@/lib/auth/sms/semaphore';
-import { TwilioSmsSender } from '@/lib/auth/sms/twilio';
 import { type SmsProviderName } from '@/lib/auth/sms/registry';
 import type { SmsEnv, SmsSender } from '@/lib/auth/sms/types';
 
@@ -7,7 +6,7 @@ import type { SmsEnv, SmsSender } from '@/lib/auth/sms/types';
  * How to construct each gateway.
  *
  * Kept apart from `registry.ts` so a screen can read the provider LIST and the
- * setup copy without pulling two HTTP adapters into its bundle — see the note
+ * setup copy without pulling an HTTP adapter into its bundle — see the note
  * there. Compile-enforced over `SmsProviderName` in the same way, so a
  * provider added to the registry cannot ship without a builder.
  *
@@ -28,13 +27,4 @@ export const SMS_BUILDERS: Readonly<
           endpoint,
         )
       : new SemaphoreSmsSender(env.SEMAPHORE_API_KEY!, env.SEMAPHORE_SENDER_NAME),
-
-  twilio: (env, endpoint) =>
-    new TwilioSmsSender({
-      accountSid: env.TWILIO_ACCOUNT_SID!,
-      authToken: env.TWILIO_AUTH_TOKEN!,
-      from: env.TWILIO_FROM_NUMBER,
-      messagingServiceSid: env.TWILIO_MESSAGING_SERVICE_SID,
-      ...(endpoint ? { endpoint } : {}),
-    }),
 };

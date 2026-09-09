@@ -1,8 +1,7 @@
 import { ConsoleSmsSender } from '@/lib/auth/sms/console';
-import { FallbackSmsSender } from '@/lib/auth/sms/fallback';
 import { SMS_BUILDERS } from '@/lib/auth/sms/build';
 import {
-  configuredSmsProviders,
+  configuredSmsProvider,
   describeSmsSetup,
   devEndpointFor,
 } from '@/lib/auth/sms/registry';
@@ -12,16 +11,13 @@ export type { SmsEnv, SmsMessage, SmsSender, SmsSendResult } from '@/lib/auth/sm
 export { SmsDeliveryError } from '@/lib/auth/sms/types';
 export { ConsoleSmsSender } from '@/lib/auth/sms/console';
 export { SemaphoreSmsSender } from '@/lib/auth/sms/semaphore';
-export { TwilioSmsSender, type TwilioSmsOptions } from '@/lib/auth/sms/twilio';
-export { FallbackSmsSender } from '@/lib/auth/sms/fallback';
 export { SMS_BUILDERS } from '@/lib/auth/sms/build';
 export {
-  DEFAULT_SMS_PROVIDER_ORDER,
   SMS_PROVIDERS,
-  configuredSmsProviders,
+  SMS_PROVIDER_NAMES,
+  configuredSmsProvider,
   describeSmsSetup,
   isSmsProviderName,
-  smsProviderOrder,
   smsRequiredVars,
   type SmsProviderName,
   type SmsProviderSpec,
@@ -55,39 +51,29 @@ export class NoSmsSenderError extends Error {
  * throws, which is a different outcome with a different message.
  */
 export function smsSendingIsRefused(env: SmsEnv = process.env): boolean {
-  if (configuredSmsProviders(env).length > 0) return false;
+  if (configuredSmsProvider(env) !== undefined) return false;
   return env.NODE_ENV === 'production';
 }
 
 /**
  * Picks a sender from the environment.
  *
- * Three properties, in the order they matter:
+ * Two properties, in the order they matter:
  *
  * **A configured gateway always wins over the console.** Falling back to the
  * console is a development convenience and is refused in production: the
  * failure mode of a console "sender" in production is the worst kind — the
  * flow reports success and no code ever arrives.
  *
- * **Every configured gateway is used, not just the first.** Two providers
- * become a chain, because an SMS outage is a total outage: no code means
- * nobody signs in, support included. See `fallback.ts` for the one cost.
- *
  * **The provider is read from the registry**, never named here. That is the
- * whole point of the change: this function used to spell `SEMAPHORE_API_KEY`,
+ * whole point of the split: this function used to spell `SEMAPHORE_API_KEY`,
  * which made "swap the gateway" a hunt through six files.
  */
 export function resolveSmsSender(env: SmsEnv = process.env): SmsSender {
-  const configured = configuredSmsProviders(env);
+  const configured = configuredSmsProvider(env);
 
-  if (configured.length > 0) {
-    const senders = configured.map((name) =>
-      SMS_BUILDERS[name](env, devEndpointFor(name, env)),
-    );
-    // One provider stays one sender rather than a chain of one: a log line
-    // reading `semaphore` is what support expects, and `FallbackSmsSender`
-    // would report the same name anyway.
-    return senders.length === 1 ? senders[0]! : new FallbackSmsSender(senders);
+  if (configured !== undefined) {
+    return SMS_BUILDERS[configured](env, devEndpointFor(configured, env));
   }
 
   if (smsSendingIsRefused(env)) {

@@ -31,7 +31,7 @@ misbehaves in specific, documented ways without the others.
 | `DATABASE_URL` | Postgres 16. Nothing works without it. |
 | `AUTH_SECRET` | `openssl rand -hex 32`. Sessions are signed with it; rotating it signs everybody out. |
 | `NEXT_PUBLIC_DEFAULT_CITY_ID` | Which city a first-time visitor sees. Defaults to `city_manila`. |
-| An SMS gateway | **The only long-lead item.** Without one nobody can sign in — see below. `SEMAPHORE_API_KEY`, or Twilio's `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` + an origin. Set both to survive an outage. |
+| `SEMAPHORE_API_KEY` | **The only long-lead item.** Without an SMS gateway nobody can sign in — see below. |
 
 `DIRECT_URL` is needed by `prisma migrate` only, and only because the schema
 declares it: the CLI refuses to load a schema whose referenced variables are
@@ -48,21 +48,29 @@ approval that takes days. Nothing in this repository shortens that. Until it is
 in place **no one can sign in at all** — not a customer, not a shop, not you.
 Order that before you order the server.
 
-**You do not have to wait to test, though.** Twilio signs up in minutes and
-sends from a shared sender, which is enough to answer the question this project
-had never been able to answer — does a code actually reach a handset. Point
-`SMS_PROVIDER_ORDER` at it, keep the branded application running in parallel,
-and switch the order when the local sender is approved.
+**Send one real message before you trust the account.** Everything below the
+wire is verified — `src/tests/sms-wire.test.ts` asserts the exact bytes the
+gateway receives — and none of it can establish whether the key is live,
+whether the sender name is registered, or whether a handset in Manila rings.
+That is one command:
 
-**Configure both, not one.** Every session in the application starts with a
-code over SMS, so a single gateway is a single point of failure for the whole
-product: an expired card or an hour of provider downtime locks out customers,
-shops, riders and support simultaneously, and the only symptom is sends that
-throw. With two configured, the first to accept wins. The cost is stated in
-`lib/auth/sms/fallback.ts`: a gateway that accepts and then fails to answer is
-retried, so a customer can receive the same code twice. Both messages carry the
-same code against the same single-use record, so that is a few centavos and an
-annoyance rather than a security problem.
+```bash
+npm run sms:send-one -- 09XXXXXXXXX
+```
+
+**Know that the gateway is a single point of failure, and that this build does
+not hedge it.** Every session in the application starts with a code over SMS,
+so an expired card or an hour of provider downtime locks out customers, shops,
+riders and support simultaneously, and the only symptom is sends that throw.
+There is one adapter and no failover chain: `SEMAPHORE_ENDPOINT` cannot help,
+being ignored in production on purpose. What the deployment does do is say so
+rather than fail quietly — `/admin/health` reports a missing gateway, and the
+login screen itself reports it to whoever loads the page, because in that state
+nobody can reach `/admin/health` at all. Adding a second gateway is a file in
+`src/lib/auth/sms/` plus one registry entry; the selection is already free of
+vendor names, and `configuredSmsProvider` returning a single name is what makes
+"what happens when two are configured" a decision somebody has to take rather
+than one that gets taken for them.
 
 ---
 

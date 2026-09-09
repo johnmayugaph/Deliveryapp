@@ -22,15 +22,19 @@ are proven twice over; the container orchestration is not. Budget for
 
 | | Lead time | Blocks |
 | --- | --- | --- |
-| An SMS gateway you can send from | **minutes** (Twilio) | all testing, all sign-in |
-| A branded sender name (`TARA`, not a shortcode) | **days** — carrier approval | nothing, if you start with the above |
+| A Semaphore account with credit and a live API key | **hours** | all testing, all sign-in |
+| A branded sender name (`TARA`, not the account default) | **days** — carrier approval | nothing, if you start with the above |
 | A server, a domain, TLS | hours | going public |
 
-The important change from earlier advice: **testing no longer waits on the
-branded sender.** Twilio self-serves in minutes and sends from a shared sender,
-which is enough to answer the one question this project has never been able to
-answer — does a code actually reach a handset. Start the branded application in
-parallel and switch the order later with one environment variable.
+**Testing does not wait on the branded sender.** A funded account with a key
+sends from the account's default sender, and that is enough to answer the one
+question this project could never answer from code — does a code actually reach
+a handset. Start the branded application in parallel; when it is approved it is
+one variable (`SEMAPHORE_SENDER_NAME`) and a restart.
+
+Set that variable to a name that is not yet registered and Semaphore rejects
+the message outright, so an approval you have not received yet is a gateway
+that has stopped working. Leave it unset until the approval lands.
 
 ---
 
@@ -40,17 +44,21 @@ Nothing else can be tested until a code reaches a phone. Sign-in is OTP-only,
 so with no gateway **nobody can sign in — not a customer, not a shop, not
 you.**
 
-Open a [Twilio](https://twilio.com) account, take the trial credit, note the
-Account SID, the Auth Token and the trial number. Then, from a machine with
-outbound internet:
+Open a [Semaphore](https://semaphore.co) account, **buy credit** — an account
+with a valid key and a zero balance sends nothing — and take the API key from
+Account → API Keys. Then, from a machine with outbound internet:
 
 ```bash
-TWILIO_ACCOUNT_SID=… TWILIO_AUTH_TOKEN=… TWILIO_FROM_NUMBER=+1… \
-  npm run sms:send-one -- 09XXXXXXXXX
+SEMAPHORE_API_KEY=… npm run sms:send-one -- 09XXXXXXXXX
 ```
 
-Use your own number. On a trial account it must be verified in the Twilio
-console first — if it is not, the error says so precisely: `(code 21608)`.
+Use your own number, and read the output rather than the exit code: *accepted*
+means queued, not delivered. Check the handset, and check the message id
+against Semaphore's own dashboard for the final status.
+
+Do not set `SEMAPHORE_SENDER_NAME` yet. Unset, the message goes out under the
+account default; set to a name that has not been approved, the gateway rejects
+it (HTTP 422) and you will spend the afternoon debugging the wrong layer.
 
 **Do not skip this to save an hour.** It is the only step whose failure is
 invisible from the code: everything in this repository about SMS is verified at
@@ -58,14 +66,18 @@ the wire and nothing is verified at the carrier.
 
 ## 2 — Start the branded sender application
 
-In parallel, not after. Apply to [Semaphore](https://semaphore.co) (or another
-local aggregator) for a registered sender name, and buy credit. This is the
-multi-day item. A message from `TARA` rather than a random shortcode is worth
-real money in conversion, but it blocks nothing while Twilio is carrying the
-load.
+In parallel, not after. Apply through the same Semaphore account for a
+registered sender name. This is the multi-day item: a code arriving from `TARA`
+rather than the account default is worth real money in conversion and in the
+number of people who believe the message, but it blocks nothing while step 1 is
+carrying the load.
 
-Most aggregators want DTI or SEC business registration for a branded sender.
-Have that ready.
+Semaphore wants DTI or SEC business registration for a branded sender. Have
+that ready.
+
+When it is approved, set `SEMAPHORE_SENDER_NAME=TARA`, restart, and run
+`npm run sms:send-one` once more — the approval is on their side, and the only
+way to know it took effect is a message that arrives with the new name on it.
 
 ## 3 — A server, Postgres 16, and a domain
 
@@ -84,23 +96,27 @@ AUTH_SECRET="$(openssl rand -hex 32)"  # rotating it signs everybody out
 NEXT_PUBLIC_DEFAULT_CITY_ID="city_manila"
 ```
 
-Then **both** SMS gateways, not one:
+Then the gateway:
 
 ```bash
-TWILIO_ACCOUNT_SID=…  TWILIO_AUTH_TOKEN=…  TWILIO_FROM_NUMBER=…
-SEMAPHORE_API_KEY=…   SEMAPHORE_SENDER_NAME=TARA   # once step 2 lands
-SMS_PROVIDER_ORDER="semaphore,twilio"               # cheapest first, Twilio as the net
+SEMAPHORE_API_KEY=…
+SEMAPHORE_SENDER_NAME=TARA   # ONLY once step 2 is approved. Wrong = every send rejected.
 ```
 
-**Why both.** Every session in the application starts with a code over SMS, so
-one gateway is a single point of failure for the entire product: an expired
-card or an hour of provider downtime locks out customers, shops, riders and
-support simultaneously, and the only symptom is sends that throw. With two
-configured the first to accept wins. The one cost is stated in
-`lib/auth/sms/fallback.ts` — a gateway that accepts and then times out is
-retried, so a customer can occasionally get the same code twice. Both messages
-carry the same code against the same single-use record, so that is a few
-centavos, not a security hole.
+**Know what you are accepting here.** Every session in the application starts
+with a code over SMS, so this one account is a single point of failure for the
+entire product: an expired card, an empty balance or an hour of provider
+downtime locks out customers, shops, riders and support simultaneously. There
+is one adapter and no failover — this build does not hedge it. What it does do
+is refuse to pretend: with no gateway configured a production deployment will
+not start a login, `/admin/health` reports it, and the login screen reports it
+to whoever loads the page, because in that state nobody can reach
+`/admin/health` at all.
+
+So the operational answers are the boring ones: **keep credit on the account**
+and put the balance on whatever you already check daily. A second gateway is a
+file in `src/lib/auth/sms/` plus one registry entry if you later decide the
+outage risk is worth the second bill.
 
 Also set `BACKUP_ENCRYPTION_KEY` now. Without it your database dumps hold every
 customer's phone number and home address in plaintext.

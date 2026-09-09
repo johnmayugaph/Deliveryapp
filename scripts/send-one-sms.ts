@@ -25,10 +25,9 @@ import {
   normalisePhilippineMobile,
 } from '../src/lib/auth/phone';
 import {
-  DEFAULT_SMS_PROVIDER_ORDER,
-  FallbackSmsSender,
   NoSmsSenderError,
   SMS_PROVIDERS,
+  SMS_PROVIDER_NAMES,
   describeSmsSetup,
   resolveSmsSender,
   SmsDeliveryError,
@@ -128,16 +127,13 @@ async function main() {
           'No SMS gateway is configured, so there is nothing to test.',
           '',
           'Set one of these in .env and run again:',
-          ...DEFAULT_SMS_PROVIDER_ORDER.map((name) => {
+          ...SMS_PROVIDER_NAMES.map((name) => {
             const spec = SMS_PROVIDERS[name];
             return `  ${spec.label}: ${spec.fix}`;
           }),
           '',
-          'Twilio is the one that can be signed up for in minutes, which makes',
-          'it the way to answer "does a code reach a handset" before a branded',
-          'Philippine sender name has been approved. Semaphore is the cheaper',
-          'answer afterwards. Without a registered sender name a gateway uses',
-          'the account default; an unregistered one is rejected outright.',
+          'Without a registered sender name the gateway uses the account',
+          'default; an unregistered one is rejected outright.',
         ].join('\n'),
       );
       process.exit(1);
@@ -157,11 +153,6 @@ async function main() {
   const withEndpoint = sender as { endpoint?: unknown };
   if (typeof withEndpoint.endpoint === 'string') {
     console.log(`  endpoint: ${withEndpoint.endpoint}`);
-  }
-  if (sender instanceof FallbackSmsSender) {
-    // Which gateway actually delivers is decided at send time, so say what
-    // the chain is rather than implying one.
-    console.log(`  chain:    ${sender.providers.join(' → ')} (first to accept wins)`);
   }
   console.log(`  message:  ${args.message}`);
   console.log(`  length:   ${args.message.length} chars`);
