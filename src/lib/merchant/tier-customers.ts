@@ -1,6 +1,7 @@
 import { LoyaltyEntryType, OrderStatus } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { REPORT_WINDOW_DAYS } from '@/lib/merchant/reporting';
+import { platformAbsorbedCentavos } from '@/lib/settlement/policy';
 import { getProgramme, getTiersWithBenefits } from '@/lib/loyalty/programme';
 import { tierFor, tierWindowStart } from '@/lib/loyalty/policy';
 import {
@@ -29,6 +30,15 @@ import {
  * already use.
  */
 
+/** How many of this shop's regulars sit at one rung, and what they spend. */
+export interface RegularsAtTier {
+  tierId: string;
+  name: string;
+  customers: number;
+  orders: number;
+  subtotalCentavos: number;
+}
+
 export interface StoreTierStanding {
   /** Completed orders in the window, from customers currently in any tier. */
   tierOrders: number;
@@ -44,8 +54,30 @@ export interface StoreTierStanding {
    * settlement entry is computed from the subtotal and the commission alone.
    */
   loyaltyDiscountAbsorbedCentavos: number;
+  /**
+   * Everything TARA absorbed on this shop's orders in the window, of which the
+   * figure above is the loyalty part.
+   *
+   * Both, because one of them alone was a trap. This screen showed the loyalty
+   * figure labelled "TARA covered", and the History tab shows the four-column
+   * total under the same words — and since both were put on the same ninety
+   * days, a shop comparing them got two different numbers with nothing to
+   * explain the gap. Computed with `platformAbsorbedCentavos`, the function
+   * settlement was charged and the History tab reports, so the two figures are
+   * the same number by construction rather than by coincidence.
+   */
+  absorbedCentavos: number;
   /** Distinct customers in a tier who completed an order here. */
   tierCustomers: number;
+  /**
+   * This shop's own regulars, split across the ladder.
+   *
+   * The page is headed "Your regulars" and answered with a single count, while
+   * the query classified every customer into a tier to compute that count and
+   * threw the classification away. Rungs nobody here has reached are omitted:
+   * a shop wants to know who its regulars are, not which bands exist.
+   */
+  regularsByTier: RegularsAtTier[];
   /** How many days the numbers cover. */
   windowDays: number;
   /** The ladder, as a shop reads it. Empty when no tier confers anything. */
@@ -80,7 +112,13 @@ export async function storeTierStanding(
       select: {
         customerId: true,
         subtotalCentavos: true,
+        // All four discount columns, because `platformAbsorbedCentavos` reads
+        // all four and this screen has to report the same total the History
+        // tab does.
+        promoDiscountCentavos: true,
+        subscriptionDiscountCentavos: true,
         loyaltyDiscountCentavos: true,
+        walletCreditAppliedCentavos: true,
       },
     }),
   ]);
@@ -94,7 +132,12 @@ export async function storeTierStanding(
       (sum, row) => sum + row.loyaltyDiscountCentavos,
       0,
     ),
+    absorbedCentavos: orders.reduce(
+      (sum, row) => sum + platformAbsorbedCentavos(row),
+      0,
+    ),
     tierCustomers: 0,
+    regularsByTier: [] as RegularsAtTier[],
     windowDays,
     tiers: [] as MerchantTierView[],
   };
@@ -134,20 +177,42 @@ export async function storeTierStanding(
     earned.map((row) => [row.accountId, row._sum.points ?? 0]),
   );
 
-  const tierNameByUser = new Map<string, string>();
+  /* The id as well as the name: the split below groups on the id, so two
+     rungs that somehow carry the same name cannot be merged into one. */
+  const tierByUser = new Map<string, { id: string; name: string }>();
   for (const account of accounts) {
     const { current } = tierFor(ladder, pointsByAccount.get(account.id) ?? 0);
-    if (current !== null) tierNameByUser.set(account.userId, current.name);
+    if (current !== null) {
+      tierByUser.set(account.userId, { id: current.id, name: current.name });
+    }
   }
 
   let tierOrders = 0;
   let tierSubtotalCentavos = 0;
   const seen = new Set<string>();
+  /* Keyed by tier id, so two rungs that somehow share a name stay apart. */
+  const perTier = new Map<
+    string,
+    { name: string; customers: Set<string>; orders: number; subtotalCentavos: number }
+  >();
+
   for (const row of orders) {
-    if (!tierNameByUser.has(row.customerId)) continue;
+    const tier = tierByUser.get(row.customerId);
+    if (tier === undefined) continue;
     tierOrders += 1;
     tierSubtotalCentavos += row.subtotalCentavos;
     seen.add(row.customerId);
+
+    const bucket = perTier.get(tier.id) ?? {
+      name: tier.name,
+      customers: new Set<string>(),
+      orders: 0,
+      subtotalCentavos: 0,
+    };
+    bucket.customers.add(row.customerId);
+    bucket.orders += 1;
+    bucket.subtotalCentavos += row.subtotalCentavos;
+    perTier.set(tier.id, bucket);
   }
 
   return {
@@ -155,6 +220,23 @@ export async function storeTierStanding(
     tierOrders,
     tierSubtotalCentavos,
     tierCustomers: seen.size,
+    /* In LADDER order, not by how many customers each has: a shop reads the
+       rungs in the order it was shown them just below, and a list that
+       reshuffled as customers moved between rungs would be unreadable. */
+    regularsByTier: ladder.flatMap((tier) => {
+      const bucket = perTier.get(tier.id);
+      return bucket === undefined
+        ? []
+        : [
+            {
+              tierId: tier.id,
+              name: bucket.name,
+              customers: bucket.customers.size,
+              orders: bucket.orders,
+              subtotalCentavos: bucket.subtotalCentavos,
+            },
+          ];
+    }),
     tiers: views,
     programmeIsOn: true,
   };

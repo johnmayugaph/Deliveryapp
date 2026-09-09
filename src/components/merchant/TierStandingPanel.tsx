@@ -41,12 +41,13 @@ export function TierStandingPanel({ standing }: { standing: StoreTierStanding })
     totalOrders,
     tierSubtotalCentavos,
     loyaltyDiscountAbsorbedCentavos,
+    absorbedCentavos,
     tierCustomers,
+    regularsByTier,
     windowDays,
     tiers,
     programmeIsOn,
   } = standing;
-
   const share =
     totalOrders === 0 ? 0 : Math.round((tierOrders / totalOrders) * 100);
 
@@ -66,9 +67,9 @@ export function TierStandingPanel({ standing }: { standing: StoreTierStanding })
           </p>
           {loyaltyDiscountAbsorbedCentavos > 0 ? (
             <p className="mt-1">
-              While it was running, TARA covered{' '}
-              {formatCentavos(loyaltyDiscountAbsorbedCentavos)} on your orders.
-              Your payouts were not touched.
+              While it was running, statuses took{' '}
+              {formatCentavos(loyaltyDiscountAbsorbedCentavos)} off customers&rsquo;
+              bills on your orders. Your payouts were not touched.
             </p>
           ) : null}
         </div>
@@ -114,12 +115,55 @@ export function TierStandingPanel({ standing }: { standing: StoreTierStanding })
           value={formatCentavos(tierSubtotalCentavos)}
           note="on food, before commission"
         />
+        {/*
+          Named for what it is. It said "TARA covered", which is also what the
+          History tab calls its own figure — and that one counts every kind of
+          discount, not just a status. Same label, same ninety days, two
+          different numbers, and nothing on either screen to explain the gap.
+        */}
         <Figure
-          label="TARA covered"
+          label="Statuses covered"
           value={formatCentavos(loyaltyDiscountAbsorbedCentavos)}
           note="off their bills, not off your payout"
         />
       </div>
+
+      {/*
+        Which regulars, and at which rung.
+
+        Its own block rather than a line on each ladder card below, because
+        those cards are the tiers that confer a benefit a shop is told about —
+        `merchantTierViews` drops the rest — and on a programme whose statuses
+        carry nothing yet there are no cards at all. A page headed "Your
+        regulars" has to answer that question in the state every deployment
+        starts in, not only once somebody attaches a perk.
+
+        Rungs nobody here has reached are already absent from `regularsByTier`,
+        so this lists who the shop has and not which bands exist.
+      */}
+      {regularsByTier.length > 0 ? (
+        <div className="overflow-hidden rounded-xl bg-surface shadow-sm ring-1 ring-black/5">
+          <p className="border-b border-black/5 px-4 py-2 text-[11px] font-medium uppercase tracking-wide text-ink-muted">
+            Where your regulars sit
+          </p>
+          <ul className="divide-y divide-black/5">
+            {regularsByTier.map((row) => (
+              <li
+                key={row.tierId}
+                className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 px-4 py-2.5"
+              >
+                <span className="text-[13px] font-semibold">{row.name}</span>
+                <span className="text-[11px] tabular-nums text-ink-muted">
+                  {row.customers}{' '}
+                  {row.customers === 1 ? 'customer' : 'customers'} &middot;{' '}
+                  {row.orders} {row.orders === 1 ? 'order' : 'orders'} &middot;{' '}
+                  {formatCentavos(row.subtotalCentavos)} of food
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       {/* Not `text-ink-faint`. This was the palest text on the screen and it
           carries the one fact most likely to make a shop think the numbers are
@@ -132,6 +176,25 @@ export function TierStandingPanel({ standing }: { standing: StoreTierStanding })
         whoever that customer is <strong>today</strong>, not what they were when
         they ordered.
       </p>
+
+      {/* How this figure sits inside the one on the History tab. Both are over
+          the same ninety days and the same completed orders, so the two
+          numbers reconcile exactly — which they could not be seen to do while
+          both were called "TARA covered". */}
+      {absorbedCentavos > 0 ? (
+        <p className="px-1 text-[11px] leading-relaxed text-ink-muted">
+          Statuses are part of a larger figure: TARA covered{' '}
+          <strong className="font-semibold text-ink">
+            {formatCentavos(absorbedCentavos)}
+          </strong>{' '}
+          on your orders over the same days, counting promo codes, Plus
+          benefits and credits as well.{' '}
+          {loyaltyDiscountAbsorbedCentavos === absorbedCentavos
+            ? 'All of it was statuses.'
+            : `${formatCentavos(loyaltyDiscountAbsorbedCentavos)} of it was statuses.`}{' '}
+          The <strong>History</strong> tab shows the same total, order by order.
+        </p>
+      ) : null}
 
       {/* The claim the whole screen exists to make, stated once and plainly.
           A shop cannot check it from an order card, which shows a subtotal and

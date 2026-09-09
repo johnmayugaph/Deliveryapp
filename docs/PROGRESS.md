@@ -5186,3 +5186,100 @@ real deadline, the rider wait saying *"56s for TARA to find a rider… nothing f
 you to do"*, and nothing at all on the order being cooked.
 
 2123 tests pass; lint, typecheck, tests and build all exit zero.
+
+## Regulars: which regulars, and whose money
+
+The Regulars tab was the last of the seven merchant screens to be read closely,
+and the two defects on it were both **the same claim made twice**.
+
+### Two tabs, one label, two numbers
+
+The figure was labelled **"TARA covered"** and it was
+`loyaltyDiscountAbsorbedCentavos` — the loyalty column alone. The History tab
+calls its own figure the same thing, and that one is
+`platformAbsorbedCentavos`: promo codes, Plus benefits, loyalty and credits.
+Same words, and — after the previous phase put both screens on
+`REPORT_WINDOW_DAYS` — the same ninety days and the same completed orders. So a
+shop that opened both tabs got two different amounts under one label, with
+nothing on either page to explain the gap. Unifying the windows is what made
+this visible; it was there before, hidden behind two periods nobody could
+compare.
+
+The figure is now labelled for what it is — **"Statuses covered"** — and the
+query returns `absorbedCentavos` beside it, computed with
+`platformAbsorbedCentavos`, the function settlement is charged and History
+reports. The screen then reconciles them itself: *"Statuses are part of a larger
+figure: TARA covered ₱85.00 on your orders over the same days… ₱35.00 of it was
+statuses. The History tab shows the same total, order by order."* The two
+numbers agree **by construction** rather than by anybody remembering to keep
+them in step, and the paragraph names the other tab so the claim is checkable
+row by row.
+
+### The page asked "which regulars" and answered with a count
+
+`storeTierStanding` classified **every** customer into a tier — that is how the
+single count is produced — and then threw the classification away. A page headed
+*"Your regulars"* could say there were two and not which rung either was on.
+
+It now returns `regularsByTier`: per rung, how many of this shop's customers,
+how many orders, and how much food. Grouped on the **tier id** rather than the
+name, so two rungs that somehow share a name cannot be merged; in **ladder
+order**, not by size, because a list that reshuffled as customers moved between
+rungs would be unreadable; and rungs nobody at this shop has reached are
+omitted, because a shop wants to know who its regulars are, not which bands
+exist. Customers and orders are counted separately — one regular ordering eleven
+times is one regular.
+
+### The browser found the fix in the wrong place
+
+The split was first written as a line inside each ladder card, which reads well
+and is wrong. `merchantTierViews` **drops every tier that confers nothing a shop
+is told about**, deliberately — a card saying a tier exists and does nothing
+visible here is noise. So on a programme whose statuses carry no benefits yet,
+which is the state every deployment starts in and the state of the seeded
+database, there are no cards at all, and the page headed "Your regulars" still
+could not say which ones. Units passed; the browser printed *"No status
+currently carries a benefit"* and no split.
+
+It is now its own block, gated on `regularsByTier.length` and nothing else. The
+test that had asserted the old placement asserts the new property instead: the
+block is driven by the split, mentions no `regularsAt` lookup, and appears
+**before** the `tiers.length === 0` branch in the file. Two mutations pin it —
+re-gating it on `tiers.length > 0`, and moving it below that branch — and both
+are killed.
+
+### Verified in four places
+
+**Twelve new units** (2135 total), reading the query and the panel as text
+through the comment-stripping `codeOnly()` helper — the fourth time in this
+project a whole-file regex has been satisfied by a doc comment beside the code
+it was meant to check.
+
+**Six mutations, all killed** first pass, including the two placement mutants
+above, counting orders as customers, listing empty rungs as zeroes, and grouping
+on the tier name.
+
+**Eighteen live-database checks** against a real ladder, built by the script
+rather than assumed: a programme, two rungs, two customers, three completed
+orders and a discount of each kind. The load-bearing one is a single equality —
+`storeTierStanding(...).absorbedCentavos === loadMerchantHistory(...).absorbedCentavos`
+— asserted **on both branches**, with the programme off (0 = 0, the
+already-absorbed path) and with it on (₱85.00 = ₱85.00). Which rung the two
+customers land on is not asserted flat: it is derived with `tierFor` from the
+points the accounts actually carry, and the split has to agree with that.
+
+Two guards were found by running into them, and both are right: an `EARNED` row
+must name the order it came from (`loyalty_entry_earned_needs_order`), so the
+orders are created first; and deleting an order `SET NULL`s
+`LoyaltyEntry.relatedOrderId`, which is an UPDATE the append-only trigger
+refuses — so the points come down before the orders do, inside
+`tara.allow_purge`.
+
+**A browser** on both branches. Programme on: the split renders *"REGS Suki — 2
+customers · 3 orders · ₱1,200.00 of food"* with no benefit cards on the page at
+all, the figures agree with it, and History reports the same ₱85.00. Programme
+off: *"While it was running, statuses took ₱35.00 off customers' bills on your
+orders. Your payouts were not touched."*
+
+2135 tests pass; lint, typecheck, tests and build all exit zero. That is all
+seven merchant tabs read closely.

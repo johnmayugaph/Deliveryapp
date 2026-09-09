@@ -239,6 +239,22 @@ customer had. The one exception is dispatch priority, which really does reorder
 the rider queue, and the screen says so plainly rather than only listing what
 a status gives.
 
+Its money figure is labelled **"Statuses covered"**, not "TARA covered", and
+that is deliberate: the History tab uses those words for a figure that counts
+promo codes, Plus benefits and credits as well, and over the same ninety days
+the two would have shown different amounts under one label. The screen now
+reconciles them itself — it prints the larger figure, says how much of it was
+statuses, and names the History tab as the place to check it order by order.
+Both come from `platformAbsorbedCentavos`, the function settlement is charged
+with, so they cannot drift apart.
+
+It also says **which** regulars: per rung of the ladder, how many of this shop's
+customers are on it, how many orders they placed and how much food that was.
+Rungs nobody here has reached are left out, and the split is shown whether or
+not a status happens to carry a benefit — a page headed "Your regulars" has to
+answer that in the state a deployment starts in, not only once somebody attaches
+a perk.
+
 ### If somebody loses their phone
 
 The phone number is the identity, so losing it used to mean losing the account.
