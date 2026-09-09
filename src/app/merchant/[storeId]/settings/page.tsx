@@ -2,12 +2,16 @@ import { StoreRole } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import Link from 'next/link';
 import { requireStoreAccess, roleSatisfies } from '@/lib/merchant/access';
-import { getAllServices } from '@/lib/services/registry';
+import { loadStorefront } from '@/lib/merchant/storefront';
 import { PrepTimeForm } from '@/components/merchant/PrepTimeForm';
+import {
+  StorefrontPanel,
+  StorefrontServices,
+} from '@/components/merchant/StorefrontPanel';
 
 export const dynamic = 'force-dynamic';
 
-/** Store settings, and who can work it. */
+/** Store settings: whether customers can order, what the shop can change. */
 export default async function MerchantSettingsPage({
   params,
 }: {
@@ -16,19 +20,28 @@ export default async function MerchantSettingsPage({
   const { storeId } = await params;
   const access = await requireStoreAccess(storeId);
 
-  const [memberCount, services] = await Promise.all([
+  const [memberCount, storefront] = await Promise.all([
     prisma.storeMember.count({ where: { storeId: access.store.id } }),
-    getAllServices(),
+    loadStorefront(access.store),
   ]);
-
-  // Which verticals this store is orderable in — read from the registry, so a
-  // store flagged for MART shows it the day MART activates.
-  const storeServices = services.filter((service) =>
-    access.store.serviceKeys.includes(service.key),
-  );
 
   return (
     <main className="space-y-4 px-4 py-4 pb-8">
+      {/*
+        First, above the prep time, because it is the answer to the question a
+        shop with an empty queue is actually asking. Until this existed the
+        merchant app had no reading of `isVisible` at all: a shop taken off the
+        app from the console saw an emerald "Bukas" in its own header and
+        nothing else, while every customer listing filtered it out and
+        `quoteCheckout` refused outright.
+      */}
+      <StorefrontPanel
+        state={storefront}
+        storeId={access.store.id}
+        slug={access.store.slug}
+        addressLine={access.store.addressLine}
+      />
+
       <section
         aria-labelledby="prep-heading"
         className="rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5"
@@ -56,22 +69,15 @@ export default async function MerchantSettingsPage({
         <h2 id="services-heading" className="text-[13px] font-semibold">
           Services
         </h2>
-        <ul className="mt-2 space-y-1.5">
-          {storeServices.map((service) => (
-            <li key={service.key} className="flex items-center justify-between text-xs">
-              <span className="font-medium">{service.displayName}</span>
-              <span
-                className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-                  service.isActive
-                    ? 'bg-emerald-50 text-emerald-800'
-                    : 'bg-surface-sunken text-ink-faint'
-                }`}
-              >
-                {service.isActive ? 'Live' : 'Coming soon'}
-              </span>
-            </li>
-          ))}
-        </ul>
+        {/*
+          The badge used to read `service.isActive ? 'Live' : 'Coming soon'` —
+          the registry's GLOBAL flag, on a screen belonging to a shop that
+          stands in one city. `isOrderableIn` exists precisely because those
+          diverge from the first single-city launch onwards, so a Baguio shop
+          was shown an emerald "Live" against a service running only in Cebu.
+          It now reads the same rule the customer's tiles read.
+        */}
+        <StorefrontServices state={storefront} />
         <p className="mt-2 text-[11px] text-ink-faint">
           Contact support to add a service.
         </p>
@@ -79,7 +85,14 @@ export default async function MerchantSettingsPage({
 
       {/* The list itself moved to its own tab once it became editable: adding
           somebody, changing a role and withdrawing an invitation are a
-          screenful, and they do not belong beside a prep-time field. */}
+          screenful, and they do not belong beside a prep-time field.
+
+          What each role GRANTS is not restated here either. A hand-written
+          summary sat here saying "Staff: queue lang. Manager: menu at settings
+          din." — wrong on both counts, silent about Payouts, and the second
+          copy of a sentence already deleted from the staff screen. The
+          explanation is derived from `BACK_OFFICE_AREAS` and lives where a
+          role is actually chosen. */}
       <section
         aria-labelledby="members-heading"
         className="rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5"
@@ -91,7 +104,8 @@ export default async function MerchantSettingsPage({
           {memberCount === 1
             ? 'Just you, for now.'
             : `${memberCount} people can work this store.`}{' '}
-          Staff: queue lang. Manager: menu at settings din. May-ari: lahat.
+          What each role can see and do is on the Staff tab, beside the roles
+          themselves.
         </p>
         <Link
           href={`/merchant/${access.store.id}/staff`}

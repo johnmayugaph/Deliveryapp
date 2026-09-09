@@ -166,7 +166,24 @@ export const BACK_OFFICE_AREAS: readonly BackOfficeArea[] = [
     tab: 'Settings',
     path: 'settings',
     needs: StoreRole.STAFF,
-    grants: 'See the shop’s details and opening state.',
+    grants:
+      'See whether customers can order, the shop’s address, and its page as a customer sees it.',
+    sensitive: false,
+  },
+  {
+    key: 'open-close',
+    tab: null,
+    path: null,
+    needs: StoreRole.STAFF,
+    /**
+     * Missing entirely until the settings screen was gone through, and the
+     * largest thing a staff member can do: `setStoreOpenAction` takes STAFF
+     * deliberately — somebody has to be able to close when the rice runs out
+     * and the owner is not there — so the switch that stops every order
+     * arriving sits in the header of every merchant screen. The queue entry
+     * above says "accept and reject orders", which badly understates it.
+     */
+    grants: 'Open and close the shop, which starts and stops orders arriving.',
     sensitive: false,
   },
   {
@@ -174,7 +191,17 @@ export const BACK_OFFICE_AREAS: readonly BackOfficeArea[] = [
     tab: null,
     path: null,
     needs: StoreRole.MANAGER,
-    grants: 'Change the shop’s name, address, map pin and preparation time.',
+    /**
+     * This said "Change the shop’s name, address, map pin and preparation
+     * time." Only the last of those is true: `merchant-actions.ts` writes
+     * `preparationMinutes` and nothing else about the store, and name, address
+     * and coordinates are set from `/admin/stores` with the map picker. The
+     * settings screen now says so in as many words, and this sentence claims
+     * only what a manager can actually do — the third false grant this map has
+     * caught, after the manager’s staff powers and the owner’s empty rung.
+     */
+    grants:
+      'Change how long the shop tells customers it needs to prepare an order.',
     sensitive: false,
   },
 ];

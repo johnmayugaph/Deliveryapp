@@ -4686,3 +4686,136 @@ worth keeping is that a test which reads source is pinning a location, and a
 location is not behaviour.
 
 2021 tests pass; lint, typecheck, tests and build all exit zero.
+
+## Settings: whether customers can actually order
+
+The shop's own settings screen showed three things: a prep-time field, a
+services list, and a member count. Nothing about the one question a shop with
+an empty queue is asking.
+
+### The screen said nothing about the gate that stops orders
+
+`Store.isVisible` is read by every customer path there is — the FOOD listing,
+the home screen's picks, global search, `/stores/[slug]`, and `quoteCheckout`,
+which refuses to price an order at all — and by **nothing on the merchant
+side**. Withdraw a shop's visibility from the console and it sees an emerald
+"Bukas" in its own header, an open kitchen, and no orders, with nothing
+anywhere in its app to explain it. The console has carried
+`readyForCustomers = isVisible && menuItems > 0 && owners > 0` since the day it
+could create a store; the shop had no equivalent at all.
+
+So `src/lib/merchant/storefront-policy.ts` is a compile-enforced
+`Record<StorefrontBlocker, BlockerCopy>` over every reason the customer path
+refuses a store, with `src/lib/merchant/storefront.ts` gathering the facts from
+the same places the customer path reads them — the store row, the registry's
+`isOrderableIn`, `findDeliveryFeeRule`, and `isAvailable` on the menu. Nothing
+is restated, because a copy of one of those rules is a copy that can tell a
+shop it is open for business when it is not.
+
+Three readings come out of it, and they are deliberately different questions:
+
+- `orderable` — a customer can finish an order right now.
+- `readyWhenOpen` — everything **except the shop's own switch** is clear. A
+  kitchen that closed at 10pm on purpose must not be shown a fault, and a
+  kitchen that is open and still getting nothing must not be shown
+  reassurance.
+- `listed` — the shop appears in the listings and in search. "Nobody can find
+  you" and "they find you and cannot finish" look identical from behind the
+  counter — an empty queue — and lead to completely different conversations.
+
+Each blocker also says **where the fix is**, as a union rather than a flag:
+`SUPPORT`, `WAIT` (nobody's job — TARA has not launched here), `SWITCH` (the
+Bukas control already in the header), or `SCREEN` (a named merchant tab). Who
+can clear it is *derived* from that, because two fields that have to agree are
+two fields that can disagree.
+
+### The services list was showing the wrong flag
+
+It rendered `service.isActive ? 'Live' : 'Coming soon'` — the registry's
+**global** flag — on a screen belonging to a shop that stands in one city.
+`isOrderableIn` exists precisely because those diverge from the first
+single-city launch onwards, and its own doc comment warns that a component
+reading `isActive` "would offer Cebu's Mart to somebody in Manila". This screen
+did the mirror image: a Manila shop was shown an emerald **Live** against a
+service running only in Cebu. The badge now has four states and names the city
+— *Not in Manila yet* — which is the sentence the old one could not say.
+
+### Two claims about roles that were false
+
+**The stale role prose had a second copy.** `Staff: queue lang. Manager: menu
+at settings din. May-ari: lahat.` — the same wrong summary deleted from
+`StaffManager.tsx` one phase earlier, still sitting on this screen. The test
+guarding it pinned the phrases *in that one file*, so this copy survived. The
+sweep now walks every `.ts`/`.tsx` file under `src`: pinning a phrase to a
+location does not stop the phrase, it stops it there.
+
+**`settings-edit` promised what no screen can do.** It read *"Change the shop's
+name, address, map pin and preparation time."* Only the last is true —
+`merchant-actions.ts` writes `preparationMinutes` and no other store column,
+and name, address and coordinates are set from `/admin/stores` with the map
+picker. That is the third false grant this map has caught, after the manager's
+staff powers and the owner's empty rung, and the new test checks the claim
+against the actions module rather than asserting the sentence, so building a
+merchant-side address form makes it fail instead of leaving the prose quietly
+wrong again.
+
+**And one grant was missing entirely.** `setStoreOpenAction` takes STAFF
+deliberately — somebody has to be able to close when the rice runs out and the
+owner is not there — so the switch that stops *every* order arriving sits in
+the header of every merchant screen, and the role note never mentioned it. The
+queue entry's "accept and reject orders" badly understates it. It is now its
+own area.
+
+### Verified in four places
+
+**Twenty-nine new unit tests** (2050 total). The load-bearing ones are the
+agreement checks rather than the copy checks: every refusal in
+`quoteCheckout`'s store guard is counted against the map, so a seventh cannot
+be added without this panel going quiet about it; a `SCREEN` fix is walked to a
+real `page.tsx` and its tab name checked against the tab bar; `clearedBy` is
+recomputed from the fix union for every blocker; and every blocker is shown to
+be reachable from some real combination of facts, because dead copy is what
+rots into a false promise once the gate around it moves.
+
+The first draft of the refusal count used one clever `[^)]*` pattern and
+matched two of four by wandering across lines — a check that could not fail,
+which is the same defect found two phases ago. It reads line by line now.
+
+**Ten mutations, all killed**: treating a deliberate closure as a fault;
+moving an empty menu to TARA's side; letting a hidden shop still count as
+listed; firing the pricing gate for a service that has not launched here;
+reading the global `isActive` in the loader; hardcoding `ServiceKey.FOOD` in
+it; putting the stale role prose back (on the settings screen this time, which
+the old single-file test would have missed); restoring the false
+`settings-edit` sentence; making a merchant action write `Store.name`; and
+dropping the open/close ability from the map.
+
+**Twenty-one live-database checks** walking one real shop through all six
+states and back to the baseline, including the case that started this —
+visibility withdrawn — and the two that read identically to the shop but
+differently to a customer: FOOD withdrawn from the store's city versus FOOD
+switched off entirely. Same blocker, different badge, because "coming soon" is
+a promise to everybody and "not here yet" is a promise to them.
+
+**A browser, in all six states, as an owner and as a staff member** — and
+cross-checked against what a customer actually sees, which is the point of the
+`listed` reading: hidden gives no row in the FOOD listing and a 404 on the
+shop's own page; merely closed still lists, still loads, and says so.
+
+Two copy bugs came out of that browser pass and are the reason the fix is a
+union rather than a boolean. A shop closed for the night was shown a chip
+reading **"Yours to fix"** — a fault it had not committed — and a button
+reading **"Open the menu"**, which is not where the switch is. And the service
+row read **"Taking orders"** directly beneath "Customers cannot find your
+shop", flatly contradicting it; it says *Live here* now, which is a statement
+about the service, which is what the row is.
+
+### What is still not right
+
+The header toggle still shows only what the shop set. A hidden shop reads an
+emerald **Bukas** in the header of every merchant screen and has to open
+Settings to learn that nobody can see it. The panel is where the truth is, and
+the header is where a shop looks first — that gap is deliberate scope, not an
+oversight, and it belongs to the merchant shell rather than to this screen.
+
+2050 tests pass; lint, typecheck, tests and build all exit zero.

@@ -1,6 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
-import { existsSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { StoreRole } from '@prisma/client';
 import {
@@ -23,6 +22,17 @@ import { canChangeRole, canRemove } from '@/lib/merchant/staff-policy';
  */
 
 const ALL_ROLES = Object.values(StoreRole);
+
+/** Every TypeScript source file under `src`, so a claim cannot hide in one. */
+function sourceFiles(dir = path.join(process.cwd(), 'src')): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) return sourceFiles(full);
+    return /\.tsx?$/.test(entry.name) && !entry.name.endsWith('.test.ts')
+      ? [full]
+      : [];
+  });
+}
 
 describe('the back-office map', () => {
   it('names a role every area actually gates on', () => {
@@ -166,10 +176,48 @@ describe('what each rung adds', () => {
     const notTabs = BACK_OFFICE_AREAS.filter((area) => area.tab === null);
     expect(notTabs.map((area) => area.key).sort()).toEqual([
       'menu-edit',
+      'open-close',
       'settings-edit',
       'staff-control',
       'staff-invite',
     ]);
+  });
+
+  it('credits a staff member with closing the shop, which stops every order', () => {
+    /**
+     * Absent until the settings screen was read carefully. `setStoreOpenAction`
+     * takes STAFF on purpose, so the person on the counter can stop orders
+     * arriving from any screen in the app — a bigger grant than the queue
+     * entry's "accept and reject orders", and the note said nothing about it.
+     */
+    const keys = areasAddedBy(StoreRole.STAFF).map((area) => area.key);
+    expect(keys).toContain('open-close');
+    const sentence = BACK_OFFICE_AREAS.find((a) => a.key === 'open-close')!.grants;
+    expect(sentence).toMatch(/close/i);
+  });
+
+  it('does not credit a manager with editing the shop’s name or address', () => {
+    /**
+     * It did, and none of it was true: the only store column any merchant
+     * action writes is `preparationMinutes`. Name, address and coordinates are
+     * set from `/admin/stores`. Checked against the actions module rather than
+     * asserted, so building a merchant-side address form makes this fail
+     * instead of leaving the sentence quietly wrong again.
+     */
+    const actions = readFileSync(
+      path.join(process.cwd(), 'src/lib/actions/merchant-actions.ts'),
+      'utf8',
+    );
+    const storeWrites = actions.match(/prisma\.store\.update\([\s\S]{0,200}?data: \{([^}]*)\}/g) ?? [];
+    expect(storeWrites.length).toBeGreaterThan(0);
+    for (const write of storeWrites) {
+      expect(write).not.toMatch(/\bname:/);
+      expect(write).not.toMatch(/addressLine:/);
+      expect(write).not.toMatch(/latitude:|longitude:/);
+    }
+    const sentence = BACK_OFFICE_AREAS.find((a) => a.key === 'settings-edit')!.grants;
+    expect(sentence).not.toMatch(/name|address|map pin/i);
+    expect(sentence).toMatch(/prepare/i);
   });
 
   it('accounts for every area across the three rungs', () => {
@@ -244,13 +292,22 @@ describe('where the answer is shown', () => {
 // --- No second, hand-written answer ---------------------------------------
 
 describe('there is one explanation, not two', () => {
-  const manager = readFileSync(
-    path.join(process.cwd(), 'src/components/merchant/StaffManager.tsx'),
-    'utf8',
-  );
-  const rendered = manager
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/\/\/[^\n]*/g, ' ');
+  /**
+   * Swept across the whole tree, not one file.
+   *
+   * The first version of this read only `StaffManager.tsx`, and a SECOND copy
+   * of the same wrong sentence — "Staff: queue lang. Manager: menu at settings
+   * din. May-ari: lahat." — went on sitting on the settings screen for a
+   * phase, found only by reading that screen for something else. Pinning a
+   * phrase to a location does not stop the phrase; it stops it there.
+   */
+  const rendered = sourceFiles()
+    .map((file) =>
+      readFileSync(file, 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, ' ')
+        .replace(/\/\/[^\n]*/g, ' '),
+    )
+    .join('\n');
 
   it('no longer enumerates the roles in prose beside the derived note', () => {
     /**

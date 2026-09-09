@@ -163,6 +163,24 @@ reaches which screen lives in `src/lib/merchant/roles.ts`, and the tab bar and
 the staff screen's role explanation both read from it, so what an owner is told
 a role grants cannot drift from the gate that runs.
 
+On the **Settings** tab, the first thing a shop sees is whether customers can
+order from it — and if not, what is stopping it and who can clear it. Every
+reason on that list is one the customer's own path applies: TARA has taken the
+shop off the app, no service is attached, the service has not launched in this
+city, delivery is not priced there, nothing on the menu is available, or the
+shop is simply closed. The rules are gathered in
+`src/lib/merchant/storefront-policy.ts`, and the facts come from the same
+places a customer's request reads them, so the panel cannot tell a shop it is
+open for business when checkout would refuse.
+
+Two distinctions on that screen are load-bearing. Being *closed* is not a
+fault: a kitchen that shut at 10pm is told everything else is ready, with no
+button offered, because the switch is already in the header. And *nobody can
+find you* is kept apart from *they find you and cannot finish* — from behind
+the counter both are an empty queue, and they are different phone calls. The
+services list says whether each service is live **in this shop's city**, not
+whether TARA has launched it somewhere.
+
 On the **Staff** tab, both places a role is chosen say what it means: what each
 rung adds over the one below, with the takings called out, and the money role
 marked on the dropdown option itself.
