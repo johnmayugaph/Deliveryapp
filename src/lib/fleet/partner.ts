@@ -9,6 +9,7 @@ import {
   type ServiceKey,
 } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { startOfDayIn, startOfDaysAgoIn } from '@/lib/time/manila';
 import { requireCurrentUser } from '@/lib/auth/session';
 import { getLifecycle } from '@/lib/orders/transitions';
 import { cashToCollectCentavos } from '@/lib/payments/policy';
@@ -205,10 +206,18 @@ export interface PartnerEarnings {
  * `settlement/earnings.ts`.
  */
 export async function getPartnerEarnings(partner: FleetPartner): Promise<PartnerEarnings> {
-  const startOfDay = new Date();
-  startOfDay.setHours(0, 0, 0, 0);
-  const startOfWeek = new Date(startOfDay);
-  startOfWeek.setDate(startOfWeek.getDate() - 6);
+  /* Both boundaries in MANILA. `setHours(0,0,0,0)` uses the process's zone,
+     so on a UTC container a rider's "today" reset at 8am: at 7am their figure
+     still counted last night's deliveries and at 9am those had vanished from
+     it. `setDate` compounded it by walking back a calendar day in the host's
+     zone from a midnight that was already wrong.
+
+     This is what a rider is paid, on the screen they check between jobs, so
+     it is the one place in this codebase where a timezone slip is money
+     rather than presentation. */
+  const now = new Date();
+  const startOfDay = startOfDayIn(now);
+  const startOfWeek = startOfDaysAgoIn(now, 6);
 
   const rows = await prisma.order.findMany({
     where: {

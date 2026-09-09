@@ -9,6 +9,7 @@ import {
   formatTimeIn,
   sameDayIn,
   startOfDayIn,
+  startOfDaysAgoIn,
 } from '@/lib/time/manila';
 import { startOfManilaDay } from '@/lib/admin/queries';
 import { monthStart } from '@/lib/referrals/rewards';
@@ -151,5 +152,66 @@ describe('the module stays pure', () => {
   it('imports nothing at all', () => {
     const source = readFileSync('src/lib/time/manila.ts', 'utf8');
     expect(source).not.toMatch(/^import /m);
+  });
+});
+
+describe('the two money boundaries', () => {
+  /**
+   * A shop's takings today and a rider's earnings today/this week were both
+   * computed with `setHours(0,0,0,0)` — the HOST's midnight. On a UTC
+   * container a rider's "today" reset at 8am Manila: at 7am the figure still
+   * counted last night's deliveries, at 9am they had gone. That is what
+   * somebody is paid, not a label.
+   */
+  const merchant = readFileSync('src/lib/merchant/queue.ts', 'utf8');
+  const fleet = readFileSync('src/lib/fleet/partner.ts', 'utf8');
+
+  it.each([
+    ["a shop's today", merchant],
+    ["a rider's today", fleet],
+  ])('%s starts at a Manila midnight', (_name, source) => {
+    expect(source).toMatch(/startOfDayIn\(/);
+    expect(source).not.toMatch(/setHours\(0, 0, 0, 0\)/);
+  });
+
+  it("a rider's week walks back from that same midnight", () => {
+    // `setDate` moves a calendar day in the host's zone, from a midnight that
+    // was already wrong — two mistakes compounding.
+    expect(fleet).toMatch(/startOfDaysAgoIn\(now, 6\)/);
+    expect(fleet).not.toMatch(/setDate\(/);
+  });
+
+  it('walks back exactly six Manila days, so the window is seven', () => {
+    // Seven days inclusive of today is what the screen says it shows.
+    const now = new Date('2026-09-09T06:00:00Z'); // 2pm Manila, the 9th
+    expect(startOfDayIn(now).toISOString()).toBe('2026-09-08T16:00:00.000Z');
+    expect(startOfDaysAgoIn(now, 6).toISOString()).toBe('2026-09-02T16:00:00.000Z');
+    expect(dayKeyIn(startOfDaysAgoIn(now, 6))).toBe('2026-09-03');
+  });
+
+  it('is stable across the 8am hour that used to move the boundary', () => {
+    /**
+     * THE regression. On a UTC host, 23:30 and 00:30 UTC (07:30 and 08:30
+     * Manila) fell either side of `setHours(0,0,0,0)` — so a rider watching
+     * their earnings over breakfast saw the figure reset. Both are the same
+     * Manila day, so the boundary must not move.
+     */
+    const before = new Date('2026-09-08T23:30:00Z'); // 07:30 Manila, the 9th
+    const after = new Date('2026-09-09T00:30:00Z'); // 08:30 Manila, the 9th
+    expect(dayKeyIn(before)).toBe('2026-09-09');
+    expect(dayKeyIn(after)).toBe('2026-09-09');
+    expect(startOfDayIn(before).getTime()).toBe(startOfDayIn(after).getTime());
+    expect(startOfDaysAgoIn(before, 6).getTime()).toBe(
+      startOfDaysAgoIn(after, 6).getTime(),
+    );
+  });
+
+  it('does move at the real Manila midnight', () => {
+    // And the boundary is not simply frozen: 15:59Z and 16:00Z differ.
+    const late = new Date('2026-09-08T15:59:59Z'); // 23:59:59 Manila
+    const justAfter = new Date('2026-09-08T16:00:00Z'); // 00:00 next day
+    expect(startOfDayIn(late).getTime()).not.toBe(
+      startOfDayIn(justAfter).getTime(),
+    );
   });
 });

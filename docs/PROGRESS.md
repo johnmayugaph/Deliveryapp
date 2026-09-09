@@ -5699,3 +5699,68 @@ Highest-priority follow-up.
 every one of those 48 sites right by accident. It is worth doing and it is not
 a fix: the next deployment that forgets it, or any environment that sets `TZ`
 differently, silently breaks all of them again.
+
+## The two money boundaries
+
+The follow-up the tracking phase named, taken first because it is the only
+part of the timezone finding that is **money rather than presentation**.
+
+### A rider's day reset at eight in the morning
+
+`getPartnerEarnings` and `loadMerchantSummary` both began with
+`setHours(0, 0, 0, 0)` — midnight in the **host's** zone. On a UTC container
+that is 8am in Manila, so:
+
+- A rider checking their earnings at 7am saw a figure that still counted last
+  night's deliveries. At 9am those had vanished from it.
+- A shop's *completed today*, *cancelled today* and *takings today* did the
+  same.
+
+The rider's week compounded it: `setDate(getDate() - 6)` walks back a calendar
+day in the host's zone, from a midnight that was already wrong.
+
+Both now read `startOfDayIn` from `lib/time/manila`, and the week uses a new
+`startOfDaysAgoIn(now, 6)` — plain millisecond arithmetic, exact because the
+Philippines has no daylight saving, so every day is the same length. A helper
+rather than arithmetic at the call site, because this is the figure somebody is
+paid against.
+
+### Verified
+
+**Six new units** (2283 total). The load-bearing one is the regression itself:
+23:30 and 00:30 UTC are 07:30 and 08:30 in Manila — the hour that used to move
+the boundary — and both must give the same `startOfDayIn`, while 15:59:59Z and
+16:00:00Z must differ, so the boundary is corrected rather than frozen.
+
+**Eight live-database checks**, running the real functions against real rows.
+The fixture is built relative to the actual current Manila day, with the
+discriminating order placed **between the two candidate midnights** — after
+Manila's, before the host's. The script asserts up front that the two
+boundaries differ at the moment it runs, so it cannot quietly pass on a host
+that happens to agree.
+
+Result: the shop counts the order after Manila midnight and not the one
+before, its takings move by exactly that order, the rider gets one job today
+and both inside the seven-day window.
+
+**A negative control.** Reverting both functions to `setHours` made **four**
+of those checks fail — the shop's count, its takings and the rider's day —
+while the two boundary assertions kept passing, which is what a well-aimed
+control looks like. Restored: eight of eight.
+
+### And one line of mitigation, which is not the fix
+
+`ENV TZ=Asia/Manila` in the `Dockerfile` (both images share the `base` stage)
+and `TZ: Asia/Manila` on the database service, so `psql` sessions and backup
+logs read in Manila time too.
+
+This makes the **45 remaining `toLocale*` sites** right by accident, which is
+worth having today and is explicitly not a solution: the comment beside it
+says so. Any environment that overrides `TZ` — a different host, a platform
+that sets its own, a future compose file written from memory — silently breaks
+all forty-five again, and nothing would fail. The real fix is routing each
+through `lib/time/manila`, where the zone is passed per call and a host cannot
+influence it.
+
+2283 tests pass; lint, typecheck, tests and build all exit zero. Fixtures
+removed.

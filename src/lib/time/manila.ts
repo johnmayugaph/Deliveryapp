@@ -40,6 +40,19 @@ export function startOfDayIn(at: Date): Date {
 }
 
 /**
+ * Midnight in Manila `days` days before the day containing `at`.
+ *
+ * A helper rather than `setDate(getDate() - n)` at the call site, which is
+ * what the rider's weekly earnings did: `setDate` moves a calendar day in the
+ * HOST's zone, so on a UTC container it walked back from the wrong midnight.
+ * Plain millisecond arithmetic is exact here because the Philippines has no
+ * daylight saving — every day is the same length.
+ */
+export function startOfDaysAgoIn(at: Date, days: number): Date {
+  return new Date(startOfDayIn(at).getTime() - days * 24 * 60 * 60 * 1_000);
+}
+
+/**
  * The calendar day `at` falls on in Manila, as `YYYY-MM-DD`.
  *
  * A string rather than a Date because its only job is comparison, and two

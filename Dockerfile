@@ -31,6 +31,14 @@
 # -----------------------------------------------------------------------------
 FROM node:22-bookworm-slim AS base
 ENV NEXT_TELEMETRY_DISABLED=1
+# Both images run in Manila time. This is a MITIGATION and not the fix: the
+# app should reach every date through `lib/time/manila`, which pins the zone
+# per call and is unaffected by this. Until it does, 45 `toLocale*` sites
+# render in whatever zone the process is in — and the container default is
+# UTC, which showed a 7:30pm order as 11:30am. Setting it here makes those
+# right by accident; an environment that overrides TZ silently breaks them
+# again.
+ENV TZ=Asia/Manila
 WORKDIR /app
 
 # -----------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 import { OrderStatus, type Order, type Service } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { startOfDayIn } from '@/lib/time/manila';
 import { allowedTransitions, isActorPermitted } from '@/lib/orders/state-machine';
 import { OrderActor } from '@prisma/client';
 import { clockFor, type QueueClock } from '@/lib/merchant/queue-clock';
@@ -266,8 +267,12 @@ export async function loadMerchantSummary(storeId: string): Promise<{
   cancelledToday: number;
   revenueTodayCentavos: number;
 }> {
-  const startOfDay = new Date();
-  startOfDay.setHours(0, 0, 0, 0);
+  /* Midnight in MANILA, not on the host. `setHours(0,0,0,0)` uses the
+     process's zone, so on a UTC container a shop's "today" began at 8am
+     Manila: at 7am these counts still included last night's orders, and at
+     9am the early ones had gone. This is the shop's own takings figure, so being
+     eight hours out is not a display bug. */
+  const startOfDay = startOfDayIn(new Date());
 
   const rows = await prisma.order.findMany({
     where: {

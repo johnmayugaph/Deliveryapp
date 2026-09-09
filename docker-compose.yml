@@ -49,6 +49,11 @@ services:
       # Required. Compose fails to start rather than defaulting to something
       # guessable, which is the right way round.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      # So `psql` sessions and log lines read in Manila time too. The app's
+      # own timestamps do not depend on this — see the note in the Dockerfile
+      # — but an operator reading a backup log at "23:40" should not have to
+      # convert it.
+      TZ: Asia/Manila
     volumes:
       - db-data:/var/lib/postgresql/data
     # Not published to the host. Nothing outside this compose network has any
