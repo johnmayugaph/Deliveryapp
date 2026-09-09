@@ -160,15 +160,14 @@ export function clockFor(input: {
  * situation. Resolved on the server, like the rest of the clock, so the figure
  * cannot differ between the markup and the browser's own idea of the time.
  */
-export function lateBySeconds(etaAt: Date | null, now: Date): number | null {
-  if (etaAt === null) return null;
-  const late = Math.floor((now.getTime() - etaAt.getTime()) / 1000);
-  return late > 0 ? late : null;
-}
-
-/** "25m late" / "1h 5m late". Minutes, because nobody is late by seconds. */
-export function formatLate(seconds: number): string {
-  const minutes = Math.max(1, Math.floor(seconds / 60));
-  if (minutes < 60) return `${minutes}m late`;
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m late`;
-}
+/**
+ * Both moved to `@/lib/orders/promised`, and re-exported here so every
+ * merchant caller is unchanged.
+ *
+ * They were written for this card and then the customer's tracking screen
+ * needed the same fact — and a customer screen importing a module named for
+ * the back office is the kind of dependency that looks fine until somebody
+ * puts a Prisma call in it. The rule lives with the order now, not with the
+ * queue.
+ */
+export { formatLate, lateBySeconds } from '@/lib/orders/promised';

@@ -27,6 +27,13 @@ import { latestRefusalNote, transferDetailsFor } from '@/lib/payments/order-view
 import { heldForCustomerCentavos } from '@/lib/payments/events';
 import { isPrepaid } from '@/lib/payments/policy';
 import { tileSource } from '@/lib/geo/tiles';
+import {
+  describePromise,
+  needsDate,
+  promiseIsOverdue,
+  promiseState,
+} from '@/lib/orders/promised';
+import { dayKeyIn, formatDayIn, formatTimeIn } from '@/lib/time/manila';
 
 export const dynamic = 'force-dynamic';
 
@@ -110,6 +117,28 @@ export default async function OrderDetailPage({
 
   const isLive = isInProgress(order.serviceType, order.status);
 
+  /* One clock for the whole render. Two parts of this page disagreeing about
+     the current time would be a rendering bug nobody could reproduce — the
+     same reasoning as the merchant queue card. */
+  const renderedAt = new Date();
+  const promise = promiseState(order.etaAt, isLive, renderedAt);
+  const promiseNote = describePromise(promise, formatTimeIn);
+
+  /* A timeline entry's date, shown only where it is not obvious: never on a
+     live order tracked the same afternoon, and exactly at the crossing on an
+     order placed at 23:50 and delivered at 00:20 — which used to render as a
+     timeline running backwards. */
+  const stamps = order.statusEvents.map((event, index) => ({
+    id: event.id,
+    showDate: needsDate(
+      event.createdAt,
+      index === 0 ? null : order.statusEvents[index - 1]!.createdAt,
+      renderedAt,
+      dayKeyIn,
+    ),
+  }));
+  const showDateFor = new Map(stamps.map((row) => [row.id, row.showDate]));
+
   // Only for a completed order: `reviewableOrder` resolves what there is to
   // rate from the registry and the order's own dispatch record, and asking it
   // about a live order would be a query for nothing.
@@ -171,10 +200,19 @@ export default async function OrderDetailPage({
             {dropoff.barangay ? `, ${dropoff.barangay}` : ''}, {dropoff.cityName}
           </p>
         ) : null}
-        {order.etaAt && isLive ? (
-          <p className="mt-1 text-xs font-semibold text-brand-700">
-            Estimated arrival{' '}
-            {order.etaAt.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })}
+        {/* It said "Estimated arrival 07:42" and went on saying it at 08:15.
+            The merchant card learned to admit this; the customer's screen —
+            where the person actually waiting reads it — did not. It does not
+            apologise or offer a new time, because nothing here knows why the
+            order is late or when it will arrive, and inventing either would
+            be worse than the plain fact. */}
+        {promiseNote ? (
+          <p
+            className={`mt-1 text-xs font-semibold ${
+              promiseIsOverdue(promise) ? 'text-amber-700' : 'text-brand-700'
+            }`}
+          >
+            {promiseNote}
           </p>
         ) : null}
         {order.status === OrderStatus.CANCELLED_BY_SYSTEM && order.cancellationReason ? (
@@ -262,11 +300,11 @@ export default async function OrderDetailPage({
               key={event.id}
               className="flex items-baseline gap-3 rounded-xl bg-surface px-3 py-2.5 shadow-sm ring-1 ring-black/5"
             >
-              <span className="text-[11px] tabular-nums text-ink-faint">
-                {event.createdAt.toLocaleTimeString('en-PH', {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })}
+              <span className="shrink-0 text-[11px] tabular-nums text-ink-faint">
+                {showDateFor.get(event.id) ? (
+                  <span className="block">{formatDayIn(event.createdAt)}</span>
+                ) : null}
+                {formatTimeIn(event.createdAt)}
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block text-sm font-medium">

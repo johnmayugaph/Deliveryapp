@@ -5579,3 +5579,123 @@ removed and the wallet thawed.
 
 **Still unread on the customer side:** `/orders/[orderId]` (tracking),
 `/profile`, `/notifications`, `/plus`, `/points`, `/search` and the store page.
+
+## Tracking: a promise that could not be late, and a clock in the wrong country
+
+Two findings on the tracking screen, and then a third that one of the tests
+caught by accident and matters more than either.
+
+### The merchant card learned this and the customer's screen did not
+
+`Estimated arrival 07:42` rendered identically at 07:00 and at 08:15. This is
+exactly the defect fixed on the merchant queue card — *"a promised time that
+has already passed rendered exactly like one that had not"* — left standing on
+the side where the person **actually waiting for the food** reads it. Worse:
+the shop's own **+10 min** button moves `etaAt`, so the number on the
+customer's screen is one the shop can push out.
+
+`src/lib/orders/promised.ts` is pure: `PromiseState` is `NONE | DUE | OVERDUE |
+DONE`, and the tense changes with the fact — *"Arriving by 10:50 PM"* while
+there is time, *"Was due at 09:55 PM — 25m late"* once there is not. `DONE` is
+its own state because "25m late" about food already eaten is a complaint rather
+than information.
+
+It deliberately does **not** apologise or offer a revised time. Nothing in the
+app knows why an order is late or when it will arrive, and a screen that
+guessed would be inventing both. `lateBySeconds` and `formatLate` moved here
+from `lib/merchant/queue-clock`, which re-exports them so every merchant caller
+is untouched — a customer screen importing a module named for the back office
+is a dependency that looks fine until somebody puts a Prisma call in it.
+
+### A permanent receipt stamped with a time and no date
+
+The timeline used `toLocaleTimeString` alone. There is no separate receipt in
+this app — this screen *is* what a customer opens months later from `/orders` —
+so "07:42" said nothing about which day, and an order placed 23:50 and
+delivered 00:20 rendered as a timeline running **backwards**. The date now
+appears on the first entry that is not from today and at any day change inside
+the list, and nowhere else: a live order tracked this afternoon stays a column
+of bare times.
+
+### And then: every time in the app was in the wrong timezone
+
+Writing the midnight-crossing test made it fail, and the reason was not the
+test. `toLocaleTimeString('en-PH', …)` picks the **locale** — how a time is
+written — and **not the zone**. With no `timeZone` option it renders in
+whatever zone the Node process is in, and nothing in the `Dockerfile`,
+`docker-compose.yml` or `.env.example` sets `TZ`. A container runs in **UTC**.
+
+**So an order placed at 7:30pm in Manila displayed as 11:30am.** Every
+timestamp, on every screen, for customers, shops and riders. Invisible while
+developing, because the seed data, the clock and the screen are all wrong
+*consistently* — and the browser rounds I have been running all session showed
+UTC times that looked plausible and were eight hours out.
+
+Measured: **48 `toLocale*` call sites, zero passing a `timeZone`.** Three
+places already got it right, independently and in their own way —
+`startOfManilaDay` in the admin queries, `monthStart` in the referral caps, and
+one explicit `timeZone: 'Asia/Manila'` in recovery — so the concept was never
+missed. It was decided three times and skipped everywhere else.
+
+`src/lib/time/manila.ts` is the one home: `DISPLAY_ZONE`, the formatters with
+the zone pinned, and `dayKeyIn`/`startOfDayIn` for boundaries. The arithmetic
+is a fixed offset rather than a locale string, following `monthStart`'s
+reasoning — the Philippines has no daylight saving, so a local boundary is a
+constant shift and this stays testable. A test pins `startOfDayIn` against
+`startOfManilaDay` across five moments including both sides of the boundary,
+because consolidating means agreeing with what was there, not quietly
+replacing it.
+
+### Verified
+
+**Forty-four new units** (2277 total). The load-bearing one asserts
+`formatTimeIn(15:50Z)` is `11:50 PM` and **not** `03:50 PM`, and a second loops
+the host `TZ` through UTC, New York and Lisbon asserting the output does not
+move. Either would have caught the original bug; the whole suite passed without
+them.
+
+**A browser** on three seeded orders: on time (*"Arriving by 10:50 PM"*),
+overdue (*"Was due at 09:55 PM — 25m late"*), and one that crossed midnight in
+Manila — timeline `Sep 8 11:50 PM → Sep 9 12:05 AM → 12:20 AM`, dated at the
+crossing and not repeated after it. Those are Manila evening times where the
+same fixtures previously rendered as UTC mornings.
+
+**A negative control**: reverting the header and the date stamp made all three
+detector assertions fire, then restoring gave zero. The assertions are written
+into the walk rather than eyeballed — third phase running where that is what
+stands between a green check and a check that cannot fail.
+
+Two fixture faults, both the `tsx` trap from CLAUDE.md: `OrderStatus.OUT_FOR_DELIVERY`
+does not exist (it is `PICKED_UP`), and types being stripped meant it arrived
+as `undefined` and Prisma reported a *missing argument* rather than a bad one.
+
+2277 tests pass; lint, typecheck, tests and build all exit zero. Fixtures
+removed.
+
+### What this leaves — and it is not small
+
+**45 display sites still render in the host's zone**, across the merchant back
+office, the fleet screens, the admin console and the remaining customer
+screens. Every one is wrong by the host offset until it reads through
+`lib/time/manila`.
+
+**And three places compute a day boundary from host-local midnight**, which is
+money rather than display:
+
+- `lib/merchant/queue.ts:270` — a shop's `completedToday`, `cancelledToday`
+  and `revenueTodayCentavos`
+- `lib/fleet/partner.ts:209,211` — a rider's earnings for today and the last
+  seven days
+
+On a UTC host a rider's "today" resets at **8am Manila**, so at 7am their
+earnings still include last night's deliveries and at 9am they have gone. Not
+touched here deliberately: changing what a rider's earnings figure counts needs
+its own browser pass on the fleet screen, and doing that inside a phase about
+the tracking screen would be changing money figures without verifying them.
+Highest-priority follow-up.
+
+**The cheapest partial mitigation is one line** — `TZ=Asia/Manila` in the
+`Dockerfile` and `docker-compose.yml` — which makes the host zone correct and
+every one of those 48 sites right by accident. It is worth doing and it is not
+a fix: the next deployment that forgets it, or any environment that sets `TZ`
+differently, silently breaks all of them again.
