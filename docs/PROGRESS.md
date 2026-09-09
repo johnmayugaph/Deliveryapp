@@ -5385,8 +5385,96 @@ fail is now the main way a screen gets reported safe while being broken.
 
 2166 tests pass; lint, typecheck, tests and build all exit zero.
 
-**Still to do on the customer side.** `/orders` stops at fifty rows with no
-note and no way to reach the rest; `/credits` stops at fifty ledger rows the
-same way. Neither carries a total, so this is narrower than the merchant
-History defect was — but a customer's own history becoming unreachable is its
-own problem. Not started.
+### Fifty rows, and no way past them
+
+`/orders` fetched `take: 50` and `/credits` `limit: 50`, both with nothing said
+about the cap and no way to see what was behind it. A regular customer passes
+fifty of either inside a year, at which point **their own history becomes
+unreachable** — and on the credits screen the rows that fall off the end are
+the ones that explain the figure at the top of the page.
+
+`src/lib/pagination/pages.ts` is pure and imports nothing. The shape is the
+smallest correct one:
+
+- **Forward only.** One "Older" link. Going back is the browser's Back button,
+  which already works because each page is its own URL. A numbered pager needs
+  a count on every view and renumbers itself the moment a row arrives.
+- **Keyset, not offset.** The cursor is the id of the last row shown. `?skip=50`
+  duplicates rows on page two whenever something lands at the top, which on an
+  orders list is what happens.
+- **A sentinel row.** `fetchCount()` asks for `PAGE_SIZE + 1`; the extra row is
+  never rendered and is the whole mechanism for knowing whether the link
+  belongs on the page. One row instead of a second `count` query. A
+  `rows.length === PAGE_SIZE` test would get the exactly-full last page wrong,
+  and there is a unit for precisely that.
+- **`PAGE_SIZE` stays 50**, which is what both screens already fetched.
+  Changing it would change what an existing customer sees on their first
+  screenful, and that is a product decision rather than part of fixing an
+  unreachable list.
+- **No total.** The defect was that the history could not be reached, not that
+  its size was unstated.
+
+Both queries order by `createdAt` **then `id`**, which is a total order. Two
+rows sharing a millisecond would otherwise straddle a page boundary
+unpredictably — showing one twice and the other never — and on the credits
+ledger that is the normal case, not a pathological one: a redemption writes
+points and credits in the same transaction.
+
+An id is safe as a cursor here because neither table is ever deleted from:
+`Order` has no delete path and `WalletTransaction` is append-only under a
+trigger. A cursor cannot rot into a row that no longer exists.
+
+### A cursor that goes nowhere is a claim about the link
+
+A cursor that was never real — typed, or truncated in a chat message — returns
+an empty page, and an empty page rendered as the empty state says *"No orders
+yet"*: the same falsehood the six session-gone screens told, arrived at from a
+different direction. `pageOf` reports `strandedPage` when a cursor was supplied
+and nothing came back, and the screens render a separate panel — *"Nothing on
+this page. This link points past the end of your orders."* — with a way back to
+the newest.
+
+`readCursor` refuses anything that is not id-shaped, so a crafted value reaches
+no query. Worth noting what was never at risk: both queries filter on the
+owner, so a cursor pointing at another customer's row cannot return their
+rows — the worst case was a wrong page boundary.
+
+The rating nudge on `/orders` is first-page only now. It is about the most
+recent unrated delivery, and a customer three pages into last year is not being
+nudged about it.
+
+### Verified
+
+**Thirty-six new units** (2202 total), the load-bearing one being a walk of the
+whole list at eleven different sizes — 0, 1, 2, 3, 4, 6, 7, 9 rows in pages of
+three, then 50, 51 and 137 in pages of fifty — asserting every row appears
+exactly once and in order. An off-by-one in either direction shows a row twice
+or loses one, and on a ledger a lost row is a customer unable to account for
+their own balance.
+
+**Nine live-database checks**, which resolved the one thing the design rested
+on and could not be reasoned out: **what Prisma does with a cursor that does
+not exist.** It returns zero rows on both tables rather than throwing, so
+`strandedPage` works with no `try`/`catch`. The same script walked the real
+15-order history in pages of three and the real ledger in pages of two, both
+agreeing row for row with a single unpaged query, and then created four orders
+sharing one millisecond and paged them two at a time: four rows, none twice.
+That is the `id` tiebreak doing its job against real data.
+
+**A browser**, on 60 seeded orders and 60 seeded ledger rows so the real
+`PAGE_SIZE` was actually crossed. `/orders`: 50 then 25, no duplicates, "Older"
+on page one with no "Newest", "Newest" and *"That's everything"* on page two.
+`/credits`: 50 then 15, the same, **and the balance identical on both pages** —
+paging the history must not page the figure it explains. A bogus cursor showed
+the stranded panel on both, with no empty state leaking through.
+
+Two faults in my own checks, both caught by running them rather than reading
+them. The browser locator for *"That's everything"* used a straight apostrophe
+against typographic copy and reported the end-of-list marker missing when it
+was there — the second typography miss of the day, after the CSS-uppercased
+`CREDITS`. And the unit walk had a circular type inference that **vitest passed
+and `tsc` caught**: esbuild strips types rather than checking them, which is
+the same trap as `tsx` in a scratch script. Both are arguments for checking all
+four gates by exit code rather than trusting the one that ran fastest.
+
+2202 tests pass; lint, typecheck, tests and build all exit zero.

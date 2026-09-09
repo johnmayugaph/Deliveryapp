@@ -6,6 +6,8 @@ import { serviceGlyph } from '@/lib/services/presentation';
 import { summariseDetails } from '@/lib/orders/details';
 import { formatCentavos } from '@/lib/money';
 import { unratedOrders } from '@/lib/ratings/reviews';
+import { fetchCount, pageOf, readCursor } from '@/lib/pagination/pages';
+import { OlderPager, StrandedPage } from '@/components/ui/OlderPager';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,24 +20,41 @@ export const dynamic = 'force-dynamic';
  * table. One query, no per-service branches, and a vertical that launches next
  * year appears here automatically.
  */
-export default async function OrdersPage() {
+export default async function OrdersPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   /* Not a nullable read. This screen's empty state says "No orders yet", and
      with no user it said that to somebody whose session had ended rather than
      to somebody who had never ordered — the two are indistinguishable from
      here and only one of them is true. */
   const user = await requireScreen('orders');
 
-  const orders = await prisma.order.findMany({
+  /* One page, newest first, walked backwards by the id of the last row shown.
+     It used to be a bare `take: 50` with nothing said about the cap and no
+     way past it, so a customer's own history became unreachable at order
+     fifty-one.
+
+     `createdAt` then `id`, because that is a total order — two orders placed
+     in the same millisecond would otherwise straddle the page boundary
+     unpredictably, showing one twice and the other never. */
+  const cursor = readCursor((await searchParams).before);
+  const fetched = await prisma.order.findMany({
     where: { customerId: user.id },
-    orderBy: { createdAt: 'desc' },
-    take: 50,
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    take: fetchCount(),
+    ...(cursor === null ? {} : { cursor: { id: cursor }, skip: 1 }),
     include: { service: true },
   });
+  const { rows: orders, olderCursor, strandedPage } = pageOf(fetched, cursor);
 
-  // Asked for once, here, rather than per row: the prompt is about the most
-  // recent unrated delivery, and a badge on every historic order would be
-  // nagging rather than a nudge. It empties itself when the window closes.
-  const unrated = await unratedOrders(user.id);
+  /* Asked for once, here, rather than per row: a badge on every historic
+     order would be nagging rather than a nudge, and it empties itself when
+     the rating window closes. First page only — the prompt is about the most
+     recent unrated delivery, and a customer three pages into last year's
+     orders is not being nudged about it. */
+  const unrated = cursor === null ? await unratedOrders(user.id) : [];
 
   return (
     <main>
@@ -69,7 +88,11 @@ export default async function OrdersPage() {
         </section>
       ) : null}
 
-      {orders.length === 0 ? (
+      {strandedPage ? (
+        /* Not the empty state. "No orders yet" is a claim about the customer;
+           a cursor past the end of the list is a claim about the link. */
+        <StrandedPage basePath="/orders" label="orders" />
+      ) : orders.length === 0 ? (
         <p className="px-4 py-8 text-sm text-ink-muted">
           No orders yet. Start with{' '}
           <Link href="/" className="font-semibold text-brand-700 underline">
@@ -114,6 +137,15 @@ export default async function OrdersPage() {
             </li>
           ))}
         </ul>
+      )}
+
+      {strandedPage ? null : (
+        <OlderPager
+          basePath="/orders"
+          olderCursor={olderCursor}
+          onFirstPage={cursor === null}
+          label="orders"
+        />
       )}
     </main>
   );

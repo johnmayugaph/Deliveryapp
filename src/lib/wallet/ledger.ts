@@ -282,9 +282,20 @@ export async function getSpendableCentavos(userId: string): Promise<number> {
   return Math.max(0, aggregate._sum.amountCentavos ?? 0);
 }
 
+/**
+ * A page of the ledger, newest first.
+ *
+ * `before` is the id of the last row of the previous page. Ordered by
+ * `createdAt` and then `id` so the sequence is a TOTAL order: two rows written
+ * in the same transaction share a timestamp to the millisecond, and without
+ * the tiebreak the boundary between two pages could show one of them twice and
+ * the other never. Credit rows come in pairs often enough — a redemption
+ * writes points and credits together — for this to be the normal case rather
+ * than a pathological one.
+ */
 export async function listWalletTransactions(
   userId: string,
-  options?: { limit?: number },
+  options?: { limit?: number; before?: string | null },
 ): Promise<WalletTransaction[]> {
   const wallet = await prisma.wallet.findUnique({
     where: { userId },
@@ -293,10 +304,12 @@ export async function listWalletTransactions(
   if (!wallet) {
     return [];
   }
+  const before = options?.before ?? null;
   return prisma.walletTransaction.findMany({
     where: { walletId: wallet.id },
-    orderBy: { createdAt: 'desc' },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: options?.limit ?? 50,
+    ...(before === null ? {} : { cursor: { id: before }, skip: 1 }),
   });
 }
 

@@ -1,6 +1,8 @@
 import Link from 'next/link';
 import { WalletTransactionType } from '@prisma/client';
 import { requireScreen } from '@/lib/auth/access';
+import { fetchCount, pageOf, readCursor } from '@/lib/pagination/pages';
+import { OlderPager, StrandedPage } from '@/components/ui/OlderPager';
 import {
   getSpendableCentavos,
   listWalletTransactions,
@@ -30,17 +32,34 @@ const TYPE_LABELS: Readonly<Record<WalletTransactionType, string>> = {
   [WalletTransactionType.ADJUSTMENT]: 'Adjustment',
 };
 
-export default async function CreditsPage() {
+export default async function CreditsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   /* The hero on this screen is a peso figure. With no user it rendered
      ₱0.00 — not "we could not check", but zero, in the largest type on the
      page, to somebody whose session had simply ended. A balance is the one
      thing a screen must never guess at. */
   const user = await requireScreen('credits');
 
-  const [balanceCentavos, transactions] = await Promise.all([
+  /* The balance is always the whole ledger — `getSpendableCentavos` sums every
+     row and is not affected by which page is on screen. Only the history
+     below is paged, and it needed to be: the rows that EXPLAIN the figure at
+     the top of this screen were the ones that fell off the end at fifty. */
+  const cursor = readCursor((await searchParams).before);
+  const [balanceCentavos, fetched] = await Promise.all([
     getSpendableCentavos(user.id),
-    listWalletTransactions(user.id, { limit: 50 }),
+    listWalletTransactions(user.id, {
+      limit: fetchCount(),
+      before: cursor,
+    }),
   ]);
+  const {
+    rows: transactions,
+    olderCursor,
+    strandedPage,
+  } = pageOf(fetched, cursor);
 
   return (
     <main>
@@ -122,7 +141,9 @@ export default async function CreditsPage() {
           History
         </h2>
 
-        {transactions.length === 0 ? (
+        {strandedPage ? (
+          <StrandedPage basePath="/credits" label="credits history" />
+        ) : transactions.length === 0 ? (
           <p className="px-4 py-6 text-sm text-ink-muted">
             No credits activity yet.
           </p>
@@ -164,6 +185,15 @@ export default async function CreditsPage() {
               </li>
             ))}
           </ul>
+        )}
+
+        {strandedPage ? null : (
+          <OlderPager
+            basePath="/credits"
+            olderCursor={olderCursor}
+            onFirstPage={cursor === null}
+            label="credits"
+          />
         )}
       </section>
     </main>
