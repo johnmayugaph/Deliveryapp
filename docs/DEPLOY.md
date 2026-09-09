@@ -21,7 +21,7 @@ misbehaves in specific, documented ways without the others.
 | `DATABASE_URL` | Postgres 16. Nothing works without it. |
 | `AUTH_SECRET` | `openssl rand -hex 32`. Sessions are signed with it; rotating it signs everybody out. |
 | `NEXT_PUBLIC_DEFAULT_CITY_ID` | Which city a first-time visitor sees. Defaults to `city_manila`. |
-| `SEMAPHORE_API_KEY` | **The only long-lead item.** Without it nobody can sign in — see below. |
+| An SMS gateway | **The only long-lead item.** Without one nobody can sign in — see below. `SEMAPHORE_API_KEY`, or Twilio's `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` + an origin. Set both to survive an outage. |
 
 `DIRECT_URL` is needed by `prisma migrate` only, and only because the schema
 declares it: the CLI refuses to load a schema whose referenced variables are
@@ -37,6 +37,22 @@ A Philippine SMS sender needs an account and, for a branded sender name, an
 approval that takes days. Nothing in this repository shortens that. Until it is
 in place **no one can sign in at all** — not a customer, not a shop, not you.
 Order that before you order the server.
+
+**You do not have to wait to test, though.** Twilio signs up in minutes and
+sends from a shared sender, which is enough to answer the question this project
+had never been able to answer — does a code actually reach a handset. Point
+`SMS_PROVIDER_ORDER` at it, keep the branded application running in parallel,
+and switch the order when the local sender is approved.
+
+**Configure both, not one.** Every session in the application starts with a
+code over SMS, so a single gateway is a single point of failure for the whole
+product: an expired card or an hour of provider downtime locks out customers,
+shops, riders and support simultaneously, and the only symptom is sends that
+throw. With two configured, the first to accept wins. The cost is stated in
+`lib/auth/sms/fallback.ts`: a gateway that accepts and then fails to answer is
+retried, so a customer can receive the same code twice. Both messages carry the
+same code against the same single-use record, so that is a few centavos and an
+annoyance rather than a security problem.
 
 ---
 

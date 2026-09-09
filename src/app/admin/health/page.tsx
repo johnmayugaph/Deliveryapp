@@ -1,3 +1,4 @@
+import { describeSmsSetup } from '@/lib/auth/sms';
 import Link from 'next/link';
 import { NotificationChannel } from '@prisma/client';
 import { requireAdmin } from '@/lib/admin/access';
@@ -199,7 +200,7 @@ export default async function AdminHealthPage() {
             is raising an error — the rows are queued, which is the honest state
             and also the one nobody notices.{' '}
             {stuck.some((row) => row.channel === NotificationChannel.SMS)
-              ? 'Set SEMAPHORE_API_KEY for SMS. '
+              ? `Set an SMS gateway: ${describeSmsSetup()}. `
               : ''}
             {stuck.some((row) => row.channel === NotificationChannel.PUSH)
               ? 'Run npm run push:keys for push. '

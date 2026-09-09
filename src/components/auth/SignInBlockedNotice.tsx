@@ -1,3 +1,4 @@
+import { describeSmsSetup } from '@/lib/auth/sms';
 import type { SignInBlocker } from '@/lib/deploy/sign-in-readiness';
 
 /**
@@ -26,7 +27,7 @@ const BLOCKER_NOTICE: Readonly<
       'No SMS gateway is configured, so asking for a code will not send one — ' +
       'to anybody, including whoever set this up. Nothing is broken and ' +
       'waiting will not change it.',
-    fix: 'SEMAPHORE_API_KEY=… then restart',
+    fix: `${describeSmsSetup()} — then restart`,
   },
   INSECURE_TRANSPORT: {
     title: 'This deployment is being served over plain http.',

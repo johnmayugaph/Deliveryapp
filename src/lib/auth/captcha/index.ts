@@ -37,8 +37,9 @@ export interface CaptchaEnv {
   NEXT_PUBLIC_TURNSTILE_SITE_KEY?: string | undefined;
   /**
    * Redirects verification to another host. Ignored in production on purpose,
-   * exactly as `SEMAPHORE_ENDPOINT` is: a variable that can point the check
-   * somewhere else is a way to make every check pass, and no legitimate
+   * exactly as an SMS provider's `*_ENDPOINT` is: a variable that can point
+   * the check somewhere else is a way to make every check pass, and no
+   * legitimate
    * production deployment needs it.
    */
   TURNSTILE_ENDPOINT?: string | undefined;

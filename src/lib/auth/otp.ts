@@ -81,7 +81,7 @@ export async function requestLoginCode(
    *
    * It used to be resolved on the line above the send, after the
    * `PhoneVerification` row had been created and outside the `catch` below.
-   * A production deployment whose operator had not yet set `SEMAPHORE_API_KEY`
+   * A production deployment whose operator had not yet configured a gateway
    * therefore answered the very first thing anybody does on it — ask for a
    * login code — with a 500 and "something on our side broke, not anything
    * you did", and left an unconsumed row behind that could start a cooldown

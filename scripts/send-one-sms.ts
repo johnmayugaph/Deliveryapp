@@ -25,9 +25,12 @@ import {
   normalisePhilippineMobile,
 } from '../src/lib/auth/phone';
 import {
+  DEFAULT_SMS_PROVIDER_ORDER,
+  FallbackSmsSender,
   NoSmsSenderError,
+  SMS_PROVIDERS,
+  describeSmsSetup,
   resolveSmsSender,
-  SemaphoreSmsSender,
   SmsDeliveryError,
 } from '../src/lib/auth/sms';
 import { ConsoleSmsSender } from '../src/lib/auth/sms';
@@ -124,12 +127,17 @@ async function main() {
         [
           'No SMS gateway is configured, so there is nothing to test.',
           '',
-          'Set these in .env and run again:',
-          '  SEMAPHORE_API_KEY=...      from semaphore.co, Account -> API Keys',
-          '  SEMAPHORE_SENDER_NAME=...  a sender name registered on that account',
+          'Set one of these in .env and run again:',
+          ...DEFAULT_SMS_PROVIDER_ORDER.map((name) => {
+            const spec = SMS_PROVIDERS[name];
+            return `  ${spec.label}: ${spec.fix}`;
+          }),
           '',
-          'Without a registered sender name Semaphore uses the account default;',
-          'an unregistered one is rejected outright.',
+          'Twilio is the one that can be signed up for in minutes, which makes',
+          'it the way to answer "does a code reach a handset" before a branded',
+          'Philippine sender name has been approved. Semaphore is the cheaper',
+          'answer afterwards. Without a registered sender name a gateway uses',
+          'the account default; an unregistered one is rejected outright.',
         ].join('\n'),
       );
       process.exit(1);
@@ -142,10 +150,18 @@ async function main() {
   console.log('');
   console.log(`  to:       ${formatPhilippineMobile(to)}  (${to})`);
   console.log(`  provider: ${sender.name}`);
-  if (sender instanceof SemaphoreSmsSender) {
-    // Printed because SEMAPHORE_ENDPOINT can redirect sends in
-    // development, and a test that quietly hit a stub would prove nothing.
-    console.log(`  endpoint: ${sender.endpoint}`);
+  /* Printed because a provider's *_ENDPOINT can redirect sends in
+     development, and a test that quietly hit a stub would prove nothing.
+     Read off whichever adapter was selected — structurally, so a third
+     provider with an endpoint needs no change here. */
+  const withEndpoint = sender as { endpoint?: unknown };
+  if (typeof withEndpoint.endpoint === 'string') {
+    console.log(`  endpoint: ${withEndpoint.endpoint}`);
+  }
+  if (sender instanceof FallbackSmsSender) {
+    // Which gateway actually delivers is decided at send time, so say what
+    // the chain is rather than implying one.
+    console.log(`  chain:    ${sender.providers.join(' → ')} (first to accept wins)`);
   }
   console.log(`  message:  ${args.message}`);
   console.log(`  length:   ${args.message.length} chars`);
@@ -160,7 +176,7 @@ async function main() {
   if (viaConsole) {
     console.log(
       'The console sender is selected, which means nothing leaves this machine.\n' +
-        'That is not a gateway test. Configure SEMAPHORE_API_KEY to make it one.\n',
+        `That is not a gateway test. Configure a gateway to make it one:\n  ${describeSmsSetup()}\n`,
     );
   }
 

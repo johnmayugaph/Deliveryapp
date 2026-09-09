@@ -6175,3 +6175,121 @@ of the new rules, in production, on data that has never been near a test.
 
 `57` migrations, `20` guard files, `64` tables. 2352 tests pass; lint,
 typecheck, tests and build all exit zero.
+
+## A second SMS gateway, and the selection that had only ever had one
+
+`SmsSender` was written to be swapped. Its own comment says the gateway is
+*"the part of this system most likely to be swapped: Philippine bulk-SMS
+gateways differ in price, sender-name registration, and reliability, and
+switching one should not touch the login flow."* That was true of the **send**.
+It was not true of the **selection**: `resolveSmsSender`,
+`smsSendingIsRefused`, `NoSmsSenderError`'s message, `otp.ts`,
+`captcha/index.ts`, the `/admin/health` panel and the sentence a stranded
+operator reads on the login screen all spelled `SEMAPHORE_API_KEY` by hand.
+Twenty-two mentions across six files. So "swap the provider" meant a 77-line
+adapter plus editing operator copy in places nobody would think to grep — the
+same shape as everything else this audit has found, an intention the code
+honoured halfway.
+
+### The registry, and why the specs are data
+
+`lib/auth/sms/registry.ts` holds one compile-enforced
+`Record<SmsProviderName, SmsProviderSpec>`: label, required variables, optional
+ones, the development-redirect variable, the line to show an operator, and
+`isConfigured`. Adding a gateway cannot ship without deciding all six.
+
+The **builders live in `build.ts`**, and that split is not tidiness.
+`describeSmsSetup()` is rendered by the login screen — the most-visited page in
+the application — and a spec carrying a `build()` would drag two HTTP adapters
+into that page's module graph to produce a string. This project has been bitten
+by exactly that once: the customer's tracking map failed because a client
+component imported a list from a module that reached for `next/headers`. Data
+in one file, construction in the other, and a test asserts the registry names
+neither adapter.
+
+Two properties of `SMS_PROVIDER_ORDER` are deliberate, and both are about not
+losing a working gateway to a typo. An unrecognised name is **ignored** rather
+than fatal — a stray comma must not stop a login screen. And a configured
+provider the variable omits is **appended** rather than dropped, because
+`SMS_PROVIDER_ORDER=twilio` means "try Twilio first", not "disable the account
+that is paying for today's messages".
+
+The development endpoint redirect also moved into one function. Every provider
+gets its own `*_ENDPOINT`, every one is ignored in production for the reason
+`SEMAPHORE_ENDPOINT` gave — *a variable that can point message delivery
+somewhere else is a way to capture login codes* — and deciding it centrally is
+what stops the next adapter from quietly honouring its own override. A test
+asserts no adapter reads `NODE_ENV` at all.
+
+### Twilio, and why Twilio specifically
+
+Not a second option for its own sake. **It can be signed up for in minutes.** A
+branded Philippine sender name takes days of carrier approval, and until one
+exists nobody can sign in at all — which is why "does an OTP actually reach a
+handset" is the one question this project has never been able to answer. Twilio
+answers it today from a shared sender while the branded application runs in
+parallel with whichever local gateway is cheapest.
+
+Its wire format has two things worth pinning. Auth is **HTTP Basic**, so the
+token is in a header rather than the URL or the body — a query string lands in
+access logs. And Twilio needs **one of `From` or `MessagingServiceSid`**, never
+neither; the constructor refuses rather than letting a login discover it as a
+400.
+
+### The chain, and its one honest cost
+
+**An SMS outage is a total outage.** Every session in the application starts
+with a code over one gateway, so an expired card, a suspended sender name or an
+hour of downtime locks out customers, shops, riders and support at the same
+time, and the only symptom is sends that throw. Everything else in this system
+degrades; this stops. Two configured providers now become a chain, first to
+accept wins.
+
+The cost is real and is written down rather than hidden: a gateway that
+**accepts and then fails to answer** gets retried, because from this side a
+timeout is indistinguishable from a refusal — so a customer can receive the
+same code twice and TARA pays for two messages. That is not a security problem,
+and the reason is worth stating precisely: the OTP is generated and stored
+*before* any send, so both messages carry the same code against the same
+single-use record, with the same expiry and the same attempt counter. Two
+identical texts are an annoyance and a few centavos; the alternative is
+somebody who cannot sign in.
+
+No round-robin, no health tracking between calls. State that decides whether
+logins work is a thing to add on evidence, not on the first day.
+
+### Verified
+
+**49 new units** (2401 total), and **twelve negative controls** — dropping
+unmentioned providers from the order, making a typo fatal, treating an empty
+variable as set, letting Twilio build with no origin, honouring the endpoint
+override in production, using only the first gateway, sending a raw `+`, putting
+credentials in the query string, preferring `From` over the Messaging Service,
+swallowing the Twilio error code, not stopping the chain at a success, and
+losing the failure reasons. Every one failed the test written for it.
+
+**Two of the twelve did not fire on the first attempt**, and the first was a
+real hole rather than a bad mutation. The error-code test asserted `/21608/`
+and `/unverified/i` — both of which appear in the **raw JSON body**, so it
+passed just as happily with the parsing disabled and the whole blob dumped. It
+now asserts `(code 21608)`, a shape only this adapter produces, and that the
+raw `"more_info"` is *not* surfaced. The second was my mutation being a no-op;
+re-run properly, it failed four tests.
+
+**The absence-guards were checked against `dcb234c`**, where all four files did
+name `SEMAPHORE_API_KEY` — so the sweep asserting no provider variable is
+spelled in code outside `lib/auth/sms` is not vacuous.
+
+**And the CLI was exercised in all four configurations.** `npm run
+sms:send-one --dry-run` reports `console` with nothing set and names both
+providers as the fix; `twilio` with only Twilio set, printing the real endpoint;
+`semaphore→twilio` with both; and `twilio→semaphore` with
+`SMS_PROVIDER_ORDER=twilio`.
+
+What none of this establishes is either gateway's own side — whether a key is
+live, whether a Philippine handset rings. That still needs a machine with
+egress and an account, and it is still the last thing standing between this and
+a launch. The difference is that it can now be answered in an afternoon with a
+Twilio trial rather than after a week of carrier approval.
+
+2401 tests pass; lint, typecheck, tests and build all exit zero.
