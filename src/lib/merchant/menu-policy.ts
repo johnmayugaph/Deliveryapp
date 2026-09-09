@@ -329,10 +329,3 @@ export function findDuplicate<Row extends MenuRowLike>(
     ) ?? null
   );
 }
-
-/** A summary line the merchant screen shows above the list. */
-export function describeMenu(counts: { items: number; unavailable: number }): string {
-  if (counts.items === 0) return 'Nothing on the menu yet';
-  const items = `${counts.items} item${counts.items === 1 ? '' : 's'}`;
-  return counts.unavailable > 0 ? `${items} · ${counts.unavailable} out of stock` : items;
-}

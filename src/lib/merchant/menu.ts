@@ -1,6 +1,12 @@
 import type { MenuItem } from '@prisma/client';
 import { prisma, type PrismaTransactionClient } from '@/lib/prisma';
 import { IMAGE_SUMMARY_SELECT, type MenuImageSummary } from '@/lib/media/menu-images';
+import { unsatisfiableGroups } from '@/lib/merchant/option-policy';
+import {
+  menuStock,
+  type ItemStock,
+  type MenuStock,
+} from '@/lib/merchant/menu-stock';
 import {
   CategoryNotFoundError,
   DEFAULT_CATEGORY,
@@ -74,6 +80,126 @@ export function storeMenu(storeId: string): Promise<MenuItemWithImage[]> {
     include: { image: { select: IMAGE_SUMMARY_SELECT } },
     orderBy: [{ sortOrder: 'asc' }, { category: 'asc' }, { name: 'asc' }],
   });
+}
+
+/**
+ * What a customer could actually order from this menu, and what is stopping
+ * the rest.
+ *
+ * One query rather than two: it replaced `optionCountsByItem`, whose `groupBy`
+ * counted a dish's option groups for the row's "2 choices" link. Satisfiability
+ * needs the options themselves, so the count comes off the same read.
+ *
+ * The satisfiability question is asked with `unsatisfiableGroups` — the same
+ * predicate `option-policy.ts` applies at checkout — rather than by counting
+ * available options against `minChoices` here. Two copies of that comparison
+ * would be two things that can disagree about whether an order will be
+ * refused, and the one on this screen is the one nobody would notice was
+ * wrong.
+ */
+export interface MenuStockView {
+  stock: MenuStock;
+  byItem: Map<string, ItemStock>;
+  /** How many option groups each dish has, for the link on its row. */
+  groupCounts: Map<string, number>;
+}
+
+export async function storeMenuStock(
+  storeId: string,
+  now: Date = new Date(),
+): Promise<MenuStockView> {
+  const items = await prisma.menuItem.findMany({
+    where: { storeId },
+    select: {
+      id: true,
+      name: true,
+      isAvailable: true,
+      outOfStockSince: true,
+      optionGroups: {
+        select: {
+          id: true,
+          name: true,
+          minChoices: true,
+          maxChoices: true,
+          options: {
+            select: {
+              id: true,
+              name: true,
+              priceDeltaCentavos: true,
+              isAvailable: true,
+            },
+          },
+        },
+      },
+    },
+    orderBy: [{ sortOrder: 'asc' }, { category: 'asc' }, { name: 'asc' }],
+  });
+
+  const stock = menuStock(
+    items.map((item) => ({
+      id: item.id,
+      name: item.name,
+      isAvailable: item.isAvailable,
+      outOfStockSince: item.outOfStockSince,
+      unsatisfiableGroupNames: unsatisfiableGroups(item.optionGroups).map(
+        (group) => group.name,
+      ),
+    })),
+    now,
+  );
+
+  return {
+    stock,
+    byItem: new Map(stock.items.map((state) => [state.id, state])),
+    groupCounts: new Map(items.map((item) => [item.id, item.optionGroups.length])),
+  };
+}
+
+/**
+ * Marks a dish out of stock, or puts it back.
+ *
+ * The ONE writer of `isAvailable` on a menu item, so that the timestamp beside
+ * it cannot drift from it. It is set when the dish goes out and cleared when it
+ * comes back — a stale `outOfStockSince` on an available dish would make the
+ * next time it goes out read as weeks old.
+ *
+ * Scoped to the store, so an item id from another shop matches nothing.
+ */
+export async function setItemStock(input: {
+  storeId: string;
+  menuItemId: string;
+  isAvailable: boolean;
+  now?: Date;
+}): Promise<void> {
+  const now = input.now ?? new Date();
+  const { count } = await prisma.menuItem.updateMany({
+    where: { id: input.menuItemId, storeId: input.storeId },
+    data: {
+      isAvailable: input.isAvailable,
+      outOfStockSince: input.isAvailable ? null : now,
+    },
+  });
+  if (count === 0) throw new MenuItemNotFoundError();
+}
+
+/**
+ * Puts every dish the shop marked out back on the menu.
+ *
+ * The control that had never existed. The only writer of `isAvailable` was a
+ * single manual tap, so the out-of-stock switch was an 8pm decision with no
+ * 6am undo — and putting eleven dishes back after a busy Saturday was eleven
+ * taps on a phone in a kitchen, which is why it did not happen and why menus
+ * quietly shrank.
+ *
+ * Returns how many it changed, so the screen can say so rather than appearing
+ * to do nothing on a menu that was already whole.
+ */
+export async function restoreAllStock(storeId: string): Promise<number> {
+  const { count } = await prisma.menuItem.updateMany({
+    where: { storeId, isAvailable: false },
+    data: { isAvailable: true, outOfStockSince: null },
+  });
+  return count;
 }
 
 /** The same order, for the customer's store page, available items only. */

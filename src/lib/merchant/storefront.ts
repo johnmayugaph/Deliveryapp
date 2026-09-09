@@ -1,5 +1,6 @@
 import { cache } from 'react';
 import { prisma } from '@/lib/prisma';
+import { storeMenuStock } from '@/lib/merchant/menu';
 import { findDeliveryFeeRule } from '@/lib/pricing/delivery-fee';
 import { getAllServices, isOrderableIn } from '@/lib/services/registry';
 import {
@@ -27,12 +28,22 @@ export const loadStorefront = cache(async function loadStorefront(
   storeId: string,
 ): Promise<StorefrontState> {
   const store = await prisma.store.findUniqueOrThrow({ where: { id: storeId } });
-  const [city, availableMenuItems, allServices] = await Promise.all([
+  const [city, menu, allServices] = await Promise.all([
     prisma.city.findUnique({
       where: { id: store.cityId },
       select: { name: true },
     }),
-    prisma.menuItem.count({ where: { storeId: store.id, isAvailable: true } }),
+    /**
+     * SELLABLE items, not available ones.
+     *
+     * This counted `isAvailable: true` and was wrong in one direction: a dish
+     * that is in stock but whose required option group has run out of answers
+     * cannot be ordered, and checkout refuses it. A shop where every dish was
+     * in that state was told "Customers can order now" — the panel's whole
+     * job, answered backwards. `storeMenuStock` applies the same
+     * satisfiability predicate checkout does.
+     */
+    storeMenuStock(store.id),
     getAllServices(),
   ]);
 
@@ -67,6 +78,6 @@ export const loadStorefront = cache(async function loadStorefront(
     isOpen: store.isOpen,
     cityName: city?.name ?? 'your city',
     services,
-    availableMenuItems,
+    sellableMenuItems: menu.stock.sellable,
   });
 });

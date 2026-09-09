@@ -15,6 +15,7 @@ import {
   MAX_DESCRIPTION_LENGTH,
   MAX_ITEM_NAME_LENGTH,
 } from '@/lib/merchant/menu-policy';
+import { UNSELLABLE_REASONS, type ItemStock } from '@/lib/merchant/menu-stock';
 import { menuImageHref } from '@/lib/media/image-bytes';
 import { MenuPhotoControls } from '@/components/merchant/MenuPhotoControls';
 
@@ -31,6 +32,14 @@ export interface MenuRowItem {
   imageId: string | null;
   /** How many questions this dish asks a customer. */
   optionGroupCount: number;
+  /**
+   * Whether a customer could order this right now, and if not why.
+   *
+   * Passed in rather than derived from `isAvailable` here, because the answer
+   * is not on the row: a dish in stock whose required choice has run out is
+   * refused at checkout, and only the option groups know that.
+   */
+  stock: ItemStock;
 }
 
 /**
@@ -133,9 +142,46 @@ export function MenuRow({
           {/* No section name on the row: it is the heading this row sits
               under, and repeating it on every dish was noise the flat list
               needed and the grouped one does not. */}
-          {item.isAvailable ? null : (
-            <span className="mt-0.5 block text-[11px] font-semibold text-ink-faint">
-              Wala ngayon
+          {/*
+            The state, with how long. This said "Wala ngayon" — *not now* —
+            with nothing after it, so a dish somebody marked out six weeks ago
+            read exactly like one marked out at eight this evening. And a dish
+            that was in stock and unorderable said nothing at all.
+          */}
+          {item.stock.reason === null ? null : (
+            <span
+              className={`mt-0.5 block text-[11px] font-semibold ${
+                UNSELLABLE_REASONS[item.stock.reason].isTheShopsChoice
+                  ? 'text-ink-faint'
+                  : 'text-rose-700'
+              }`}
+            >
+              {UNSELLABLE_REASONS[item.stock.reason].badge}
+              {item.stock.phrase ? ` · ${item.stock.phrase}` : ''}
+              {item.stock.blockedByGroups.length > 0 ? (
+                <>
+                  {` · ${item.stock.blockedByGroups.join(', ')} ${
+                    item.stock.blockedByGroups.length === 1 ? 'has' : 'have'
+                  } run out · `}
+                  {/*
+                    The route to the fix, stated beside the problem and NOT
+                    behind `canEdit`. Found in a browser: a staff member saw
+                    "Cannot be ordered · Size has run out", is allowed to put
+                    an option back — `setOptionAvailabilityAction` takes STAFF,
+                    like the switch on this row — and had no way to reach the
+                    screen, because the only link to it sat inside the
+                    manager-only block below. The obvious thing to tap instead
+                    was the green "In stock" button, which would have marked
+                    the whole dish out.
+                  */}
+                  <Link
+                    href={`/merchant/${storeId}/menu/${item.id}/options`}
+                    className="underline"
+                  >
+                    fix the choices
+                  </Link>
+                </>
+              ) : null}
             </span>
           )}
         </span>

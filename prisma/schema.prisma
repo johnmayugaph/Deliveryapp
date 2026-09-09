@@ -787,6 +787,16 @@ model MenuItem {
   isAvailable   Boolean @default(true)
   sortOrder     Int     @default(0)
 
+  /// When the shop marked this out of stock, cleared when it comes back.
+  ///
+  /// A separate column rather than reading `updatedAt`, because `updatedAt`
+  /// moves for reasons that have nothing to do with stock: editing the price
+  /// of an out-of-stock dish, or reordering the section it sits in, would
+  /// each reset a duration derived from it. "Wala ngayon" is a claim about
+  /// tonight, and the whole point of recording this is to notice when it is
+  /// six weeks old.
+  outOfStockSince DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

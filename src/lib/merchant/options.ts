@@ -82,15 +82,6 @@ export async function itemOptionGroups(input: {
   });
 }
 
-/** How many choices each dish on a menu has, for the list screen. */
-export async function optionCountsByItem(storeId: string): Promise<Map<string, number>> {
-  const groups = await prisma.menuItemOptionGroup.groupBy({
-    by: ['menuItemId'],
-    where: { menuItem: { storeId } },
-    _count: { _all: true },
-  });
-  return new Map(groups.map((row) => [row.menuItemId, row._count._all]));
-}
 
 async function requireItem(storeId: string, menuItemId: string): Promise<string> {
   const item = await prisma.menuItem.findFirst({

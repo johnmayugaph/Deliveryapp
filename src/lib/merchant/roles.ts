@@ -81,7 +81,14 @@ export const BACK_OFFICE_AREAS: readonly BackOfficeArea[] = [
     tab: 'Menu',
     path: 'menu',
     needs: StoreRole.STAFF,
-    grants: 'See the menu and mark a dish sold out for the night.',
+    /**
+     * It said "sold out for the night", which was the one part of this map
+     * that the code did not do: nothing ever put a dish back, so the switch
+     * was for the night only in intention. It is now, because the same person
+     * can put the whole menu back in one tap.
+     */
+    grants:
+      'See the menu, mark a dish sold out, and put everything back in stock.',
     sensitive: false,
   },
   {

@@ -196,6 +196,34 @@ describe('what each rung adds', () => {
     expect(sentence).toMatch(/close/i);
   });
 
+  it('does not promise the stock switch is only “for the night”', () => {
+    /**
+     * It did, and that was the one line in this map the code did not do:
+     * nothing ever put a dish back, so the switch was for the night in
+     * intention only. A menu quietly shrank one forgotten dish at a time. The
+     * claim is checked against the writer that makes it true, so deleting the
+     * bulk restore fails this rather than leaving the sentence standing.
+     */
+    const menu = readFileSync(
+      path.join(process.cwd(), 'src/lib/merchant/menu.ts'),
+      'utf8',
+    );
+    expect(menu).toMatch(/export async function restoreAllStock\(/);
+    const action = readFileSync(
+      path.join(process.cwd(), 'src/lib/actions/merchant-actions.ts'),
+      'utf8',
+    );
+    // Staff, like the individual switch: whoever opens the shop is whoever is
+    // on the counter, so the grant belongs on the STAFF rung.
+    expect(action).toMatch(
+      /restoreAllStockAction[\s\S]{0,400}requireStoreAccess\(storeId, StoreRole\.STAFF\)/,
+    );
+    const sentence = BACK_OFFICE_AREAS.find((a) => a.key === 'menu')!.grants;
+    expect(sentence).not.toMatch(/for the night/);
+    expect(sentence).toMatch(/back in stock/);
+    expect(areasAddedBy(StoreRole.STAFF).map((a) => a.key)).toContain('menu');
+  });
+
   it('does not credit a manager with editing the shop’s name or address', () => {
     /**
      * It did, and none of it was true: the only store column any merchant

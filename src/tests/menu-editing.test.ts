@@ -12,7 +12,6 @@ import {
   PriceNotUnderstoodError,
   PriceOutOfRangeError,
   categoriesOf,
-  describeMenu,
   findDuplicate,
   groupByCategory,
   normaliseCategory,
@@ -379,21 +378,6 @@ describe('the same name twice', () => {
         exceptId: 'item_4',
       }),
     ).toBeNull();
-  });
-});
-
-describe('the line above the list', () => {
-  it('says something honest about an empty menu', () => {
-    expect(describeMenu({ items: 0, unavailable: 0 })).toMatch(/nothing/i);
-  });
-
-  it('counts one item without the plural', () => {
-    expect(describeMenu({ items: 1, unavailable: 0 })).toBe('1 item');
-  });
-
-  it('mentions what is out of stock, and only when something is', () => {
-    expect(describeMenu({ items: 4, unavailable: 0 })).toBe('4 items');
-    expect(describeMenu({ items: 4, unavailable: 2 })).toContain('2 out of stock');
   });
 });
 

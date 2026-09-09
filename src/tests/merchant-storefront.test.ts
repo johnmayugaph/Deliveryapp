@@ -39,7 +39,7 @@ function facts(overrides: Partial<StorefrontFacts> = {}): StorefrontFacts {
     isOpen: true,
     cityName: 'Baguio',
     services: [LIVE_FOOD],
-    availableMenuItems: 12,
+    sellableMenuItems: 12,
     ...overrides,
   };
 }
@@ -70,7 +70,8 @@ describe('the blocker map', () => {
         // And never names a control the shop does not have.
         expect(copy.detail, blocker).not.toMatch(/^Tap /);
       } else {
-        expect(copy.detail, blocker).toMatch(/Tap|from the Menu tab/);
+        // Names a control or a tab the shop actually has, rather than a fix.
+        expect(copy.detail, blocker).toMatch(/Tap|Menu tab/);
         expect(copy.detail, blocker).not.toMatch(/support/i);
       }
     }
@@ -165,7 +166,7 @@ describe('closed is not broken', () => {
   });
 
   it('is not ready-when-open once something else is wrong too', () => {
-    const state = storefrontState(facts({ isOpen: false, availableMenuItems: 0 }));
+    const state = storefrontState(facts({ isOpen: false, sellableMenuItems: 0 }));
     expect(state.readyWhenOpen).toBe(false);
     expect(state.blockers).toEqual(['NOTHING_ON_THE_MENU', 'CLOSED_BY_THE_SHOP']);
   });
@@ -188,7 +189,7 @@ describe('hidden by TARA', () => {
     // Whichever the shop fixes, it still will not be found. Reporting only the
     // shop's own faults here would send them round in circles.
     const state = storefrontState(
-      facts({ isVisible: false, isOpen: false, availableMenuItems: 0 }),
+      facts({ isVisible: false, isOpen: false, sellableMenuItems: 0 }),
     );
     expect(state.blockers).toEqual([
       'HIDDEN_BY_TARA',
@@ -272,7 +273,7 @@ describe('the service gates', () => {
 
 describe('an empty menu', () => {
   it('is the shop’s own to clear, and does not hide them', () => {
-    const state = storefrontState(facts({ availableMenuItems: 0 }));
+    const state = storefrontState(facts({ sellableMenuItems: 0 }));
     expect(state.blockers).toEqual(['NOTHING_ON_THE_MENU']);
     expect(state.listed).toBe(true);
     expect(blockersTheShopCanClear(state)).toEqual(['NOTHING_ON_THE_MENU']);
@@ -290,7 +291,7 @@ describe('every blocker is reachable, and reported in one order', () => {
       facts({ services: [] }),
       facts({ services: [{ ...LIVE_FOOD, liveInThisCity: false }] }),
       facts({ services: [{ ...LIVE_FOOD, hasDeliveryPricing: false }] }),
-      facts({ availableMenuItems: 0 }),
+      facts({ sellableMenuItems: 0 }),
       facts({ isOpen: false }),
     ];
     for (const input of cases) {
@@ -301,7 +302,7 @@ describe('every blocker is reachable, and reported in one order', () => {
 
   it('never reports the same reason twice, and always in the fixed order', () => {
     const state = storefrontState(
-      facts({ isVisible: false, isOpen: false, availableMenuItems: 0, services: [] }),
+      facts({ isVisible: false, isOpen: false, sellableMenuItems: 0, services: [] }),
     );
     expect(new Set(state.blockers).size).toBe(state.blockers.length);
     // Invisible-making reasons before checkout-breaking ones, and the shop's
@@ -312,7 +313,7 @@ describe('every blocker is reachable, and reported in one order', () => {
   });
 
   it('offers the menu and support together when both apply', () => {
-    const state = storefrontState(facts({ isVisible: false, availableMenuItems: 0 }));
+    const state = storefrontState(facts({ isVisible: false, sellableMenuItems: 0 }));
     expect(screenToOpen(state)).toEqual({ tab: 'Menu', path: 'menu' });
     expect(needsSupport(state)).toBe(true);
   });
@@ -330,7 +331,7 @@ describe('every blocker is reachable, and reported in one order', () => {
 
   it('splits every reported blocker between the shop and TARA, losing none', () => {
     const state = storefrontState(
-      facts({ isVisible: false, isOpen: false, availableMenuItems: 0 }),
+      facts({ isVisible: false, isOpen: false, sellableMenuItems: 0 }),
     );
     expect(
       [...blockersOnlyTaraCanClear(state), ...blockersTheShopCanClear(state)].sort(),

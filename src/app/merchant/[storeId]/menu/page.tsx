@@ -1,11 +1,12 @@
 import { StoreRole } from '@prisma/client';
 import { requireStoreAccess, roleSatisfies } from '@/lib/merchant/access';
-import { storeMenu } from '@/lib/merchant/menu';
-import { optionCountsByItem } from '@/lib/merchant/options';
-import { categoriesOf, describeMenu, groupByCategory } from '@/lib/merchant/menu-policy';
+import { storeMenu, storeMenuStock } from '@/lib/merchant/menu';
+import { categoriesOf, groupByCategory } from '@/lib/merchant/menu-policy';
+import { describeStock } from '@/lib/merchant/menu-stock';
 import { MenuItemForm } from '@/components/merchant/MenuItemForm';
 import { MenuRow } from '@/components/merchant/MenuRow';
 import { MenuSection } from '@/components/merchant/MenuSection';
+import { MenuStockNotice } from '@/components/merchant/MenuStockNotice';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,22 +30,32 @@ export default async function MerchantMenuPage({
 }) {
   const { storeId } = await params;
   const access = await requireStoreAccess(storeId);
-  const [items, optionCounts] = await Promise.all([
+  const [items, menu] = await Promise.all([
     storeMenu(access.store.id),
-    optionCountsByItem(access.store.id),
+    // Replaces the option-group COUNT this screen used to load beside the
+    // menu: satisfiability needs the options themselves, so the count for
+    // each row's "2 choices" link comes off the same read.
+    storeMenuStock(access.store.id),
   ]);
 
   const canEdit = roleSatisfies(access.role, StoreRole.MANAGER);
   const groups = groupByCategory(items);
   const sections = categoriesOf(items);
-  const unavailable = items.filter((item) => !item.isAvailable).length;
 
   return (
     <main className="pb-8">
+      {/*
+        Leads with what a customer can order rather than with how many rows
+        exist. The line here read "11 items · 4 out of stock", which counted
+        rows and was silent about a dish that was in stock and unorderable —
+        the case that costs the shop an order without looking like anything.
+      */}
       <p className="px-4 py-3 text-xs text-ink-muted">
-        {describeMenu({ items: items.length, unavailable })}
+        {describeStock(menu.stock, items.length)}
         {canEdit ? '' : ' · Staff can mark items out of stock'}
       </p>
+
+      <MenuStockNotice storeId={access.store.id} stock={menu.stock} />
 
       {items.length === 0 ? (
         <p className="mx-4 rounded-xl bg-amber-50 px-3.5 py-3 text-[12px] leading-relaxed text-amber-900">
@@ -89,7 +100,19 @@ export default async function MerchantMenuPage({
                 isFirstInSection: position === 0,
                 isLastInSection: position === group.items.length - 1,
                 imageId: item.image?.id ?? null,
-                optionGroupCount: optionCounts.get(item.id) ?? 0,
+                optionGroupCount: menu.groupCounts.get(item.id) ?? 0,
+                stock: menu.byItem.get(item.id) ?? {
+                  // Only reachable if the two reads raced a delete, in which
+                  // case the row is about to disappear; treating it as fine is
+                  // better than crashing the menu over it.
+                  id: item.id,
+                  name: item.name,
+                  reason: null,
+                  outFor: 'UNKNOWN',
+                  phrase: null,
+                  blockedByGroups: [],
+                  sellable: true,
+                },
               }}
             />
           ))}

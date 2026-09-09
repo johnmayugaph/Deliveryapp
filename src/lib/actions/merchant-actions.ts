@@ -6,6 +6,7 @@ import { prisma } from '@/lib/prisma';
 import { requireOrderStoreAccess, requireStoreAccess } from '@/lib/merchant/access';
 import { allowedTransitions, transitionOrder } from '@/lib/orders/state-machine';
 import { settleCancelledOrder } from '@/lib/orders/maintenance';
+import { restoreAllStock, setItemStock } from '@/lib/merchant/menu';
 
 /**
  * Merchant actions.
@@ -272,20 +273,64 @@ export async function setItemAvailabilityAction(
 ): Promise<StoreSettingsResult> {
   try {
     const access = await requireStoreAccess(storeId, StoreRole.STAFF);
-    // Scoped to the store, so an item id from elsewhere matches nothing.
-    const { count } = await prisma.menuItem.updateMany({
-      where: { id: menuItemId, storeId: access.store.id },
-      data: { isAvailable },
-    });
-    if (count === 0) {
-      return { ok: false, message: 'That item is not on your menu.' };
-    }
-    revalidatePath(`/merchant/${storeId}/menu`);
-    revalidatePath(`/stores/${access.store.slug}`);
+    // Through `setItemStock` rather than writing the row here, because the
+    // timestamp beside `isAvailable` has to move with it. This action used to
+    // write the flag directly and there was no timestamp to forget; now that
+    // there is one, a second writer is a second thing that can leave it stale.
+    await setItemStock({ storeId: access.store.id, menuItemId, isAvailable });
+    revalidateMenuViews(storeId, access.store.slug);
     return { ok: true };
   } catch (error) {
     return { ok: false, message: toMerchantMessage(error) };
   }
+}
+
+export type RestoreStockResult =
+  | { ok: true; restored: number; message: string }
+  | { ok: false; message: string };
+
+/**
+ * Puts every dish the shop marked out of stock back on the menu.
+ *
+ * STAFF, deliberately, and for the same reason the individual switch is: this
+ * is the opening-time counterpart of the closing-time decision, and whoever
+ * opens the shop is whoever is on the counter. Nothing here can remove a dish
+ * or change a price, so the worst a mistaken tap does is offer food that is
+ * available — which the same person can undo in one more tap.
+ */
+export async function restoreAllStockAction(
+  storeId: string,
+): Promise<RestoreStockResult> {
+  try {
+    const access = await requireStoreAccess(storeId, StoreRole.STAFF);
+    const restored = await restoreAllStock(access.store.id);
+    revalidateMenuViews(storeId, access.store.slug);
+    return {
+      ok: true,
+      restored,
+      // Says nothing happened when nothing did, rather than reporting success
+      // on a menu that was already whole and leaving somebody wondering.
+      message:
+        restored === 0
+          ? 'Everything was already in stock.'
+          : restored === 1
+            ? '1 dish is back on the menu.'
+            : `${restored} dishes are back on the menu.`,
+    };
+  } catch (error) {
+    return { ok: false, message: toMerchantMessage(error) };
+  }
+}
+
+/**
+ * The three views a stock change is visible on: the shop's own menu, the
+ * customer's storefront, and the settings panel that reports whether anything
+ * on the menu can be ordered at all.
+ */
+function revalidateMenuViews(storeId: string, slug: string): void {
+  revalidatePath(`/merchant/${storeId}/menu`);
+  revalidatePath(`/merchant/${storeId}/settings`);
+  revalidatePath(`/stores/${slug}`);
 }
 
 /* An item's price used to be editable here, on its own. It moved to

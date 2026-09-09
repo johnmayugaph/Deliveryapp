@@ -4867,3 +4867,129 @@ should agree on it; the dead link does not, which is the one reason the
 component reads the path at all.
 
 2060 tests pass; lint, typecheck, tests and build all exit zero.
+
+## The menu: what a customer cannot order, and for how long
+
+The menu screen could already create, price, photograph, reorder and delete a
+dish, and mark one out of stock. Two things it could not do were tell a shop
+what was actually unsellable, and put anything back.
+
+### Nothing ever put a dish back
+
+The only writer of `MenuItem.isAvailable` was a single manual tap. So the
+out-of-stock switch was an 8pm decision with no 6am undo, and the label on it
+read **Wala ngayon** — *not now* — which is a claim about tonight that can be
+six weeks old, with nothing on the screen able to tell the difference. Over a
+few busy Saturdays a shop's menu shrinks to nothing, one forgotten dish at a
+time, and the only thing that notices is the settings panel from the last
+phase saying "nothing on the menu can be ordered".
+
+`MenuItem.outOfStockSince` records when, written by the switch and cleared
+when the dish comes back. It is a column rather than a read of `updatedAt`,
+because `updatedAt` moves for reasons that have nothing to do with stock —
+editing the price of an out-of-stock dish, or reordering the section it sits
+in, would each reset a duration derived from it. The migration deliberately
+does not backfill: rows that were already out have no honest answer, and
+`now()` would have claimed every one of them went out at deploy time. The
+screen reads a null as "we do not know when", which is true.
+
+And there is now a **Put all N back in stock** control. Staff, like the switch
+itself: whoever opens the shop is whoever is on the counter, and nothing it can
+do is worse than offering food that is available.
+
+### A dish can be in stock and impossible to order
+
+A required option group whose answers have all run out — "pick a size" with
+both sizes marked out — cannot be answered, so `quoteCheckout` refuses the
+dish. `groupIsSatisfiable` has always said so, and it was rendered **only on
+the per-dish options sub-page**: one tap deeper than the list, behind a link a
+shop opens on purpose. On the list itself the dish read *In stock* in emerald.
+
+`src/lib/merchant/menu-stock.ts` is the compile-enforced record over the two
+ways a dish is unsellable, with a bucket for how long — `TONIGHT`, `DAYS`,
+`FORGOTTEN` past a fortnight, `UNKNOWN` — and, per reason, whether it is the
+shop's own deliberate switch. That last field is what the screen turns on: a
+dish marked out at eight is a decision and gets no warning; a dish nobody can
+order is a surprise and gets one, in red, first.
+
+The satisfiability question is asked with `unsatisfiableGroups`, the predicate
+checkout applies, rather than by counting available options against
+`minChoices` again. Two copies of that comparison would be two things that can
+disagree about whether an order will be refused, and the copy on this screen is
+the one nobody would notice was wrong.
+
+### Three claims elsewhere that were false
+
+**The settings panel overstated what a customer can order.** Last phase's
+`NOTHING_ON_THE_MENU` counted `isAvailable`, so a shop whose every dish was
+blocked by a missing choice was told *"Customers can order now"* — the panel's
+whole job, answered backwards. It counts sellable items now, and the field was
+renamed from `availableMenuItems` because a field called "available" is one the
+next person fills in from the obvious column.
+
+**The role note promised the switch was "for the night".** That was the one
+line in `BACK_OFFICE_AREAS` the code did not do. It is true now, and the test
+checks it against `restoreAllStock` and the STAFF gate on the action rather
+than pinning the sentence, so deleting the control fails the test instead of
+leaving the prose standing.
+
+**Two functions had become dead** and were removed rather than left: the old
+`describeMenu` summary line, which nothing rendered any more and whose only
+remaining callers were its own four tests, and `optionCountsByItem`, whose
+`groupBy` the new loader replaced — satisfiability needs the options
+themselves, so the count for each row's "Choices (2)" link comes off the same
+read.
+
+### Verified in four places
+
+**Twenty-eight new units** (2086 total). The load-bearing ones are the
+agreement checks: that no comparison against `minChoices` exists outside
+`option-policy.ts`; that the timestamp is written as `null` rather than
+`undefined` on restore, because `undefined` in a Prisma `data` block means "do
+not change this column"; that `merchant-actions.ts` no longer writes the row
+itself; and that every warning is reachable from some real combination of
+facts.
+
+**Eleven mutations, and four of them survived the first pass.** Worth
+recording, because each survivor was a check that could not fail:
+
+- A mutant that deleted the `unsatisfiableGroups` import and inlined the
+  comparison **passed**, because the doc comment beside the call still contains
+  the word and my regex read the whole file. Comments come out first now — the
+  third time this exact defect has appeared in this project.
+- `outOfStockSince: undefined` on restore passed everything, leaving a stale
+  timestamp so the dish's next trip out of stock would read as weeks old.
+- Adding the blocked dishes back into the sellable count passed, because
+  nothing pinned what the storefront panel reads.
+- Restoring the "for the night" sentence passed, because that sentence had
+  never had a check at all.
+
+Two of my own assertions also had to be scoped: "no `minChoices` in `menu.ts`"
+was too strong, since the loader must SELECT the column, and a sweep for the
+word `isAvailable` flagged reading a column as writing it.
+
+**Twenty-six live-database checks**, walking a real dish out, forward three
+weeks, and back; the bulk restore, twice, to check it reports doing nothing the
+second time; and a required group emptied. One of those checks was a
+tautology on the first run — asserting the storefront had no blockers while
+three other dishes were still sellable, which passes on the old counting too.
+Rewritten to isolate the real case: every other dish marked out, so the only
+`isAvailable` row on the menu is one no customer can order. That is the case
+the panel used to call "Customers can order now", and it now refuses to.
+
+**A browser in five states, as owner and as staff**, including clicking the
+restore control as a staff member and checking the database afterwards: 0 of 4
+orderable to 4 of 4, no timestamps stranded.
+
+That browser pass found two more defects. A staff member saw *"Cannot be
+ordered · Size has run out"*, is allowed to put an option back — that action
+takes STAFF, like the switch on the row — and had **no way to reach the
+screen**, because the only link to it sat inside the manager-only block. The
+obvious thing to tap instead was the green *In stock* button, which would have
+marked the whole dish out. The route now sits beside the problem, for every
+role. And the restore control's own confirmation was computed and thrown away:
+the notice unmounted on the refresh that removed the button, so *"4 dishes are
+back on the menu"* never reached anybody — the same defect this phase exists to
+fix, one layer up.
+
+2086 tests pass; lint, typecheck, tests and build all exit zero.

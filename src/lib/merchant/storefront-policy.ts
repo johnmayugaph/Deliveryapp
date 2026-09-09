@@ -119,9 +119,16 @@ export const STOREFRONT_BLOCKERS: Readonly<Record<StorefrontBlocker, BlockerCopy
     hidesTheShop: false,
   },
   NOTHING_ON_THE_MENU: {
-    title: 'Nothing on the menu is available',
+    title: 'Nothing on the menu can be ordered',
+    /**
+     * Deliberately not "put a dish back on". Two different things produce
+     * this — every dish marked out of stock, and every dish blocked by a
+     * required choice that has run out — and the Menu tab now says which
+     * applies to each one, so it sends them there rather than naming the
+     * wrong fix for half the cases.
+     */
     detail:
-      'Customers can open the shop and find nothing to order. Put a dish back on from the Menu tab.',
+      'Customers can open the shop and find nothing they can order. The Menu tab says what is stopping each dish.',
     fix: { kind: 'SCREEN', tab: 'Menu', path: 'menu' },
     hidesTheShop: false,
   },
@@ -158,8 +165,16 @@ export interface StorefrontFacts {
   /** Named, because every sentence about a city gate has to say which city. */
   cityName: string;
   services: readonly StorefrontServiceFacts[];
-  /** Menu items with `isAvailable`, which is what the customer's menu shows. */
-  availableMenuItems: number;
+  /**
+   * Menu items a customer could actually order.
+   *
+   * It was `availableMenuItems`, a count of `isAvailable`, and it overstated
+   * this: a dish in stock whose required option group has run out of answers
+   * is refused at checkout. Renamed as well as recounted, because a field
+   * called "available" is one the next person fills in from the obvious
+   * column.
+   */
+  sellableMenuItems: number;
 }
 
 /** A service as the shop should read it, city and pricing included. */
@@ -243,7 +258,7 @@ export function storefrontState(facts: StorefrontFacts): StorefrontState {
     // confusing way of saying the service has not launched.
     found.add('NO_DELIVERY_PRICING');
   }
-  if (facts.availableMenuItems === 0) found.add('NOTHING_ON_THE_MENU');
+  if (facts.sellableMenuItems === 0) found.add('NOTHING_ON_THE_MENU');
   if (!facts.isOpen) found.add('CLOSED_BY_THE_SHOP');
 
   const blockers = REPORT_ORDER.filter((blocker) => found.has(blocker));

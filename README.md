@@ -163,6 +163,16 @@ reaches which screen lives in `src/lib/merchant/roles.ts`, and the tab bar and
 the staff screen's role explanation both read from it, so what an owner is told
 a role grants cannot drift from the gate that runs.
 
+On the **Menu** tab, the line above the list says how many dishes a customer
+can actually order — not how many rows exist. Two things stop a dish, and it
+names both: the shop's own out-of-stock switch, now with how long it has been
+out, and a required choice whose answers have all run out, which leaves a dish
+reading *In stock* while checkout refuses it. A dish out for more than a
+fortnight is called out separately, because nobody decides to stop selling
+adobo for three weeks. And there is one control to put every dish back, which
+is the half of the out-of-stock switch that never existed: the only writer of
+availability was a single manual tap, so an 8pm decision had no 6am undo.
+
 On the **Settings** tab, the first thing a shop sees is whether customers can
 order from it — and if not, what is stopping it and who can clear it. Every
 reason on that list is one the customer's own path applies: TARA has taken the
