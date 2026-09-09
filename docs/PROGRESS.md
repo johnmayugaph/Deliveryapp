@@ -5847,3 +5847,167 @@ which is a false failure on a change that improved the thing it guarded. It
 now asserts `formatTimeIn(` is called.
 
 2285 tests pass; lint, typecheck, tests and build all exit zero.
+
+## The profile screen: three subsystems, three drifted claims
+
+`/profile` is where somebody who is both a customer and something else — a
+rider, a shop owner, a subscriber — arrives from the customer app. It makes
+one-line claims about three subsystems it does not own, and it had drifted from
+all three. Every fact needed to avoid every one of them was already loaded on
+the page.
+
+### "Aktibo hanggang 12 September" about a subscription conferring nothing
+
+`LIVE_SUBSCRIPTION_STATUSES` has three members and `BENEFIT_CONFERRING_STATUSES`
+has one. The profile row rendered `Aktibo hanggang ${renewsAt}` for all three.
+
+`/plus` had already written the argument against exactly this, in a comment on
+its own status map:
+
+> `PENDING_PAYMENT`: 'Waiting for payment' — *deliberately not "Active": the
+> customer has no benefits yet and telling them otherwise would send them to
+> checkout expecting free delivery.*
+
+Which is what the profile row did, one screen earlier in the same journey. So a
+customer whose first transfer never arrived, or whose renewal went unpaid, read
+that everything was fine — and the outstanding bill, the only thing they could
+act on, was not on the row at all.
+
+There is a fourth false reading that no screen caught. `getActiveSubscription`
+filters on **four** conditions — status, `renewsAt > now`, `endedAt is null`,
+and `plan.isActive` — and `/plus` checked two of them. An ACTIVE row whose paid
+month ran out yesterday confers nothing the instant the term ends, whether or
+not the lapse sweep has run, and both screens called it active.
+
+`benefitsAreOn` in `subscriptions/billing-policy.ts` is now the one predicate,
+carrying all four; `planStanding` reduces a plan and a subscription to one of
+six readings, of which exactly one may say *aktibo*. `/plus` reads the same
+predicate rather than its own pair of conditions, which also fixed a gap there:
+its "paused" banner asked whether *any* plan was launched rather than whether
+*this subscriber's* plan was, so a customer whose tier was withdrawn while a
+different one launched saw the benefit list read as live.
+
+The two status constants moved into the pure module — a screen should not have
+to import the enrolment writer to read two arrays of strings — and
+`enrollment.ts` re-exports both, so every existing caller is untouched.
+
+### "Approved sa 2 service" to a rider suspended from all work
+
+The fleet row read `enabledServices.length`, a denormalised copy, and never
+looked at `isSuspended`. Suspension deliberately leaves every approval intact —
+that is what makes reinstating somebody one click instead of three decisions
+taken again — so the array stays populated and the count stays *right* about a
+partner who cannot work at all. `setPartnerSuspended` names this failure in its
+own comment: *"the partner's own screen says they are working when they are
+not."* It was talking about `isOnline`. The same sentence was true one screen
+over about the whole row.
+
+The other reading was `'Awaiting approval'`, shown whenever the count was zero
+— so a rider whose application was **refused** last week was told to keep
+waiting for a decision already taken, with the reason sitting on a screen they
+had no cause to open. The rows that tell PENDING from REJECTED were being
+loaded on this page, with a nested `service` join, and dropped. The file's own
+doc comment claimed it rendered *"the per-service approvals that decide what
+work they are actually offered"*. It never did — the fifth instance in this
+project of prose describing a thing the code does not do.
+
+`fleet/standing.ts` counts from the rows through `permitsWorkOn`, which is new
+and is the third fix: the expiry of the documents an approval was granted
+against was enforced inside `syncEnabledServices` as a `.filter()` next to a
+status check in a `where` clause. One predicate now, used by the sync and by
+the screen, so a rider whose licence lapsed no longer reads as approved until
+the next decision happens to touch their record.
+
+### "Last used Sep 4" about the session rendering the screen
+
+Sessions slide: `getCurrentUser` extends one in active use, but only once it is
+within `REFRESH_WHEN_REMAINING_DAYS` of expiry, so a busy customer is not
+writing to the database on every page view. That is the right trade. It means
+`lastSeenAt` is bumped at most once every `SESSION_TTL_DAYS -
+REFRESH_WHEN_REMAINING_DAYS` = **5** days — and the list labelled the column
+"Last used", so the row with the "This one" badge, in use at that second, could
+say it had last been used five days ago.
+
+Meanwhile `createdAt` — written once, never lazy, and the fact the screen is
+actually for, since a sign-in nobody remembers is the alarm — was in
+`ActiveSessionSummary`, returned by the query, and rendered nowhere.
+
+`auth/devices.ts` owns the two window constants (`session.ts` reads them from
+there), derives the lag from them, puts `createdAt` on the row, says "In use
+now" for the current session, and states the imprecision once in a sentence
+whose number is interpolated rather than typed.
+
+There is arithmetic that bounds last use from *above* — a use after
+`lastSeenAt + 5 days` would have refreshed the row — and it is deliberately not
+rendered. It is sound but rests on a fire-and-forget write, and the direction it
+would be wrong in is the one that makes a live intruder look dormant.
+
+### Two counts that were not what they claimed
+
+The revoke button said `Sign out of ${rows.length - 1} other device` off a list
+capped at 20 while `revokeOtherSessions` was uncapped — a display limit read as
+a promise about what the tap would do. It is counted with the revoke's own
+predicate now, and the list says how many it is hiding.
+
+That predicate also gained a liveness filter, which is about the number rather
+than the writes: an expired session is already signed out, so revoking it
+changed nothing and made the confirmation wrong. On the test fixture the old
+predicate reports **2** where the button showed **1**.
+
+And nothing pluralised: "3 other device", "Approved sa 2 service". `countOf` in
+`lib/text/count.ts`, used by all three rules.
+
+Ordering changed too. The list sorted on `lastSeenAt` — the lazily-bumped
+column — which put a session in constant use below one abandoned a week ago and
+could push the current session past the cap. It sorts on `createdAt`.
+
+### Verified
+
+**67 new units** (2352 total), and the whole point of them is that they can
+fail. Ten behavioural negative controls, one per fix: reverting `planStanding`
+to always-ON fails 4; dropping `renewsAt` from the gate fails 3; dropping
+`endedAt` fails 2; ignoring `isSuspended` fails 1; counting `permitsWork`
+instead of `permitsWorkOn` fails 2; reading a refusal as waiting fails 2;
+giving the current session a date fails 1; typing "every 5 days" into the copy
+fails 1; choosing the lag instead of deriving it fails 1; dropping
+pluralisation fails 6. The unmodified suite passes all 67.
+
+The absence-guards were checked separately, because a `not.toMatch` that passes
+vacuously is worse than no check. Every one of the ten patterns was run against
+its own file at `946c53a` and matched there — so each is asserting the removal
+of something that was genuinely present.
+
+**A browser pass on `/profile`** against the live database, 19 assertions
+across three fixtures, each detector carrying a same-run counterexample so it
+cannot be blind:
+
+- a **suspended** partner holding two live approvals and a populated
+  `enabledServices` reads "Suspended — no offers will arrive", with no
+  "Approved sa" — while the working partner in the same run reads "Approved sa
+  1 service · 1 pending · online", so the pattern can see it when it is there;
+- a **refused** applicant reads "Walang approved na service", with no
+  "Awaiting approval";
+- a **PAST_DUE** subscriber reads "Your benefits have stopped" and "₱99.00 ·
+  Overdue · September 7", with no "Aktibo" anywhere — while the ACTIVE
+  subscriber in the same run reads "Aktibo hanggang Sep 30, 2026";
+- the **current session**, whose `lastSeenAt` was set five days back with
+  `expiresAt` 30 days out so the window will not refresh it, reads "Signed in
+  Aug 29, 2026 · In use now" and does not carry "Sep 5, 2026" — while the other
+  device reads "Used since Aug 21, 2026", so the date detector is not blind.
+
+**The revoke, clicked.** With one live other session and one expired-unrevoked
+one present, the button said "Sign out of 1 other device", the confirmation said
+"Signed out of 1 other device.", the live one was revoked, the expired one was
+left alone, and the current session survived.
+
+**One rule was wrong and a unit caught it.** The first `REFUSED` test asked
+`!isWaitingOnUs`, which called a partner holding one blank `NOT_SUBMITTED` row
+refused. `canDecide` already draws that line — *"an application the partner has
+never made is not a decision waiting to be taken"* — and the rule reads it now.
+
+**And `tsc` caught what vitest could not.** A helper in the new suite passed
+`planName` into a `Partial<SubscriptionTerm>`; the tests passed, because
+esbuild strips types, and the typecheck failed. The same trap `CLAUDE.md`
+records for scratch scripts applies to test fixtures.
+
+2352 tests pass; lint, typecheck, tests and build all exit zero.

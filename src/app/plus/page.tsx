@@ -13,7 +13,6 @@ import {
   getLaunchedPlan,
 } from '@/lib/subscriptions/plans';
 import {
-  BENEFIT_CONFERRING_STATUSES,
   liveSubscription,
   monthToDateUsage,
   type BenefitUsageLine,
@@ -21,6 +20,7 @@ import {
 import { outstandingInvoiceFor } from '@/lib/subscriptions/billing';
 import {
   RECOVERY_DAYS,
+  benefitsAreOn,
   invoiceState,
   manilaDateLabel,
 } from '@/lib/subscriptions/billing-policy';
@@ -147,16 +147,31 @@ export default async function PlusPage() {
   // A grant survives the plan being pulled; the benefits do not, because the
   // pricing engine requires an active plan. Say so rather than showing a plan
   // that quietly does nothing.
-  const benefitsPaused = subscription !== null && plan === null;
+  //
+  // Read off THIS subscription's plan rather than off `getLaunchedPlan()`
+  // returning nothing. The two agree while there is one plan and part company
+  // the moment there are two: a subscriber whose tier was withdrawn while a
+  // different one launched had `plan !== null`, so nothing was paused and the
+  // benefit list read as live.
+  const benefitsPaused = subscription !== null && !subscription.plan.isActive;
   const shown = subscription?.plan ?? plan;
 
-  // ACTIVE and nothing else. Read from the same constant the pricing engine
-  // filters on, so this screen cannot claim benefits are on when checkout
-  // would refuse them.
+  // Every condition `getActiveSubscription` filters on, through the one
+  // predicate, so this screen cannot claim benefits are on when checkout
+  // would refuse them. It used to check the status and the plan and not the
+  // TERM — an ACTIVE row whose paid month ran out yesterday confers nothing
+  // and read as fully active until the lapse sweep got to it.
   const benefitsOn =
     subscription !== null &&
-    !benefitsPaused &&
-    BENEFIT_CONFERRING_STATUSES.includes(subscription.status);
+    benefitsAreOn(
+      {
+        status: subscription.status,
+        renewsAt: subscription.renewsAt,
+        endedAt: subscription.endedAt,
+        planIsLaunched: subscription.plan.isActive,
+      },
+      now,
+    );
 
   const usage: BenefitUsageLine[] = subscription
     ? await monthToDateUsage(subscription)

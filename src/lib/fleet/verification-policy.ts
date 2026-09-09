@@ -68,6 +68,33 @@ export function permitsWork(status: VerificationStatus): boolean {
   return status === VerificationStatus.APPROVED;
 }
 
+/** Just the columns an approval's force depends on. Structural, so a row passes in. */
+export interface VerificationTerm {
+  status: VerificationStatus;
+  /** When the documents behind this approval run out, if they ever do. */
+  expiresAt: Date | null;
+}
+
+/**
+ * Whether this row lets the partner take work RIGHT NOW.
+ *
+ * The status is not the whole answer: an approval carries the expiry of the
+ * licence it was granted against, and `syncEnabledServices` has always dropped
+ * an expired one from the derived array. That made the expiry rule real in one
+ * place and invisible everywhere else — the partner's own profile row counted
+ * `enabledServices`, a denormalised copy resynced only when somebody decides
+ * something, so a rider whose licence lapsed last month still read as approved
+ * until the next decision touched their record.
+ *
+ * One predicate, used by the sync and by every screen that makes a claim.
+ */
+export function permitsWorkOn(row: VerificationTerm, now: Date): boolean {
+  return (
+    permitsWork(row.status) &&
+    (row.expiresAt === null || row.expiresAt.getTime() > now.getTime())
+  );
+}
+
 /**
  * A rejection needs a reason and an approval does not.
  *

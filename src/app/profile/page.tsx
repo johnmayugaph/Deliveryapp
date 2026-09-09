@@ -8,6 +8,10 @@ import { formatPhilippineMobile } from '@/lib/auth/phone';
 import { getAccessibleStores } from '@/lib/merchant/access';
 import { getLaunchedPlan } from '@/lib/subscriptions/plans';
 import { liveSubscription } from '@/lib/subscriptions/enrollment';
+import { outstandingInvoiceFor } from '@/lib/subscriptions/billing';
+import { invoiceState, planRow, planStanding } from '@/lib/subscriptions/billing-policy';
+import { fleetRow, fleetStanding } from '@/lib/fleet/standing';
+import { formatCentavos } from '@/lib/money';
 import { countUnread } from '@/lib/notifications/inbox';
 import { SignOutButton } from '@/components/auth/SignOutButton';
 import { ActiveSessions } from '@/components/auth/ActiveSessions';
@@ -21,8 +25,22 @@ export const dynamic = 'force-dynamic';
  * Profile.
  *
  * Renders roles from the `roles` ARRAY, so someone who is both a customer and a
- * fleet partner sees both — including the per-service approvals that decide
- * what work they are actually offered.
+ * fleet partner sees both.
+ *
+ * Every claim this screen makes about a state goes through a rule module —
+ * `fleet/standing` for the fleet row, `subscriptions/billing-policy` for the
+ * plan, `auth/devices` for the device list — because it makes claims about
+ * three subsystems it does not own, and it had drifted from all three. It said
+ * "Aktibo hanggang" about a subscription conferring nothing, "Approved sa 2
+ * service" to a suspended rider, "Awaiting approval" to a refused one, and
+ * "Last used Sep 4" about the session rendering the page. Each module names
+ * its own defect.
+ *
+ * The doc comment here used to claim it rendered "the per-service approvals
+ * that decide what work they are actually offered". It never did: the rows
+ * were loaded, with a nested join, and dropped. They are read now — as a
+ * standing, with the per-service detail left on `/fleet/profile` where a
+ * refusal reason belongs beside the service it refused.
  */
 
 const ROLE_LABELS: Readonly<Record<UserRole, string>> = {
@@ -36,19 +54,78 @@ const ROLE_LABELS: Readonly<Record<UserRole, string>> = {
 export default async function ProfilePage() {
   const user = await requireScreen('profile');
 
-  const [addresses, fleetPartner, sessions, stores, plan, subscription, unreadCount] =
-    await Promise.all([
-      listAddressBook({ userId: user.id, limit: 5 }),
-      prisma.fleetPartner.findUnique({
-        where: { userId: user.id },
-        include: { serviceVerifications: { include: { service: true } } },
-      }),
-      listActiveSessions(user.id),
-      getAccessibleStores(),
-      getLaunchedPlan(),
-      liveSubscription(user.id),
-      countUnread(user.id),
-    ]);
+  // One clock for the whole render: a screen whose fleet row and plan row
+  // resolve `now` separately is a screen that can disagree with itself on a
+  // boundary.
+  const renderedAt = new Date();
+
+  const [
+    addresses,
+    fleetPartner,
+    sessions,
+    stores,
+    plan,
+    subscription,
+    invoice,
+    unreadCount,
+  ] = await Promise.all([
+    listAddressBook({ userId: user.id, limit: 5 }),
+    prisma.fleetPartner.findUnique({
+      where: { userId: user.id },
+      /* The verification ROWS, not the denormalised `enabledServices` count:
+         suspension leaves approvals intact and an expiry is only resynced
+         when somebody decides something, so the copy outlives the fact. The
+         `service` join is gone with the count — the per-service names are on
+         `/fleet/profile`, and joining five rows to render a number was the
+         shape of the bug. */
+      select: {
+        isSuspended: true,
+        isOnline: true,
+        serviceVerifications: { select: { status: true, expiresAt: true } },
+      },
+    }),
+    listActiveSessions(user.id),
+    getAccessibleStores(),
+    getLaunchedPlan(),
+    liveSubscription(user.id),
+    outstandingInvoiceFor(user.id, renderedAt),
+    countUnread(user.id),
+  ]);
+
+  const fleet = fleetRow(fleetStanding(fleetPartner, renderedAt));
+
+  const standing = planStanding({
+    launchedPlanName: plan?.name ?? null,
+    subscription:
+      subscription === null
+        ? null
+        : {
+            status: subscription.status,
+            renewsAt: subscription.renewsAt,
+            endedAt: subscription.endedAt,
+            // A grant survives its plan being pulled and confers nothing
+            // while it is. `getActiveSubscription` filters on exactly this.
+            planIsLaunched: subscription.plan.isActive,
+            planName: subscription.plan.name,
+          },
+    now: renderedAt,
+  });
+  const planLine =
+    standing === null
+      ? null
+      : planRow({
+          standing,
+          bill:
+            invoice === null
+              ? null
+              : {
+                  amountCentavos: invoice.amountCentavos,
+                  dueAt: invoice.dueAt,
+                  state: invoiceState(invoice, renderedAt),
+                },
+          formatMoney: formatCentavos,
+          formatDay: formatFullDayIn,
+        });
 
   return (
     <main>
@@ -171,10 +248,11 @@ export default async function ProfilePage() {
         </Link>
       </section>
 
-      {/* Only shown when there is something to show: no plan launched and no
-          subscription means no row, rather than advertising a tier that does
-          not exist yet. */}
-      {plan || subscription ? (
+      {/* Null when no plan is launched and nobody is enrolled: no row, rather
+          than advertising a tier that does not exist yet. That decision is
+          `planStanding`'s now, along with which of the four live readings may
+          say "aktibo" — one of them. */}
+      {planLine ? (
         <section aria-labelledby="plus-heading" className="mt-5 px-4">
           <h2
             id="plus-heading"
@@ -187,14 +265,21 @@ export default async function ProfilePage() {
             className="mt-2 flex items-center justify-between gap-3 rounded-xl bg-surface px-4 py-3 shadow-sm ring-1 ring-black/5"
           >
             <span className="min-w-0">
-              <span className="block text-sm font-semibold">
-                {subscription?.plan.name ?? plan?.name}
+              <span className="block text-sm font-semibold">{planLine.name}</span>
+              <span
+                className={`mt-0.5 block text-[11px] ${
+                  planLine.needsAttention ? 'text-amber-800' : 'text-ink-muted'
+                }`}
+              >
+                {planLine.note}
               </span>
-              <span className="mt-0.5 block text-[11px] text-ink-muted">
-                {subscription
-                  ? `Aktibo hanggang ${formatFullDayIn(subscription.renewsAt)}`
-                  : 'See what is included'}
-              </span>
+              {/* What is owed and by when. The reason somebody opens /plus,
+                  and the thing the old row replaced with a reassurance. */}
+              {planLine.bill ? (
+                <span className="mt-0.5 block text-[11px] font-semibold tabular-nums text-amber-800">
+                  {planLine.bill}
+                </span>
+              ) : null}
             </span>
             <span aria-hidden className="text-xs text-ink-faint">
               ›
@@ -210,45 +295,29 @@ export default async function ProfilePage() {
         >
           Fleet
         </h2>
-        {fleetPartner ? (
-          <>
-            <Link
-              href="/fleet"
-              className="mt-2 flex items-center justify-between rounded-xl bg-surface px-3 py-3 shadow-sm ring-1 ring-black/5 transition-colors hover:bg-brand-50/40"
+        <Link
+          href={fleet.href}
+          className="mt-2 flex items-center justify-between rounded-xl bg-surface px-3 py-3 shadow-sm ring-1 ring-black/5 transition-colors hover:bg-brand-50/40"
+        >
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold">{fleet.title}</span>
+            <span
+              className={`mt-0.5 block text-[11px] ${
+                fleet.needsAttention ? 'text-amber-800' : 'text-ink-muted'
+              }`}
             >
-              <span className="min-w-0">
-                <span className="block text-sm font-semibold">Buksan ang fleet app</span>
-                <span className="mt-0.5 block text-[11px] text-ink-muted">
-                  {fleetPartner.enabledServices.length > 0
-                    ? `Approved sa ${fleetPartner.enabledServices.length} service`
-                    : 'Awaiting approval'}
-                  {fleetPartner.isOnline ? ' · online' : ''}
-                </span>
-              </span>
-              <span aria-hidden className="text-xs text-ink-faint">
-                ›
-              </span>
-            </Link>
-            <p className="mt-1.5 text-[11px] text-ink-faint">
-              Approved for one service is not approved for all of them.
-            </p>
-          </>
-        ) : (
-          <Link
-            href="/fleet/apply"
-            className="mt-2 flex items-center justify-between rounded-xl bg-surface px-3 py-3 shadow-sm ring-1 ring-black/5 transition-colors hover:bg-brand-50/40"
-          >
-            <span className="min-w-0">
-              <span className="block text-sm font-semibold">Become a fleet partner</span>
-              <span className="mt-0.5 block text-[11px] text-ink-muted">
-                Earn by delivering — same account.
-              </span>
+              {fleet.note}
             </span>
-            <span aria-hidden className="text-xs text-ink-faint">
-              ›
-            </span>
-          </Link>
-        )}
+          </span>
+          <span aria-hidden className="text-xs text-ink-faint">
+            ›
+          </span>
+        </Link>
+        {fleetPartner ? (
+          <p className="mt-1.5 text-[11px] text-ink-faint">
+            Approved for one service is not approved for all of them.
+          </p>
+        ) : null}
       </section>
 
       {/* Above the session list on purpose: "how do I get back in" comes

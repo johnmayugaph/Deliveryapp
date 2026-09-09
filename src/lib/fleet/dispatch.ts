@@ -1,12 +1,12 @@
 import {
   Prisma,
   ServiceKey,
-  VerificationStatus,
   type FleetPartner,
 } from '@prisma/client';
 import { prisma, type PrismaTransactionClient } from '@/lib/prisma';
 import { getService } from '@/lib/services/registry';
 import { boundingBox, haversineMeters } from '@/lib/geo';
+import { permitsWorkOn } from '@/lib/fleet/verification-policy';
 
 /**
  * Dispatch candidate selection.
@@ -133,11 +133,17 @@ export async function syncEnabledServices(
   const now = new Date();
 
   const verifications = await db.fleetPartnerServiceVerification.findMany({
-    where: { fleetPartnerId, status: VerificationStatus.APPROVED },
+    where: { fleetPartnerId },
   });
 
+  /* Both halves of the question — the status AND the expiry of the documents
+     it was granted against — go through the one predicate in
+     `verification-policy`, so a screen making the same claim cannot use a
+     different rule. The status filter used to be in the `where` clause and
+     the expiry in a `.filter()` here, which is how the expiry ended up real
+     in this function and invisible on the partner's own profile row. */
   const enabledServices = verifications
-    .filter((row) => row.expiresAt === null || row.expiresAt > now)
+    .filter((row) => permitsWorkOn(row, now))
     .map((row) => row.serviceType);
 
   await db.fleetPartner.update({

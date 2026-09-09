@@ -6,7 +6,11 @@ import {
 } from '@prisma/client';
 import { prisma, type PrismaTransactionClient } from '@/lib/prisma';
 import { currentPeriodStart } from '@/lib/pricing/checkout';
-import { addOneMonth, firstPeriodFor } from '@/lib/subscriptions/billing-policy';
+import {
+  LIVE_SUBSCRIPTION_STATUSES,
+  addOneMonth,
+  firstPeriodFor,
+} from '@/lib/subscriptions/billing-policy';
 import { isPaidEnrollmentAvailable } from '@/lib/subscriptions/rails';
 import { NoSubscriptionPaymentRailError } from '@/lib/subscriptions/payment';
 import { voidInvoice } from '@/lib/subscriptions/billing';
@@ -28,31 +32,20 @@ import { voidInvoice } from '@/lib/subscriptions/billing';
  */
 
 /**
- * The three statuses that occupy the one-live-subscription slot.
+ * Both status lists now live in `subscriptions/billing-policy.ts`, which is
+ * pure, and are re-exported here so every caller that already had them is
+ * unaffected.
  *
- * PENDING_PAYMENT is in here and confers nothing, which looks like a
- * contradiction and is not: it holds the slot so that somebody with an
- * unfinished enrolment cannot start a second one and end up with two bills.
- * Kept in step with the partial unique index in `prisma/sql/subscriptions.sql`
- * — a status that is live for one and not the other makes an enrolment
- * unsavable.
+ * They moved because a SCREEN needs to ask whether a subscription confers
+ * anything, and reaching that answer through this module means importing the
+ * enrolment writer — Prisma and all — to read two arrays of strings. The
+ * profile screen skipped the question entirely and said "Aktibo" about all
+ * three live statuses instead.
  */
-export const LIVE_SUBSCRIPTION_STATUSES: readonly SubscriptionStatus[] = [
-  SubscriptionStatus.PENDING_PAYMENT,
-  SubscriptionStatus.ACTIVE,
-  SubscriptionStatus.PAST_DUE,
-];
-
-/**
- * The statuses that actually confer benefits. Exactly one.
- *
- * Named so the claim is greppable rather than implied by a `where` clause
- * three modules away. `getActiveSubscription` in the pricing engine is the
- * enforcement; this is the statement.
- */
-export const BENEFIT_CONFERRING_STATUSES: readonly SubscriptionStatus[] = [
-  SubscriptionStatus.ACTIVE,
-];
+export {
+  BENEFIT_CONFERRING_STATUSES,
+  LIVE_SUBSCRIPTION_STATUSES,
+} from '@/lib/subscriptions/billing-policy';
 
 export class PlanNotLaunchedError extends Error {
   constructor(planName: string) {

@@ -1,6 +1,6 @@
 import { cache } from 'react';
 import { cookies, headers } from 'next/headers';
-import type { Session, User } from '@prisma/client';
+import type { Prisma, Session, User } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import {
   generateSessionToken,
@@ -8,6 +8,11 @@ import {
   hashSessionToken,
 } from '@/lib/auth/crypto';
 import { signInIsPermitted } from '@/lib/demo/policy';
+import {
+  DEVICE_LIST_LIMIT,
+  REFRESH_WHEN_REMAINING_DAYS,
+  SESSION_TTL_DAYS,
+} from '@/lib/auth/devices';
 
 export { pruneSessions } from '@/lib/auth/prune';
 
@@ -26,14 +31,10 @@ export { pruneSessions } from '@/lib/auth/prune';
 
 export const SESSION_COOKIE = 'tara_session';
 
-/** How long a session lasts without use. */
-const SESSION_TTL_DAYS = 30;
-/**
- * Sliding window: a session in active use is extended, but only when it is
- * within this much of expiry, so a busy customer is not writing to the database
- * on every page view.
- */
-const REFRESH_WHEN_REMAINING_DAYS = 25;
+/* The two numbers that describe the sliding window live in `auth/devices.ts`,
+   which is pure, because the "signed in on" list has to SAY how stale
+   `lastSeenAt` can be and a sentence with a hand-typed "5" in it outlives the
+   window it describes. Derived there as `LAST_SEEN_LAG_DAYS`. */
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -278,21 +279,42 @@ export async function signOutCurrentSession(): Promise<void> {
   cookieStore.delete(SESSION_COOKIE);
 }
 
-/** Revokes every other session for a user. For "sign out everywhere". */
+/**
+ * Revokes every other session for a user. For "sign out everywhere".
+ *
+ * Only LIVE ones, and that is about the number this returns rather than about
+ * the writes. An expired session is already signed out — `loadSession`
+ * refuses it and the pruner deletes it — so including it changed nothing and
+ * made the count wrong in the one place it is read out loud: the button said
+ * "Sign out of 2 other devices" off a live count and the confirmation said
+ * "Signed out of 7", because four of them had expired weeks ago.
+ */
 export async function revokeOtherSessions(userId: string): Promise<number> {
+  const { count } = await prisma.session.updateMany({
+    where: await otherLiveSessions(userId),
+    data: { revokedAt: new Date() },
+  });
+  return count;
+}
+
+/**
+ * The predicate for "every session except the one asking".
+ *
+ * One definition, used by the revoke and by the count the button renders, so
+ * the number on the control and the number of devices it signs out cannot
+ * disagree.
+ */
+async function otherLiveSessions(userId: string): Promise<Prisma.SessionWhereInput> {
   const cookieStore = await cookies();
   const token = cookieStore.get(SESSION_COOKIE)?.value;
   const keepHash = token ? hashSessionToken(token) : null;
 
-  const { count } = await prisma.session.updateMany({
-    where: {
-      userId,
-      revokedAt: null,
-      ...(keepHash ? { tokenHash: { not: keepHash } } : {}),
-    },
-    data: { revokedAt: new Date() },
-  });
-  return count;
+  return {
+    userId,
+    revokedAt: null,
+    expiresAt: { gt: new Date() },
+    ...(keepHash ? { tokenHash: { not: keepHash } } : {}),
+  };
 }
 
 export interface ActiveSessionSummary {
@@ -303,25 +325,49 @@ export interface ActiveSessionSummary {
   isCurrent: boolean;
 }
 
+export interface ActiveSessionList {
+  /** At most `DEVICE_LIST_LIMIT` of them, newest first. */
+  rows: ActiveSessionSummary[];
+  /**
+   * Every live session except this one, counted rather than measured off
+   * `rows`.
+   *
+   * The list is capped and the revoke is not, so a count taken from the
+   * visible rows was a display limit being read as a promise about what the
+   * button would do. Counted with the revoke's own predicate.
+   */
+  otherCount: number;
+}
+
 /** Live sessions for the account, for a "signed in on" list. */
-export async function listActiveSessions(userId: string): Promise<ActiveSessionSummary[]> {
+export async function listActiveSessions(userId: string): Promise<ActiveSessionList> {
   const cookieStore = await cookies();
   const token = cookieStore.get(SESSION_COOKIE)?.value;
   const currentHash = token ? hashSessionToken(token) : null;
 
-  const sessions = await prisma.session.findMany({
-    where: { userId, revokedAt: null, expiresAt: { gt: new Date() } },
-    orderBy: { lastSeenAt: 'desc' },
-    take: 20,
-  });
+  const [sessions, otherCount] = await Promise.all([
+    prisma.session.findMany({
+      where: { userId, revokedAt: null, expiresAt: { gt: new Date() } },
+      /* Ordered by when they STARTED, not by `lastSeenAt`. That column is
+         bumped lazily — see `auth/devices.ts` — so ordering on it put a
+         session in constant use below one abandoned a week ago, and could
+         push the current session past the cap. `createdAt` is exact. */
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: DEVICE_LIST_LIMIT,
+    }),
+    prisma.session.count({ where: await otherLiveSessions(userId) }),
+  ]);
 
-  return sessions.map((session) => ({
-    id: session.id,
-    createdAt: session.createdAt,
-    lastSeenAt: session.lastSeenAt,
-    userAgent: session.userAgent,
-    isCurrent: currentHash !== null && session.tokenHash === currentHash,
-  }));
+  return {
+    rows: sessions.map((session) => ({
+      id: session.id,
+      createdAt: session.createdAt,
+      lastSeenAt: session.lastSeenAt,
+      userAgent: session.userAgent,
+      isCurrent: currentHash !== null && session.tokenHash === currentHash,
+    })),
+    otherCount,
+  };
 }
 
 /** The city whose services and stores we should show. */

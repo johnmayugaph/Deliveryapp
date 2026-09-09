@@ -434,3 +434,211 @@ export function decideLapse(input: {
     reason: 'The term ended with the bill unpaid. Paying it still restores the plan.',
   };
 }
+
+// -----------------------------------------------------------------------------
+// Which statuses count, and what a subscriber's own row should say
+// -----------------------------------------------------------------------------
+
+/**
+ * The three statuses that occupy the one-live-subscription slot.
+ *
+ * PENDING_PAYMENT is in here and confers nothing, which looks like a
+ * contradiction and is not: it holds the slot so that somebody with an
+ * unfinished enrolment cannot start a second one and end up with two bills.
+ * Kept in step with the partial unique index in `prisma/sql/subscriptions.sql`
+ * — a status that is live for one and not the other makes an enrolment
+ * unsavable.
+ *
+ * Moved here from `subscriptions/enrollment.ts`, which reaches for Prisma:
+ * a screen asking "does this confer anything" should not have to import the
+ * enrolment writer to find out, and `enrollment.ts` re-exports both constants
+ * so nothing that already had them changed.
+ */
+export const LIVE_SUBSCRIPTION_STATUSES: readonly SubscriptionStatus[] = [
+  'PENDING_PAYMENT',
+  'ACTIVE',
+  'PAST_DUE',
+];
+
+/**
+ * The statuses that actually confer benefits. Exactly one.
+ *
+ * Named so the claim is greppable rather than implied by a `where` clause
+ * three modules away. `getActiveSubscription` in the pricing engine is the
+ * enforcement; this is the statement.
+ */
+export const BENEFIT_CONFERRING_STATUSES: readonly SubscriptionStatus[] = ['ACTIVE'];
+
+/**
+ * Everything `getActiveSubscription` filters on, as facts rather than a query.
+ *
+ * The four conditions are not a coincidence and not negotiable — they are
+ * copied off the `where` clause in `pricing/checkout.ts`, which is what stands
+ * between a customer and a discount. A screen that checks three of them says
+ * "active" about an enrolment checkout will refuse.
+ */
+export interface SubscriptionTerm {
+  status: SubscriptionStatus;
+  /** End of the period that has been paid for. */
+  renewsAt: Date;
+  /** Set when the enrolment is over for good. */
+  endedAt: Date | null;
+  /** Whether the plan behind it is still launched. A pulled plan grants
+   *  nothing, even to somebody already on it. */
+  planIsLaunched: boolean;
+}
+
+/**
+ * Whether this enrolment confers its benefits right now.
+ *
+ * The predicate every customer-facing claim about a subscription should go
+ * through. `renewsAt > now` is in here for a reason that is easy to miss: a
+ * subscription stops conferring the instant its term ends, whether or not the
+ * lapse sweep has run, so an ACTIVE row whose term ran out yesterday is a row
+ * that grants nothing and must not be described as active.
+ */
+export function benefitsAreOn(term: SubscriptionTerm, now: Date): boolean {
+  return (
+    BENEFIT_CONFERRING_STATUSES.includes(term.status) &&
+    term.renewsAt.getTime() > now.getTime() &&
+    term.endedAt === null &&
+    term.planIsLaunched
+  );
+}
+
+/**
+ * Where somebody stands with the plan, in the terms their own screen needs.
+ *
+ * This exists because `/profile` said **"Aktibo hanggang 12 September"** about
+ * every live subscription — and three of the four live readings are not active:
+ *
+ *  - PENDING_PAYMENT confers nothing until the first transfer lands. `/plus`
+ *    labels it "Waiting for payment" with a comment saying it is
+ *    *"deliberately not 'Active' — the customer has no benefits yet and
+ *    telling them otherwise would send them to checkout expecting free
+ *    delivery"*. That is exactly what the profile row did, one screen earlier.
+ *  - PAST_DUE has stopped conferring because a bill went unpaid.
+ *  - An enrolment whose plan has been pulled grants nothing either.
+ *
+ * The fourth, an ACTIVE row past its `renewsAt`, is the one no screen caught:
+ * benefits end with the term, not with the sweep that tidies up after it.
+ */
+export type PlanStanding =
+  /** A plan is open to join and they are not on it. */
+  | { kind: 'OPEN'; name: string }
+  /** On it, paid, conferring. The only reading that may say "aktibo". */
+  | { kind: 'ON'; name: string; paidUntil: Date }
+  /** Enrolled, first transfer never arrived. */
+  | { kind: 'UNPAID_FIRST'; name: string }
+  /** Was paid, a bill went unpaid, benefits have stopped. */
+  | { kind: 'UNPAID'; name: string }
+  /** The term ran out and nothing has been billed or tidied yet. */
+  | { kind: 'ENDED'; name: string; endedOn: Date }
+  /** Their plan was withdrawn. Not their doing, and not costing them. */
+  | { kind: 'PAUSED'; name: string };
+
+/**
+ * Reduces a launched plan and a live subscription to one standing, or to null
+ * when there is nothing worth a row at all.
+ *
+ * Returning null rather than an EMPTY state is deliberate: no plan launched
+ * and nobody enrolled means no section, rather than a row advertising a tier
+ * that does not exist yet.
+ */
+export function planStanding(input: {
+  /** The launched plan's name, or null when none is open to join. */
+  launchedPlanName: string | null;
+  subscription: (SubscriptionTerm & { planName: string }) | null;
+  now: Date;
+}): PlanStanding | null {
+  const { subscription: term, now } = input;
+
+  if (term === null) {
+    return input.launchedPlanName === null
+      ? null
+      : { kind: 'OPEN', name: input.launchedPlanName };
+  }
+
+  const name = term.planName;
+
+  // Ordered the way the enforcement is: the plan being pulled outranks the
+  // status, because a withdrawn plan grants nothing to anybody.
+  if (!term.planIsLaunched) return { kind: 'PAUSED', name };
+  if (benefitsAreOn(term, now)) return { kind: 'ON', name, paidUntil: term.renewsAt };
+  if (term.status === 'PENDING_PAYMENT') return { kind: 'UNPAID_FIRST', name };
+  if (term.status === 'PAST_DUE') return { kind: 'UNPAID', name };
+  // ACTIVE and not conferring: the term is over, or the row is ended.
+  return { kind: 'ENDED', name, endedOn: term.renewsAt };
+}
+
+/** What is still owed, for the line under the plan's name. */
+export interface OutstandingBill {
+  amountCentavos: number;
+  dueAt: Date;
+  state: InvoiceState;
+}
+
+/** One row on the profile screen, assembled from the standing and the bill. */
+export interface PlanRow {
+  /** The plan's name. */
+  name: string;
+  /** One sentence about where they stand. */
+  note: string;
+  /**
+   * What is owed and by when, or null.
+   *
+   * A second line rather than part of the first, and never just an amount:
+   * a total with no date is not something anybody can act on, which is the
+   * same reason `manilaDateLabel` exists.
+   */
+  bill: string | null;
+  /** Whether the row should read as a problem rather than as information. */
+  needsAttention: boolean;
+}
+
+/**
+ * The row, with the copy.
+ *
+ * Formatters are passed in so this module stays free of both money and
+ * locale. Taglish where the original was — "Aktibo hanggang" survives into the
+ * one state where it is true.
+ */
+export function planRow(input: {
+  standing: PlanStanding;
+  bill: OutstandingBill | null;
+  formatMoney: (centavos: number) => string;
+  formatDay: (at: Date) => string;
+}): PlanRow {
+  const { standing, bill, formatMoney, formatDay } = input;
+
+  const note = ((): string => {
+    switch (standing.kind) {
+      case 'OPEN':
+        return 'See what is included';
+      case 'ON':
+        return `Aktibo hanggang ${formatDay(standing.paidUntil)}`;
+      case 'UNPAID_FIRST':
+        return 'Hindi pa ito aktibo — it starts when your first transfer lands';
+      case 'UNPAID':
+        return `Your benefits have stopped — paying within ${RECOVERY_DAYS} days puts them back`;
+      case 'ENDED':
+        return `Your paid month ended ${formatDay(standing.endedOn)}, so no benefits apply`;
+      case 'PAUSED':
+        // Not their fault and not costing them anything. Say both.
+        return 'Paused by TARA — no benefits for now, and you are not billed';
+    }
+  })();
+
+  return {
+    name: standing.name,
+    note,
+    bill:
+      bill === null
+        ? null
+        : `${formatMoney(bill.amountCentavos)} · ${INVOICE_STATE_TEXT[bill.state]} · ` +
+          manilaDateLabel(bill.dueAt),
+    // A withdrawn plan is ours to fix, not theirs. Everything else on this
+    // list is somebody being told their benefits are off.
+    needsAttention: standing.kind !== 'OPEN' && standing.kind !== 'ON' && standing.kind !== 'PAUSED',
+  };
+}
