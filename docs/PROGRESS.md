@@ -61,6 +61,32 @@ brief's changes already folded in.
 | 23 | Address search on that map, through the server | ✅ Done |
 | 24 | Ratings: written at last, derived, and private | ✅ Done |
 | 25 | A ratings digest for the shop and the rider | ✅ Done |
+| 26 | Only faults reach the error page | ✅ Done |
+| 27 | A menu the shop can write itself | ✅ Done |
+| 28 | Rider approval, in the console | ✅ Done |
+| 29 | Photographs on dishes | ✅ Done |
+| 30 | Add-ons customers can actually choose | ✅ Done |
+| 31 | Live tracking: the rider's pin on the customer's screen | ✅ Done |
+| 32 | Payments: the model, the rail, and PENDING_PAYMENT through the lifecycle | ✅ Done |
+| 33 | Settlement: who we owe, who owes us, and what each party sees | ✅ Done |
+| 34 | Surge belongs to the rider | ✅ Done |
+| 35 | Surge pricing: measured, snapshotted, charged and explained | ✅ Done |
+| 36 | Surge notifications, and a rider who can turn them off | ✅ Done |
+| 37 | Referrals: codes, attribution, caps | ✅ Done |
+| 38 | Loyalty points: earning, tiers, redemption, expiry | ✅ Done |
+| 39 | Promo codes | ✅ Done |
+| 40 | Gift cards, with the code hashed at rest | ✅ Done |
+| 41 | Selling TARA Plus: invoices, dunning, a rail that works today | ✅ Done |
+| 42 | Rider invites, paid in money through the settlement ledger | ✅ Done |
+| 43 | Shop referrals: a claim, not a code | ✅ Done |
+| 44 | Loyalty tiers that confer something | ✅ Done |
+| 45 | The checkout screen, and explaining an absence | ✅ Done |
+| 46 | — | ⬜ Never existed; the numbering skips it |
+| 47 | A deployment dry run, against a fresh database and a real build | ✅ Done |
+| 48 | What a loyalty tier means to the shop cooking the food | ✅ Done |
+| 49 | What a finished order tells the shop that cooked it | ✅ Done |
+| 50 | The payouts screen shows what it had been recording | ✅ Done |
+| 51 | What a role actually grants, said where the role is chosen | ✅ Done |
 
 Between phases 11 and 12: the interface was translated to English, the product
 was named TARA, and the typeface and brand blue were set from the brand artwork.
@@ -68,6 +94,37 @@ was named TARA, and the typeface and brand blue were set from the brand artwork.
 The one gap in phase 12 is not code. Neither external channel has been proved
 against its real provider, because the development environment's network policy
 blocks every SMS gateway and every push service. See **Known gaps**.
+
+### The screen audit
+
+After phase 51 the work stopped adding features and started reading screens —
+one at a time, asking of each line on it *is this true, and does anything make
+it stay true*. These are not numbered, because they are not new capability:
+every one of them is a screen that already existed saying something it should
+not have. The recurring findings are worth naming, because they repeat:
+**data recorded and never displayed**, **a check that cannot fail**, **prose
+about a gate that outlives the gate**, **a total whose window is invisible**,
+and **a snapshot rendered as if it were live**.
+
+| Screen | What it was saying | Status |
+| --- | --- | --- |
+| Merchant settings | Two false claims about whether customers can order | ✅ Done |
+| Merchant shell | The header said the shop was fine when it was not | ✅ Done |
+| Merchant menu | A storefront count that overstated what was orderable | ✅ Done |
+| Merchant history | A total that meant the visible rows, not the window | ✅ Done |
+| Merchant queue | A countdown the sweep was already running, shown nowhere | ✅ Done |
+| Merchant regulars | Two tabs saying "TARA covered" about different amounts | ✅ Done |
+| Customer screens (21) | Six of them guessed when the session was gone | ✅ Done |
+| Orders and credits | A customer's own history unreachable past page one | ✅ Done |
+| Checkout | A page-load credits figure while the live one sat in the quote | ✅ Done |
+| Credits | A held balance read as no balance, and a comment claimed otherwise | ✅ Done |
+| Tracking | A promised time that could not be late; a receipt with no date | ✅ Done |
+| Every date, everywhere | 17 sites rendered in the host's zone, not Manila | ✅ Done |
+| Two money boundaries | A rider's "today" reset at 8am Manila | ✅ Done |
+| Profile | Three subsystems described, three claims drifted | ✅ Done |
+
+Still unread on the customer side: `/notifications`, `/points`, `/search`, and
+the store page.
 
 ---
 
@@ -770,6 +827,14 @@ real file later is one line in `tailwind.config.ts`.
 
 ## Known gaps
 
+This list is maintained in place: an item later closed is struck through and
+says which phase closed it, rather than being deleted. The reason is the record
+— four entries here had been overtaken by phases 16, 31, 34–35 and 41 and were
+still being read as current, which is the same defect the screen audit keeps
+finding in the app itself: **prose about a gate outliving the gate.** A gap list
+nobody prunes overstates what is missing; a gap list silently pruned loses the
+history of what was decided. Struck through keeps both.
+
 - **Notification latency is the cron interval.** Nothing on a request path waits
   for a gateway, which is right, but it means a store hears about an order up to
   one cron tick late.
@@ -791,10 +856,15 @@ real file later is one line in `tailwind.config.ts`.
   time, open/closed and — since Phase 27 — its whole menu. Changing a name, an
   address or which services a shop is for still needs a database edit. Rare
   enough to have been left, common enough to be worth naming.
-- **No subscription payment rail.** A tier exists and can be granted, but not
-  sold. See Phase 9.
-- **No live location on the tracking screen.** The customer sees statuses, not a
-  moving pin, even though partner positions are stored.
+- ~~**No subscription payment rail.**~~ **Closed in Phase 41.** Plus can be
+  sold: invoices are raised a week ahead, chased on a ladder and lapsed on the
+  sweep, and paid by manual transfer with a reference. What is still missing is
+  narrower — there is no card or e-wallet mandate, so every payment is a
+  transfer somebody reviews by hand in the console, and sign-up is closed
+  entirely when no transfer account is configured.
+- ~~**No live location on the tracking screen.**~~ **Closed in Phase 31.** The
+  customer sees the rider's pin. It is polled, not pushed — see **No
+  realtime**, which is the part that is still true.
 - **A rating cannot be left on a delivery that failed.** Deliberate — see
   Phase 24 — but it means the strongest opinions in the system never reach the
   average. What those customers get instead is an automatic refund and a
@@ -845,8 +915,10 @@ real file later is one line in `tailwind.config.ts`.
   `/recover` route says so and only the support route works. The Resend adapter
   has never sent a real message, for the same reason the SMS one has not: the
   development environment blocks outbound mail providers too.
-- **No CAPTCHA.** The three throttles are the only abuse defence on code
-  requests, which is thin if someone brings many source addresses.
+- ~~**No CAPTCHA.**~~ **Closed in Phase 16.** Turnstile sits on the login
+  screen, behind an adapter, and the three throttles remain underneath it. It
+  is optional by configuration: with no site key set the throttles are again
+  the only defence, which is the deployment this entry originally described.
 - **No realtime.** Tracking polls every 15 seconds. Push now reaches a closed
   tab, but the open tab still polls — a live pin would need a socket or SSE.
 - **Icons are emoji.** `serviceGlyph()` is a lookup, so swapping in a real icon
@@ -857,8 +929,31 @@ real file later is one line in `tailwind.config.ts`.
   menus. Both are deliberate (see Phase 29) and both are the first things to
   revisit if photos become the reason a page is slow or a dump is large. The
   seam is one route handler wide, so object storage is an adapter.
-- **Surge is a column, not a calculation.** `Order.surgeCentavos` exists and
-  pricing passes it through; nothing sets it.
+- ~~**Surge is a column, not a calculation.**~~ **Closed in Phases 34–35.**
+  The cron measures orders waiting per available rider, snapshots the band, and
+  placement writes the snapshotted figure onto the order — so a later change to
+  the bands cannot rewrite what a rider was already paid.
+- **A balance can only be held with an end date.** `recovery.ts` is the only
+  writer of `Wallet.isFrozen`, and it always sets `frozenUntil`, so the only
+  hold the system can place is the three-day recovery one. Two places are
+  already written for a hold with no date — `liftExpiredFreezes` filters on
+  `frozenUntil` specifically so it *"cannot quietly unfreeze an account
+  somebody froze on purpose"*, and `creditsState` renders an indefinite `HELD`
+  with copy pointing at support — and nothing can produce that state. Holding
+  a balance while something is investigated is a hand-written database change
+  today. The screens are ready for the control; there is no control.
+- **An expired approval keeps reaching dispatch.** Surfaced by the profile
+  audit and deliberately not fixed there. `FleetPartnerServiceVerification`
+  carries the expiry of the licence an approval was granted against, and
+  `permitsWorkOn` is now the one rule for whether a row permits work today —
+  but the array dispatch actually queries, `FleetPartner.enabledServices`, is
+  a denormalised copy resynced only by `syncEnabledServices`, which runs on a
+  console decision or the partner's own re-application and on no schedule at
+  all. So a rider whose documents lapse still matches
+  `findDispatchCandidates` and still passes `partnerMayWork` until somebody
+  happens to touch their record. The partner's own screens tell the truth
+  about this now; the enforcement does not. The fix is one sweep calling the
+  function that already exists.
 - **ETA is an estimate from a straight line.** `estimateEta()` uses prep time
   plus haversine distance at a fixed average speed, not routing.
 - **`prisma/sql` guards need `psql`** on the deploy host, and must be applied
