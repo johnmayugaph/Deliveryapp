@@ -5084,3 +5084,105 @@ strips types rather than checking them, which is why an invalid enum member in
 a scratch script fails silently. The fixture was wrong; the screen was right.
 
 2100 tests pass; lint, typecheck, tests and build all exit zero.
+
+## The queue: the clock the app was already running
+
+The queue works. Its stages come from the lifecycle map and its buttons from
+the state machine, so nothing about what a merchant may do was ever restated
+here. What the screen did not show was time.
+
+### An eight-minute deadline nobody was told about
+
+`expireStaleOrders` cancels an order that has sat in
+`PENDING_MERCHANT_ACCEPTANCE` for **8 minutes**, with the reason *"The store
+did not answer within 8 minutes."* From behind the counter, an order vanished.
+
+The card's only nod to any of this was a ring that turned amber past a
+hardcoded **180 seconds** — a number with no relationship to the 480 the sweep
+enforces. It warned vaguely at three-eighths of the way through, said nothing
+at all at seven minutes fifty, and would have been worse than useless if the
+timeout were ever shortened, because it could have fired after the order was
+already gone.
+
+There is a second deadline the queue never mentioned either: **20 minutes** in
+`AWAITING_RIDER_ASSIGNMENT`, after which the order is cancelled with *"We could
+not find an available rider."* That one lands on food the shop has already
+cooked, and is neither its fault nor its to fix — which is exactly why it
+should not be a surprise.
+
+`src/lib/merchant/queue-clock.ts` reads the deadline out of
+`ALL_STATUS_TIMEOUTS`, the list the sweeper itself iterates, and takes its
+warning thresholds as **fractions** of whatever that says — so an 8-minute
+clock and a 20-minute one warn in proportion, and a timeout changed in the
+lifecycle map changes this screen with it. It also says whose move it is: the
+same `THE_SHOP` / nobody split the settings panel makes, because a deadline a
+shop can beat by tapping Accept is a different message from one it can only
+watch, and telling a kitchen to hurry up about finding a rider would be both
+useless and insulting.
+
+Most statuses have no clock and the card shows nothing for them. An order in
+`PREPARING` can sit indefinitely, deliberately — nothing should cancel food a
+shop is actually making — and a countdown on every card would make the two that
+matter invisible.
+
+**One honest limit, documented rather than hidden.** The card measures from the
+status event that put the order in this state; the sweeper filters on
+`updatedAt`, which any later write moves forward. So the remaining figure is a
+**floor**: it can understate the time left and never overstate it. That is the
+safe direction — a shop that hurries needlessly loses nothing, one told it has
+two minutes when it has none loses the order.
+
+### A field passed in and dropped
+
+`etaAt` was in `QueueCardOrder`, set by the page, and **rendered nowhere**. The
+customer's tracking screen shows the promised time; the kitchen's card did not.
+So a shop could see how long an order had been sitting but not what time it had
+promised — and the **"+10 min"** button on that very card moves `etaAt`, which
+meant the shop was pressing a control whose entire effect was invisible to it.
+
+It renders now, and the browser turned up the other half of the same defect
+immediately: a promised time that has already passed rendered exactly like one
+that had not. *"Promised 07:42 · 25m late"* is what the "+10 min" button is
+for, and lateness is resolved on the server from one clock for the whole render
+— two cards disagreeing about the current time would be a rendering bug nobody
+could reproduce.
+
+### A flag with no reader
+
+`MerchantStage.isUrgent` existed so the card could decide whether to warn. Once
+the card reads the real per-order deadline, it had no reader left in the
+product — only a test asserting its shape, which is a check that cannot matter.
+It is gone. A stage cannot know that *this* order has forty seconds left, and a
+flag nothing acts on is data that can be wrong without anybody noticing. The
+test was re-anchored on the arrangement that is still worth keeping — the status
+the sweeper is timing is the one at the top of the screen — checked against the
+timeout list rather than against a flag beside it.
+
+### Verified in four places
+
+**Twenty-three new units** (2123 total). The load-bearing ones: the deadline is
+asserted equal to the sweeper's own policy figure and the module is checked to
+contain no `8 * 60`, `480`, `20 * 60` or `1200` of its own; every FOOD timeout
+on a status the queue displays is required to produce a clock with a sentence,
+so a third timeout added later cannot leave the card silent; and the floor
+property is asserted directly — for a range of extra writes, the figure shown
+is never greater than what the sweep will allow.
+
+**Twelve mutations, all killed.** One survived the first pass and is worth
+recording: making the loader return `clock: null` for every order passed
+everything else. The whole feature could have been switched off silently, with
+the cards back to saying nothing. Pinned now, along with a mutant that asks the
+rule about a fixed status rather than the order's own.
+
+**Thirteen live-database checks** across five orders — fresh, halfway, nearly
+out of time, waiting on a rider, and one cooking for three hours — and then the
+real sweeper run against them. Two of those matter most: `expireStaleOrders`
+left every order the card said had time left, and once one was pushed past its
+deadline the sweep cancelled exactly that one, with **the same reason string
+the countdown had been quoting**.
+
+**A browser** with all five on screen: plain, amber, rose by proportion of the
+real deadline, the rider wait saying *"56s for TARA to find a rider… nothing for
+you to do"*, and nothing at all on the order being cooked.
+
+2123 tests pass; lint, typecheck, tests and build all exit zero.

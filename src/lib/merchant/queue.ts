@@ -2,6 +2,7 @@ import { OrderStatus, type Order, type Service } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { allowedTransitions, isActorPermitted } from '@/lib/orders/state-machine';
 import { OrderActor } from '@prisma/client';
+import { clockFor, type QueueClock } from '@/lib/merchant/queue-clock';
 import { platformAbsorbedCentavos } from '@/lib/settlement/policy';
 import {
   REPORT_WINDOW_DAYS,
@@ -32,9 +33,17 @@ export interface MerchantStage {
   title: string;
   blurb: string;
   statuses: readonly OrderStatus[];
-  /** Orders here are the ones a customer is actively waiting on a reply for. */
-  isUrgent: boolean;
 }
+
+/*
+ * `isUrgent` used to live here: a per-STAGE flag meaning "a customer is
+ * waiting on a reply". It was read by the card to decide whether to warn, and
+ * once the card reads the sweeper's real deadline per order it had no reader
+ * left in the product — only a test asserting its shape. A flag nothing acts
+ * on is data that can be wrong without anybody noticing, and this one was
+ * coarser than the thing that replaced it: a stage cannot know that THIS
+ * order has forty seconds left.
+ */
 
 export const MERCHANT_STAGES: readonly MerchantStage[] = [
   {
@@ -42,14 +51,12 @@ export const MERCHANT_STAGES: readonly MerchantStage[] = [
     title: 'New',
     blurb: 'Waiting for your answer.',
     statuses: [OrderStatus.PENDING_MERCHANT_ACCEPTANCE],
-    isUrgent: true,
   },
   {
     key: 'preparing',
     title: 'Preparing',
     blurb: 'Accepted, still cooking.',
     statuses: [OrderStatus.MERCHANT_ACCEPTED, OrderStatus.PREPARING],
-    isUrgent: false,
   },
   {
     key: 'awaiting-pickup',
@@ -61,7 +68,6 @@ export const MERCHANT_STAGES: readonly MerchantStage[] = [
       OrderStatus.RIDER_ASSIGNED,
       OrderStatus.RIDER_AT_PICKUP,
     ],
-    isUrgent: false,
   },
 ];
 
@@ -77,6 +83,13 @@ export interface QueuedOrder {
   merchantActions: OrderStatus[];
   /** How long the order has been waiting in its current status, seconds. */
   waitingSeconds: number;
+  /**
+   * The deadline the sweeper is running on it, or null when there is none.
+   *
+   * Resolved here rather than in the card, so the rule is applied once on the
+   * server and the client renders what it is given.
+   */
+  clock: QueueClock | null;
 }
 
 export interface MerchantQueue {
@@ -105,6 +118,7 @@ export async function loadMerchantQueue(storeId: string): Promise<MerchantQueue>
 
   const queued: QueuedOrder[] = orders.map(({ service, statusEvents, ...order }) => {
     const enteredAt = statusEvents[0]?.createdAt ?? order.updatedAt;
+    const waitingSeconds = Math.max(0, Math.round((now - enteredAt.getTime()) / 1000));
     return {
       order: order as Order,
       service,
@@ -113,7 +127,12 @@ export async function loadMerchantQueue(storeId: string): Promise<MerchantQueue>
       merchantActions: allowedTransitions(order.serviceType, order.status).filter((to) =>
         isActorPermitted(order.serviceType, to, OrderActor.MERCHANT),
       ),
-      waitingSeconds: Math.max(0, Math.round((now - enteredAt.getTime()) / 1000)),
+      waitingSeconds,
+      clock: clockFor({
+        serviceType: order.serviceType,
+        status: order.status,
+        waitingSeconds,
+      }),
     };
   });
 

@@ -13,6 +13,7 @@ import {
 } from '@/lib/actions/merchant-actions';
 import { formatCentavos } from '@/lib/money';
 import { statusPresentation } from '@/lib/orders/status-presentation';
+import { formatLate, type QueueClock } from '@/lib/merchant/queue-clock';
 import type { FoodItemSnapshot } from '@/lib/orders/details';
 
 export interface QueueCardOrder {
@@ -21,7 +22,26 @@ export interface QueueCardOrder {
   status: OrderStatus;
   subtotalCentavos: number;
   waitingSeconds: number;
+  /**
+   * When the customer was promised the food, ISO.
+   *
+   * This field was already loaded, already passed in, and rendered NOWHERE.
+   * The customer's own tracking screen shows it; the kitchen's card did not —
+   * so the shop could see how long an order had been sitting and not what
+   * time it had promised, and the "+10 min" button below moved that time
+   * without the shop ever seeing the result of its own tap.
+   */
   etaAt: string | null;
+  /** Seconds past the promised time, or null when it is not late. */
+  etaLateSeconds: number | null;
+  /**
+   * The sweeper's deadline on this order, or null when nothing is counting.
+   *
+   * Computed on the server from the lifecycle map's own timeout list, so this
+   * component cannot invent a threshold — which is what the ring below used
+   * to do, at a hardcoded 180 seconds against a real deadline of 480.
+   */
+  clock: QueueClock | null;
   /** Transitions the state machine says a merchant may make from here. */
   merchantActions: OrderStatus[];
   items: FoodItemSnapshot[];
@@ -55,13 +75,7 @@ function formatWaiting(seconds: number): string {
  * this component does not decide what is possible, so a vertical with a
  * different merchant leg gets the right controls without touching it.
  */
-export function OrderCard({
-  order,
-  isUrgent,
-}: {
-  order: QueueCardOrder;
-  isUrgent: boolean;
-}) {
+export function OrderCard({ order }: { order: QueueCardOrder }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [rejecting, setRejecting] = useState(false);
@@ -85,19 +99,33 @@ export function OrderCard({
   const can = (status: OrderStatus) => order.merchantActions.includes(status);
   const itemCount = order.items.reduce((total, item) => total + item.quantity, 0);
 
+  /**
+   * The ring, from the real clock.
+   *
+   * It was a stage flag AND `waitingSeconds > 180`, a threshold with no
+   * relationship to the 480 seconds the sweeper enforces — so it warned at
+   * three-eighths of the way through and then said nothing more, right up to
+   * the moment the order was cancelled.
+   */
+  const urgency = order.clock?.urgency ?? 'CALM';
+  const ring =
+    urgency === 'CRITICAL'
+      ? 'ring-2 ring-rose-400'
+      : urgency === 'SOON'
+        ? 'ring-2 ring-amber-400'
+        : 'ring-black/5';
+  const elapsedTone =
+    urgency === 'CRITICAL'
+      ? 'text-rose-700'
+      : urgency === 'SOON'
+        ? 'text-amber-800'
+        : 'text-ink-faint';
+
   return (
-    <li
-      className={`rounded-xl bg-surface p-3.5 shadow-sm ring-1 ${
-        isUrgent && order.waitingSeconds > 180 ? 'ring-2 ring-amber-400' : 'ring-black/5'
-      }`}
-    >
+    <li className={`rounded-xl bg-surface p-3.5 shadow-sm ring-1 ${ring}`}>
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-sm font-bold tabular-nums">{order.orderNumber}</span>
-        <span
-          className={`text-[11px] font-semibold tabular-nums ${
-            isUrgent && order.waitingSeconds > 180 ? 'text-amber-800' : 'text-ink-faint'
-          }`}
-        >
+        <span className={`text-[11px] font-semibold tabular-nums ${elapsedTone}`}>
           {formatWaiting(order.waitingSeconds)}
         </span>
       </div>
@@ -116,6 +144,49 @@ export function OrderCard({
           </span>
         ) : null}
       </p>
+
+      {/*
+        The promised time, at last. A kitchen deciding what to cook first
+        needs the clock on the wall, not only how long this one has been
+        sitting — and it is the only way to see that "+10 min" did anything.
+      */}
+      {order.etaAt ? (
+        <p
+          className={`mt-0.5 text-[11px] ${
+            order.etaLateSeconds === null ? 'text-ink-muted' : 'text-amber-800'
+          }`}
+        >
+          Promised{' '}
+          <strong className="font-semibold tabular-nums">
+            {new Date(order.etaAt).toLocaleTimeString('en-PH', {
+              hour: '2-digit',
+              minute: '2-digit',
+            })}
+          </strong>
+          {order.etaLateSeconds === null ? null : (
+            <>
+              {' · '}
+              <strong className="font-semibold">
+                {formatLate(order.etaLateSeconds)}
+              </strong>
+            </>
+          )}
+        </p>
+      ) : null}
+
+      {order.clock ? (
+        <p
+          className={`mt-1.5 rounded-lg px-2 py-1.5 text-[11px] font-semibold leading-relaxed ${
+            order.clock.urgency === 'CRITICAL'
+              ? 'bg-rose-50 text-rose-900'
+              : order.clock.urgency === 'SOON'
+                ? 'bg-amber-50 text-amber-900'
+                : 'bg-surface-sunken text-ink-muted'
+          }`}
+        >
+          {order.clock.note}
+        </p>
+      ) : null}
 
       <ul className="mt-2 space-y-0.5">
         {order.items.map((item) => (

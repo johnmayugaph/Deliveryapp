@@ -4,6 +4,7 @@ import { tierNamesForCustomers } from '@/lib/merchant/tier-customers';
 import { readFoodDetails } from '@/lib/orders/details';
 import { prisma } from '@/lib/prisma';
 import { formatCentavos } from '@/lib/money';
+import { lateBySeconds } from '@/lib/merchant/queue-clock';
 import { OrderCard, type QueueCardOrder } from '@/components/merchant/OrderCard';
 import { OrderLiveRefresh } from '@/components/orders/OrderLiveRefresh';
 
@@ -26,6 +27,9 @@ export default async function MerchantQueuePage({
 }) {
   const { storeId } = await params;
   const access = await requireStoreAccess(storeId);
+
+  // One clock for the whole render, so two cards cannot disagree about now.
+  const renderedAt = new Date();
 
   const [queue, summary] = await Promise.all([
     loadMerchantQueue(access.store.id),
@@ -102,11 +106,11 @@ export default async function MerchantQueuePage({
                   {orders.map((entry) => (
                     <OrderCard
                       key={entry.order.id}
-                      isUrgent={stage.isUrgent}
                       order={toCardOrder(
                         entry,
                         areaByOrderId.get(entry.order.id) ?? null,
                         tierByOrderId.get(entry.order.id) ?? null,
+                        renderedAt,
                       )}
                     />
                   ))}
@@ -139,6 +143,7 @@ function toCardOrder(
   entry: Awaited<ReturnType<typeof loadMerchantQueue>>['stages'][number]['orders'][number],
   dropoffArea: string | null,
   customerTierName: string | null,
+  now: Date,
 ): QueueCardOrder {
   const { order } = entry;
 
@@ -161,7 +166,9 @@ function toCardOrder(
     subtotalCentavos: order.subtotalCentavos,
     waitingSeconds: entry.waitingSeconds,
     etaAt: order.etaAt?.toISOString() ?? null,
+    etaLateSeconds: lateBySeconds(order.etaAt ?? null, now),
     merchantActions: entry.merchantActions,
+    clock: entry.clock,
     items,
     merchantNotes,
     includeCutlery,

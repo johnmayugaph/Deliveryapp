@@ -163,6 +163,18 @@ reaches which screen lives in `src/lib/merchant/roles.ts`, and the tab bar and
 the staff screen's role explanation both read from it, so what an owner is told
 a role grants cannot drift from the gate that runs.
 
+On the **Queue** tab, each card shows the clock the app is really running on
+that order. TARA cancels an unanswered order after eight minutes and a rider
+search after twenty, and the queue used to say nothing about either — it warned
+vaguely at three minutes, went quiet, and then the order vanished. The
+countdown, and the ring colour, come from the lifecycle map's own timeout list,
+so a deadline changed there changes this screen with it. It says whose move it
+is too: the acceptance clock is the shop's to beat, the rider clock is nobody's
+in the kitchen and says so. An order being cooked has no clock, because nothing
+should cancel food a shop is actually making. Cards also show the time the
+customer was promised, and how late it is once that has passed — which is what
+the **+10 min** button is for.
+
 On the **Menu** tab, the line above the list says how many dishes a customer
 can actually order — not how many rows exist. Two things stop a dish, and it
 names both: the shop's own out-of-stock switch, now with how long it has been

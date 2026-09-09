@@ -3,7 +3,7 @@ import { OrderActor, OrderStatus, ServiceKey, StoreRole } from '@prisma/client';
 import { MERCHANT_STAGES, QUEUE_STATUSES } from '@/lib/merchant/queue';
 import { roleSatisfies, storeIdFromDetails } from '@/lib/merchant/access';
 import { allowedTransitions, isActorPermitted } from '@/lib/orders/state-machine';
-import { ORDER_LIFECYCLES } from '@/lib/orders/transitions';
+import { ALL_STATUS_TIMEOUTS, ORDER_LIFECYCLES } from '@/lib/orders/transitions';
 import { STORE_ROLE_LABELS } from '@/lib/merchant/staff-policy';
 
 describe('store roles', () => {
@@ -100,10 +100,23 @@ describe('queue stages', () => {
     }
   });
 
-  it('marks only the stage a customer is waiting on a reply for as urgent', () => {
-    const urgent = MERCHANT_STAGES.filter((stage) => stage.isUrgent);
-    expect(urgent).toHaveLength(1);
-    expect(urgent[0]!.statuses).toContain(OrderStatus.PENDING_MERCHANT_ACCEPTANCE);
+  it('puts the status the sweeper is timing in the first stage', () => {
+    /**
+     * This asserted a per-stage `isUrgent` flag, which the card read to decide
+     * whether to warn. The flag is gone: the card reads the sweeper's real
+     * deadline per order now, which is strictly better because a stage cannot
+     * know that THIS order has forty seconds left. What is worth keeping is
+     * the arrangement — the status with a deadline on it is the one at the top
+     * of the screen — and that is checked against the timeout list rather than
+     * against a flag beside it.
+     */
+    const timed = ALL_STATUS_TIMEOUTS.filter(
+      (timeout) => timeout.serviceType === ServiceKey.FOOD,
+    ).map((timeout) => timeout.status);
+    expect(timed).toContain(OrderStatus.PENDING_MERCHANT_ACCEPTANCE);
+    expect(MERCHANT_STAGES[0]!.statuses).toContain(
+      OrderStatus.PENDING_MERCHANT_ACCEPTANCE,
+    );
   });
 
   it('orders the stages the way a kitchen works', () => {
