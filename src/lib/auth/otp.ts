@@ -18,6 +18,7 @@ import {
   type VerifyFailure,
 } from '@/lib/auth/otp-policy';
 import { NoSmsSenderError, resolveSmsSender, type SmsSender } from '@/lib/auth/sms';
+import { testCodeFor, type TestNumbersEnv } from '@/lib/auth/test-numbers';
 
 /**
  * Login codes: requesting, and verifying.
@@ -33,7 +34,21 @@ import { NoSmsSenderError, resolveSmsSender, type SmsSender } from '@/lib/auth/s
  */
 
 export type RequestCodeOutcome =
-  | { ok: true; phone: string; expiresAt: Date }
+  | {
+      ok: true;
+      phone: string;
+      expiresAt: Date;
+      /**
+       * Whether a message actually went out.
+       *
+       * False for an allowlisted test number (see `./test-numbers.ts`), where
+       * the code is written to the row and the gateway is never called. The
+       * caller needs this because a screen saying "Sent to 0917 ••• 4567" when
+       * nothing was sent is the same class of defect this project keeps
+       * removing from its own screens — a claim the system cannot support.
+       */
+      sentBySms: boolean;
+    }
   | { ok: false; throttled: ThrottleDecision }
   /**
    * This deployment has no SMS gateway at all, so no code can be sent to
@@ -51,6 +66,9 @@ export interface RequestCodeInput {
   clientIp?: string;
   now?: Date;
   sender?: SmsSender;
+  /** Injected by tests, so the allowlist can be exercised without mutating
+   *  `process.env` under a parallel test runner. */
+  env?: TestNumbersEnv;
 }
 
 function messageBody(code: string): string {
@@ -92,17 +110,27 @@ export async function requestLoginCode(
    * query and no peso, and it still tells a bot nothing about the number it
    * tried.
    */
-  let sender: SmsSender;
-  try {
-    sender = input.sender ?? resolveSmsSender();
-  } catch (error) {
-    if (error instanceof NoSmsSenderError) {
-      // The operator-facing sentence, in the one place an operator can read
-      // it: this deployment's log. The customer gets different words.
-      console.error(`requestLoginCode: no code was issued. ${error.message}`);
-      return { ok: false, notConfigured: true };
+  /**
+   * An allowlisted test number needs no gateway, so it is checked BEFORE one
+   * is resolved — on a deployment with no gateway configured, resolving is
+   * what throws. Every other number takes the path below unchanged, so this
+   * branch cannot make an unlisted number signable-in.
+   */
+  const testCode = testCodeFor(phone, input.env ?? process.env);
+
+  let sender: SmsSender | null = null;
+  if (testCode === undefined) {
+    try {
+      sender = input.sender ?? resolveSmsSender();
+    } catch (error) {
+      if (error instanceof NoSmsSenderError) {
+        // The operator-facing sentence, in the one place an operator can read
+        // it: this deployment's log. The customer gets different words.
+        console.error(`requestLoginCode: no code was issued. ${error.message}`);
+        return { ok: false, notConfigured: true };
+      }
+      throw error;
     }
-    throw error;
   }
 
   const [recentForPhone, recentForIpCount] = await Promise.all([
@@ -130,7 +158,11 @@ export async function requestLoginCode(
     return { ok: false, throttled: decision };
   }
 
-  const code = generateLoginCode();
+  /* Fixed for an allowlisted number, random for everybody else. Everything
+     after this line is identical either way: the same row, the same TTL, the
+     same single-use consume, the same attempt ceiling. A rehearsal that
+     relaxed those would not be a rehearsal of this application. */
+  const code = testCode ?? generateLoginCode();
   const expiresAt = new Date(now.getTime() + CODE_TTL_SECONDS * 1000);
 
   // Invalidate outstanding codes, then issue, in one transaction: two codes
@@ -150,6 +182,12 @@ export async function requestLoginCode(
     });
   });
 
+  if (sender === null) {
+    // A test number. The row is written and nothing is sent — which is the
+    // whole saving, and the only thing this feature does.
+    return { ok: true, phone, expiresAt, sentBySms: false };
+  }
+
   try {
     await sender.send({ to: phone, body: messageBody(code) });
   } catch (error) {
@@ -163,7 +201,7 @@ export async function requestLoginCode(
     return { ok: false, deliveryFailed: true };
   }
 
-  return { ok: true, phone, expiresAt };
+  return { ok: true, phone, expiresAt, sentBySms: true };
 }
 
 export type VerifyCodeOutcome =

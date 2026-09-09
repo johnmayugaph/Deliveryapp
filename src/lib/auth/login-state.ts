@@ -14,6 +14,12 @@ export interface LoginFormState {
   notice?: string;
   /** Seconds before a resend is allowed, for the countdown. */
   retryAfterSeconds?: number;
+  /**
+   * False when the code was written for an allowlisted test number and no
+   * message was sent. The code step reads it so it does not tell somebody to
+   * check a handset that will never buzz.
+   */
+  sentBySms?: boolean;
 }
 
 export const INITIAL_LOGIN_STATE: LoginFormState = { step: 'phone' };

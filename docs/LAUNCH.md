@@ -64,6 +64,43 @@ it (HTTP 422) and you will spend the afternoon debugging the wrong layer.
 invisible from the code: everything in this repository about SMS is verified at
 the wire and nothing is verified at the carrier.
 
+### If you are not ready to top up yet
+
+You can rehearse the whole application before paying for a single message, on
+an **allowlist** of numbers that sign in with a code you choose:
+
+```bash
+AUTH_TEST_NUMBERS="09171234567:123456,09181234568:654321"
+```
+
+Those numbers get their code written straight to the database and no text is
+sent. Everything else about them is a real login: same five-minute expiry, same
+single use, same five wrong tries, same resend cooldown and request throttles.
+So a rehearsal on this is a rehearsal of the real thing, minus the carrier.
+
+What it deliberately is **not** is "OTP off". A number that is not on the list
+takes the real path, and with no gateway configured that still means refused —
+verified on a production build with no gateway: the listed number reached
+`/welcome` with a session, and an unlisted one never got as far as a code
+field. So this cannot be how a stranger who finds your URL gets in as somebody
+else.
+
+Two things follow from it being real, though:
+
+- **A fixed code is a password that never changes.** Anybody who learns the
+  pair owns that account until you unset the variable.
+- **Unlike `SEMAPHORE_ENDPOINT`, this is honoured in production**, because a
+  dry run happens on a production build. The price of that is noise: the login
+  screen tells every visitor the deployment is in test mode and lists the
+  masked numbers, and `/admin/health` reports it in red with the numbers and
+  any entry it could not parse.
+
+Unset it and restart before you have real customers. That is the whole of
+switching it off; nothing else in the deployment changes.
+
+Note it does not remove step 1 — it postpones it. Sign-in for everybody else,
+and every order notification, still needs the gateway.
+
 ## 2 — Start the branded sender application
 
 In parallel, not after. Apply through the same Semaphore account for a
@@ -174,7 +211,9 @@ own those numbers, and one of them holds ADMIN.
 The order here is forced, and it is why step 1 comes first:
 
 1. Open your live site and **sign in with your own number.** The account is
-   created the moment you enter the code.
+   created the moment you enter the code. (No gateway yet? Put your own number
+   on the `AUTH_TEST_NUMBERS` allowlist from step 1 and sign in with the code
+   you chose — the account it creates is an ordinary account.)
 2. Then grant yourself the role:
 
 ```bash

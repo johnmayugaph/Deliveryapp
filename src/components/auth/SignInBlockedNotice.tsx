@@ -1,5 +1,6 @@
 import { describeSmsSetup } from '@/lib/auth/sms';
-import type { SignInBlocker } from '@/lib/deploy/sign-in-readiness';
+import { TEST_NUMBERS_VAR, describeTestNumbers } from '@/lib/auth/test-numbers';
+import type { SignInBlocker, SignInWarning } from '@/lib/deploy/sign-in-readiness';
 
 /**
  * Says, on the login screen, why nobody can sign in.
@@ -40,8 +41,40 @@ const BLOCKER_NOTICE: Readonly<
   },
 };
 
-export function SignInBlockedNotice({ blockers }: { blockers: SignInBlocker[] }) {
-  if (blockers.length === 0) return null;
+/**
+ * The warnings, which read the other way round.
+ *
+ * A blocker says nobody can get in. This says somebody can, on a fixed code,
+ * and that is a thing to switch off — so it names the variable to unset rather
+ * than one to set. Amber rather than red: the deployment is working as its
+ * operator configured it, which is a different state from broken.
+ */
+const WARNING_NOTICE: Readonly<
+  Record<SignInWarning, { title: string; body: string; fix: string }>
+> = {
+  TEST_NUMBERS_ENABLED: {
+    title: 'This deployment is in test mode.',
+    body:
+      'Some numbers sign in with a fixed code and receive no text message. ' +
+      'A fixed code is a password that never changes, so this belongs on a ' +
+      'rehearsal and not on a live site.',
+    fix: `unset ${TEST_NUMBERS_VAR} — then restart`,
+  },
+};
+
+export function SignInBlockedNotice({
+  blockers,
+  warnings = [],
+}: {
+  blockers: SignInBlocker[];
+  warnings?: SignInWarning[];
+}) {
+  if (blockers.length === 0 && warnings.length === 0) return null;
+
+  /* How many numbers, so the notice is checkable rather than a mood. Read
+     here rather than passed in: this is a server component, and the count and
+     the warning that triggered it come from the same function. */
+  const testNumbers = describeTestNumbers();
 
   return (
     <div className="mt-6 space-y-3">
@@ -54,6 +87,30 @@ export function SignInBlockedNotice({ blockers }: { blockers: SignInBlocker[] })
           >
             <p className="font-semibold">{notice.title}</p>
             <p className="mt-1">{notice.body}</p>
+            <pre className="mt-2 overflow-x-auto rounded-lg bg-black/5 px-2.5 py-2 text-[11px]">
+              {notice.fix}
+            </pre>
+          </div>
+        );
+      })}
+
+      {warnings.map((warning) => {
+        const notice = WARNING_NOTICE[warning];
+        return (
+          <div
+            key={warning}
+            className="rounded-xl bg-amber-50 px-4 py-3 text-xs leading-relaxed text-amber-900 ring-1 ring-amber-200"
+          >
+            <p className="font-semibold">{notice.title}</p>
+            <p className="mt-1">{notice.body}</p>
+            {warning === 'TEST_NUMBERS_ENABLED' && testNumbers.masked.length > 0 ? (
+              <p className="mt-1 font-semibold">
+                {testNumbers.masked.length === 1
+                  ? '1 number: '
+                  : `${testNumbers.masked.length} numbers: `}
+                {testNumbers.masked.join(', ')}
+              </p>
+            ) : null}
             <pre className="mt-2 overflow-x-auto rounded-lg bg-black/5 px-2.5 py-2 text-[11px]">
               {notice.fix}
             </pre>

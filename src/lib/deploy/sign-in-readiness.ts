@@ -1,4 +1,5 @@
 import { smsSendingIsRefused, type SmsEnv } from '@/lib/auth/sms';
+import { describeTestNumbers } from '@/lib/auth/test-numbers';
 
 /**
  * Can this deployment sign anybody in at all?
@@ -17,6 +18,17 @@ import { smsSendingIsRefused, type SmsEnv } from '@/lib/auth/sms';
 
 /** A reason nobody can sign in. Ordered worst-first where both apply. */
 export type SignInBlocker = 'NO_SMS_GATEWAY' | 'INSECURE_TRANSPORT';
+
+/**
+ * Something true of this deployment that is not a reason nobody can sign in.
+ *
+ * Kept as a separate type rather than a third `SignInBlocker`, because the
+ * blockers mean *nobody gets in* and a screen that renders both under one
+ * heading would be making the wrong claim about each. A warning is the
+ * opposite shape: somebody CAN get in, and that is the problem worth saying
+ * out loud.
+ */
+export type SignInWarning = 'TEST_NUMBERS_ENABLED';
 
 export interface SignInReadinessInput {
   /** `x-forwarded-proto`, or undefined when nothing set it. */
@@ -82,4 +94,25 @@ export function signInBlockers(input: SignInReadinessInput = {}): SignInBlocker[
   }
 
   return blockers;
+}
+
+/**
+ * What is true of this deployment that a visitor should be told.
+ *
+ * One entry today. It is reported on the login screen rather than only in the
+ * console for the same reason the blockers are: a deployment running with a
+ * sign-in allowlist has a static password on a live account, and the way that
+ * gets left switched on after launch is by being invisible. `/admin/health`
+ * reports it too, but the login screen is the page somebody actually looks at,
+ * and it is the page where the consequence lands.
+ */
+export function signInWarnings(input: SignInReadinessInput = {}): SignInWarning[] {
+  const env = input.env ?? process.env;
+  const warnings: SignInWarning[] = [];
+
+  if (describeTestNumbers(env).enabled) {
+    warnings.push('TEST_NUMBERS_ENABLED');
+  }
+
+  return warnings;
 }

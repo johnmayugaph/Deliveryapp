@@ -72,7 +72,12 @@ export async function loginFormAction(
       captchaToken,
     });
     if (sent.ok) {
-      return { step: 'code', phone: sent.phone, notice: 'Code sent.' };
+      return {
+        step: 'code',
+        phone: sent.phone,
+        notice: sent.sentBySms ? 'Code sent.' : 'Test number: use the code you configured.',
+        sentBySms: sent.sentBySms,
+      };
     }
     // A throttle refusal keeps them on the code step — the previous code is
     // probably still valid, so sending them back would be unhelpful.

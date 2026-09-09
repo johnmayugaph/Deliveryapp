@@ -6379,3 +6379,101 @@ Two negative controls, because the mutation round is not in this loop:
   reading the environment.
 
 2377 tests pass; lint, typecheck, tests and build all exit zero.
+
+---
+
+## Signing in without paying for SMS first
+
+The gateway wants a prepaid top-up before anybody has clicked anything, and the
+thing being rehearsed is the order lifecycle, not the carrier. So: sign-in
+without SMS, for a rehearsal.
+
+The obvious version of that is a variable that makes any code work, and it is
+a hole rather than a shortcut. This deployment's seed writes real Philippine
+number formats and one of them holds ADMIN; a build that accepts any code for
+any number hands the console to whoever finds the URL. It is also exactly the
+shape of thing that survives into production by accident, because once it works
+nothing about it looks different.
+
+### An allowlist, and nothing else changed
+
+    AUTH_TEST_NUMBERS="09171234567:123456,09181234568:654321"
+
+A number on the list gets its `PhoneVerification` row written with the code
+named beside it, and the gateway is never called. Every other number takes the
+path it took before.
+
+What is deliberately NOT relaxed: the row is a real row. Five-minute expiry,
+single-use consume, five-attempt ceiling, 45-second resend cooldown, both
+request throttles — all of it, because a rehearsal that skips them is not a
+rehearsal of this application. `verifyLoginCode` was not touched at all, which
+is the property worth stating: a fixed code is checked by the same HMAC
+comparison, against the same row, as a random one. The only differences are
+which six digits are in the row and that nothing was sent.
+
+### The two orderings that make it work
+
+`testCodeFor()` is consulted **before** `resolveSmsSender()`, and that is not
+cosmetic: resolving THROWS on a deployment with no gateway, which is the only
+deployment this feature is for. A guard test asserts the two indices in that
+order, because the natural place to add a branch is next to the send.
+
+And `smsSendingIsRefused` was left alone, so `/login` still reports
+`NO_SMS_GATEWAY` while the allowlist is on. Suppressing it would have been the
+tidier-looking screen and the worse one: test numbers make sign-in possible for
+a handful of numbers, not for a customer, and an operator who saw a clean login
+screen would believe sign-in worked until the first real one arrived. The two
+notices now render together — red saying no gateway, amber saying test mode
+with the masked numbers — which is the honest reading.
+
+### Why it is honoured in production, unlike the endpoint override
+
+`SEMAPHORE_ENDPOINT` is ignored in production and this is not, which looks
+inconsistent until you compare what each does in the wrong hands. The endpoint
+override redirects **everybody's** codes to another host — a silent, total
+capture, and no legitimate deployment needs it. This affects only numbers an
+operator typed out one at a time. A dry run happens on a production build;
+that is what makes it a dry run, so refusing it there refuses the only case it
+is for.
+
+That trade is paid for in noise rather than in cleverness. `/login` tells every
+visitor, listing the masked numbers. `/admin/health` reports it in red, above
+the feature-gap panel, with the numbers and any entry it could not parse —
+because a typo otherwise means somebody sitting at a login screen entering a
+code that cannot work, with nothing anywhere saying why.
+
+### One screen claim that had to change with it
+
+The code step said *"Sent to 0917 ••• 4567."* unconditionally. For a test
+number nothing is sent, so that sentence became a claim the system could not
+support — the defect class this audit keeps finding. `sentBySms` now travels
+from `requestLoginCode` through `SendCodeResult` and the form state to the
+screen, which says *"Test number — no text was sent."* instead.
+
+### Verified
+
+20 new tests, 2397 in total; lint, typecheck, tests and build all exit zero.
+
+The browser round is the one that matters here, and it was run twice — once
+under `next dev` and once on the **production standalone build with no gateway
+configured at all**, which is the state a dry run is actually in:
+
+| | Result |
+| --- | --- |
+| Listed number, its configured code | signed in, session cookie set, `/welcome` |
+| Listed number, wrong code | refused |
+| **Unlisted number, a listed number's code** | refused — *"That code is wrong"* |
+| **Unlisted number, production, no gateway** | never reached the code field |
+| `/login` | red no-gateway notice AND amber test-mode notice, 2 masked numbers |
+| `/admin/health` | red panel, both numbers, and `broken-entry` reported as ignored |
+
+Two negative controls, since the mutation round is not in this loop:
+
+- Making the missing-gateway blocker conditional on the allowlist (`&&
+  !describeTestNumbers(env).enabled`) fails the honesty test. It is not
+  vacuous.
+- The masking test compares against `maskPhilippineMobile` rather than a
+  hand-typed string, and separately asserts the full national number is absent
+  and that the codes appear nowhere in the serialised output — then asserts the
+  codes ARE in the parsed entries, so "no codes leaked" cannot pass by the
+  parser having returned nothing.

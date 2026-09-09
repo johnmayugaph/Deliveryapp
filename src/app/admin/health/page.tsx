@@ -1,4 +1,5 @@
 import { describeSmsSetup } from '@/lib/auth/sms';
+import { TEST_NUMBERS_VAR, describeTestNumbers } from '@/lib/auth/test-numbers';
 import Link from 'next/link';
 import { NotificationChannel } from '@prisma/client';
 import { requireAdmin } from '@/lib/admin/access';
@@ -57,6 +58,10 @@ export default async function AdminHealthPage() {
     operatingDataGaps(),
   ]);
 
+  /* Read straight from the environment rather than the database, like the
+     other adapter questions on this page. */
+  const testNumbers = describeTestNumbers();
+
   // Read on the server, like everywhere else this is used: a NEXT_PUBLIC_
   // variable would bake the build machine's setting into the image.
   const source = tileSource();
@@ -99,6 +104,44 @@ export default async function AdminHealthPage() {
           by how often that runs.
         </p>
       </div>
+
+      {/* Above the feature gaps on purpose. Those are features doing nothing;
+          this is a live sign-in path with a code that never changes, and it is
+          the one thing on this page that can hand somebody an account. */}
+      {testNumbers.enabled || testNumbers.rejected.length > 0 ? (
+        <div className="rounded-xl bg-red-50 px-4 py-3 text-xs leading-relaxed text-red-900 ring-1 ring-red-200">
+          <p className="font-semibold">
+            {testNumbers.enabled
+              ? testNumbers.masked.length === 1
+                ? 'One number signs in with a fixed code and no text message.'
+                : `${testNumbers.masked.length} numbers sign in with a fixed code and no text message.`
+              : `${TEST_NUMBERS_VAR} is set but nothing in it is usable.`}
+          </p>
+          <p className="mt-1">
+            This exists so a rehearsal does not need a paid SMS balance. A fixed
+            code is a password that never changes, so on a live site each of
+            these is a standing way in. Unset <code>{TEST_NUMBERS_VAR}</code> and
+            restart to switch it off; every other number is unaffected either
+            way.
+          </p>
+          {testNumbers.masked.length > 0 ? (
+            <p className="mt-2 rounded-lg bg-black/5 px-2.5 py-2 font-semibold">
+              {testNumbers.masked.join(', ')}
+            </p>
+          ) : null}
+          {testNumbers.rejected.length > 0 ? (
+            /* Reported rather than dropped: a typo here means somebody sits at
+               a login screen entering a code that cannot work, with nothing
+               anywhere saying why. Expected shape is 09171234567:123456. */
+            <p className="mt-2 rounded-lg bg-black/5 px-2.5 py-2">
+              Ignored, not a number-and-six-digit-code pair:{' '}
+              <span className="font-semibold">
+                {testNumbers.rejected.join(', ')}
+              </span>
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       {gaps.length > 0 ? (
         <div className="rounded-xl bg-red-50 px-4 py-3 text-xs leading-relaxed text-red-900 ring-1 ring-red-200">

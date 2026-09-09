@@ -7,7 +7,7 @@ import { isCaptchaConfigured } from '@/lib/auth/captcha';
 import { Wordmark } from '@/components/brand/Wordmark';
 import { LoginFlow } from '@/components/auth/LoginFlow';
 import { SignInBlockedNotice } from '@/components/auth/SignInBlockedNotice';
-import { signInBlockers } from '@/lib/deploy/sign-in-readiness';
+import { signInBlockers, signInWarnings } from '@/lib/deploy/sign-in-readiness';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,6 +40,10 @@ export default async function LoginPage({
     forwardedProto: headerList.get('x-forwarded-proto') ?? undefined,
     host: headerList.get('host') ?? undefined,
   });
+  /* And what is true but not blocking — today, a sign-in allowlist left on.
+     Shown to every visitor on purpose: it is the only thing that stops a
+     rehearsal switch surviving into a live site unnoticed. */
+  const warnings = signInWarnings();
 
   const captchaSiteKey = isCaptchaConfigured()
     ? process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY
@@ -55,7 +59,7 @@ export default async function LoginPage({
         </p>
       </header>
 
-      <SignInBlockedNotice blockers={blockers} />
+      <SignInBlockedNotice blockers={blockers} warnings={warnings} />
 
       <div className="mt-6 rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5">
         <LoginFlow

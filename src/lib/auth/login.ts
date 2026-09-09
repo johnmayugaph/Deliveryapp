@@ -24,7 +24,7 @@ import { redeemStoreInvites } from '@/lib/merchant/staff';
  */
 
 export type SendCodeResult =
-  | { ok: true; phone: string; expiresAt: Date }
+  | { ok: true; phone: string; expiresAt: Date; sentBySms: boolean }
   | { ok: false; message: string; retryAfterSeconds?: number };
 
 export async function sendLoginCode(input: {
@@ -89,7 +89,12 @@ export async function sendLoginCode(input: {
     return { ok: false, message: 'The code could not be sent. Try again in a moment.' };
   }
 
-  return { ok: true, phone: outcome.phone, expiresAt: outcome.expiresAt };
+  return {
+    ok: true,
+    phone: outcome.phone,
+    expiresAt: outcome.expiresAt,
+    sentBySms: outcome.sentBySms,
+  };
 }
 
 export type CheckCodeResult =

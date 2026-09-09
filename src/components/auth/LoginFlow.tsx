@@ -127,9 +127,23 @@ export function LoginFlow({
         <label htmlFor="code" className="block text-[13px] font-semibold">
           Code
         </label>
-        <p className="mt-0.5 text-[11px] text-ink-muted">
-          Sent to {maskPhilippineMobile(phone)}.
-        </p>
+        {/* Honest about which of the two happened. A test number gets a row
+            and no message, and telling somebody a text was "sent to" a handset
+            that will never buzz is the same defect this project has spent a
+            dozen phases removing from its own screens. `sentBySms` is absent
+            on the first render of the code step after a throttle refusal, in
+            which case a code really was sent earlier — so the default reads
+            the normal way. */}
+        {state.sentBySms === false ? (
+          <p className="mt-0.5 text-[11px] font-semibold text-amber-700">
+            Test number — no text was sent. Enter the code configured for{' '}
+            {maskPhilippineMobile(phone)}.
+          </p>
+        ) : (
+          <p className="mt-0.5 text-[11px] text-ink-muted">
+            Sent to {maskPhilippineMobile(phone)}.
+          </p>
+        )}
         <input
           id="code"
           name="code"
