@@ -248,7 +248,13 @@ describe('the card renders the clock rather than its own guess', () => {
      * on the customer's screen with nothing to show for it here.
      */
     expect(card).toMatch(/order\.etaAt/);
-    expect(card).toMatch(/toLocaleTimeString/);
+    /* The PROPERTY is that the promised time is rendered, not how. This used
+       to assert `toLocaleTimeString`, which is the implementation — and it
+       failed the moment every date in the app moved behind
+       `lib/time/manila`, where the zone is pinned. A test tied to the
+       mechanism costs a false failure on a change that improved the thing it
+       was guarding. */
+    expect(card).toMatch(/formatTimeIn\(/);
   });
 
   it('shows the countdown note the rule wrote', () => {

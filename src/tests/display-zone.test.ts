@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   DISPLAY_OFFSET_MS,
@@ -213,5 +214,53 @@ describe('the two money boundaries', () => {
     expect(startOfDayIn(late).getTime()).not.toBe(
       startOfDayIn(justAfter).getTime(),
     );
+  });
+});
+
+describe('nothing renders a date outside this module', () => {
+  /**
+   * The guard, and the point of the whole exercise. A sweep fixes today; this
+   * fails the build the next time somebody writes `toLocaleDateString` on a
+   * screen, which is how all seventeen got there in the first place.
+   *
+   * Number formatting is exempt and must be: `points.toLocaleString('en-PH')`
+   * puts separators in an integer and no timezone touches it. The two are
+   * told apart by whether an options object is passed, which is also how the
+   * count that produced this work was got wrong — see the note below.
+   */
+  const CALL = /\.toLocale(?:Date|Time)?String\(\s*'en-PH'\s*(,\s*\{[\s\S]*?\})?\s*\)/g;
+
+  function offenders(): string[] {
+    const found: string[] = [];
+    const walk = (dir: string): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) return walk(full);
+        return /\.tsx?$/.test(entry.name) ? [full] : [];
+      });
+    for (const file of walk('src')) {
+      if (file.includes('tests') || file.includes(join('lib', 'time', 'manila'))) {
+        continue;
+      }
+      const source = readFileSync(file, 'utf8');
+      for (const match of source.matchAll(CALL)) {
+        const options = match[1];
+        // No options object → a number, not a date. Exempt.
+        if (options === undefined) continue;
+        const line = source.slice(0, match.index).split('\n').length;
+        found.push(`${file}:${line}`);
+      }
+    }
+    return found;
+  }
+
+  it('finds plenty of number formatting, so the exemption is real', () => {
+    // Guards against the whole sweep being vacuous.
+    const numbers = readFileSync('src/app/points/page.tsx', 'utf8');
+    expect(numbers).toMatch(/toLocaleString\('en-PH'\)/);
+  });
+
+  it('leaves no date rendered outside lib/time/manila', () => {
+    expect(offenders()).toEqual([]);
   });
 });

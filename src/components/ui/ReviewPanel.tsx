@@ -1,5 +1,6 @@
 import type { ReviewSummary } from '@/lib/ratings/reviews';
 import { MAX_STARS, MIN_REVIEWS_TO_SHOW, STAR_VALUES } from '@/lib/ratings/policy';
+import { formatDayIn } from '@/lib/time/manila';
 
 /**
  * Somebody's own ratings, for the merchant back office and the fleet profile.
@@ -110,11 +111,7 @@ export function ReviewPanel({
                         {review.stars} out of {MAX_STARS}
                       </span>{' '}
                       · {review.orderNumber} ·{' '}
-                      {review.createdAt.toLocaleDateString('en-PH', {
-                        day: 'numeric',
-                        month: 'short',
-                        timeZone: 'Asia/Manila',
-                      })}
+                      {formatDayIn(review.createdAt)}
                     </p>
                   </li>
                 ))}

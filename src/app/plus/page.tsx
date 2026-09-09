@@ -34,6 +34,7 @@ import { CancelPlanButton } from '@/components/subscriptions/CancelPlanButton';
 import { SubscribeButton } from '@/components/subscriptions/SubscribeButton';
 import { PayInvoiceByTransfer } from '@/components/subscriptions/PayInvoiceByTransfer';
 import { formatCentavos } from '@/lib/money';
+import { formatLongFullDayIn } from '@/lib/time/manila';
 
 export const dynamic = 'force-dynamic';
 
@@ -90,11 +91,7 @@ const STATUS_LABELS: Readonly<Record<SubscriptionStatus, string>> = {
 };
 
 function formatDate(date: Date): string {
-  return date.toLocaleDateString('en-PH', {
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-  });
+  return formatLongFullDayIn(date);
 }
 
 /**

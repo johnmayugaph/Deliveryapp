@@ -15,6 +15,7 @@ import { forgetPushDeviceAction } from '@/lib/actions/push-actions';
 import { PushSwitch } from '@/components/notifications/PushSwitch';
 import { isPushConfigured, resolveVapidConfig } from '@/lib/notifications/push/vapid';
 import { listPushDevices } from '@/lib/notifications/push/subscriptions';
+import { formatDayIn } from '@/lib/time/manila';
 
 export const dynamic = 'force-dynamic';
 
@@ -108,7 +109,7 @@ function timeAgo(at: Date, now: Date): string {
   if (minutes < 60) return `${minutes}m`;
   const hours = Math.round(minutes / 60);
   if (hours < 24) return `${hours}h`;
-  return at.toLocaleDateString('en-PH', { day: 'numeric', month: 'short' });
+  return formatDayIn(at);
 }
 
 export default async function NotificationsPage() {
@@ -175,10 +176,7 @@ export default async function NotificationsPage() {
                   <span className="mt-0.5 block text-[11px] text-ink-faint">
                     {device.expiredAt
                       ? 'No longer reachable'
-                      : `Last used ${device.lastSeenAt.toLocaleDateString('en-PH', {
-                          day: 'numeric',
-                          month: 'short',
-                        })}`}
+                      : `Last used ${formatDayIn(device.lastSeenAt)}`}
                   </span>
                 </span>
                 <form action={forgetPushDeviceAction}>

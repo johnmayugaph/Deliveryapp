@@ -13,6 +13,7 @@ import { SignOutButton } from '@/components/auth/SignOutButton';
 import { ActiveSessions } from '@/components/auth/ActiveSessions';
 import { RecoveryEmail } from '@/components/auth/RecoveryEmail';
 import { isEmailConfigured } from '@/lib/auth/email';
+import { formatFullDayIn } from '@/lib/time/manila';
 
 export const dynamic = 'force-dynamic';
 
@@ -191,11 +192,7 @@ export default async function ProfilePage() {
               </span>
               <span className="mt-0.5 block text-[11px] text-ink-muted">
                 {subscription
-                  ? `Aktibo hanggang ${subscription.renewsAt.toLocaleDateString('en-PH', {
-                      day: 'numeric',
-                      month: 'short',
-                      year: 'numeric',
-                    })}`
+                  ? `Aktibo hanggang ${formatFullDayIn(subscription.renewsAt)}`
                   : 'See what is included'}
               </span>
             </span>

@@ -5631,8 +5631,10 @@ developing, because the seed data, the clock and the screen are all wrong
 *consistently* — and the browser rounds I have been running all session showed
 UTC times that looked plausible and were eight hours out.
 
-Measured: **48 `toLocale*` call sites, zero passing a `timeZone`.** Three
-places already got it right, independently and in their own way —
+Measured: **48 `toLocale*` call sites, zero passing a `timeZone`.** *(That
+count was wrong in both halves — see "Correcting the count" below. The defect
+was real; its size was not.)* Three places already got it right,
+independently and in their own way —
 `startOfManilaDay` in the admin queries, `monthStart` in the referral caps, and
 one explicit `timeZone: 'Asia/Manila'` in recovery — so the concept was never
 missed. It was decided three times and skipped everywhere else.
@@ -5764,3 +5766,84 @@ influence it.
 
 2283 tests pass; lint, typecheck, tests and build all exit zero. Fixtures
 removed.
+
+## Correcting the count, and finishing the sweep
+
+### What I told you twice, and got wrong
+
+The last two phases said **"48 `toLocale*` sites, zero passing a `timeZone`"**
+and **"45 remaining"**. Both halves of that were wrong, and the way they were
+wrong is worth writing down because it is the same failure this project keeps
+finding in its own screens: **a measurement that could not have come out any
+other way.**
+
+I counted `timeZone` with a single-line grep, against an options object whose
+properties are on the following lines. So it returned zero — not because no
+site pinned the zone, but because none of them pinned it *on the same line as
+the call*. Then I counted `toLocale*` calls without separating dates from
+numbers.
+
+Measured properly, on the tree as it stood before this work:
+
+| | count |
+| --- | --- |
+| date sites **not** pinning the zone — the actual bug | **17** |
+| date sites already pinning `Asia/Manila` by hand | 8 |
+| `toLocaleString('en-PH')` on a **number** — thousands separators, no zone involved | 19 |
+
+So the defect was real and every screen listed in the last phase was genuinely
+eight hours out — but it was seventeen places, not forty-five, and a third of
+what I counted was integer formatting that no timezone can affect. The two
+commit messages and the `docs/PROGRESS.md` entry carrying the wrong figure are
+now flagged where they sit rather than rewritten, since they are the record of
+what was believed at the time.
+
+### The sweep
+
+All 17 now render through `lib/time/manila`, plus three formatters the existing
+shapes needed: `formatLongDayIn` ("September 9"), `formatLongFullDayIn` and
+`formatDateTimeIn` ("Sep 9, 11:50 PM"). The 8 that were already correct were
+migrated too — not a fix, but it is what makes the guard below absolute.
+
+One cosmetic change went with it: the ticket screen used `hour: 'numeric'` and
+now shares `formatDateTimeIn`'s `'2-digit'`, so "1:05 PM" reads "01:05 PM".
+
+### The guard, which is the part that lasts
+
+A test walks every `.ts`/`.tsx` under `src`, finds each `toLocale*('en-PH')`
+call, and fails if any of them passes an options object outside
+`lib/time/manila`. **No options means a number and is exempt** — the same
+distinction the bad count missed, made explicit and in one place.
+
+A sweep fixes today. This fails the build the next time somebody writes
+`toLocaleDateString` on a screen, which is how all seventeen got there.
+
+### Verified
+
+**Two new units** (2285 total): the guard, and a check that number formatting
+really is still present somewhere, so the exemption is not quietly making the
+guard vacuous.
+
+**A negative control**: reintroducing one bare call on `/orders` made the guard
+name it — `src/app/orders/page.tsx:126` — and restoring it passed.
+
+**A browser** across the eight swept customer screens: all render, no page
+errors. Then one discriminating value check, which is the only kind that
+settles a timezone question — an order stored at **06:18 UTC**, whose Manila
+time is 14:18. The screen shows **"Sep 8 02:18 PM"**. In UTC it would read
+06:18 AM.
+
+Worth recording: the `psql` query I first used to pick that order was itself
+misleading. `"createdAt" AT TIME ZONE 'Asia/Manila'` on a `timestamp` column
+*interprets* the value as Manila rather than converting it to Manila — Postgres
+gives that operator opposite meanings for `timestamp` and `timestamptz`. It
+reported the order as Sep 07 22:18. The app was right and my check was wrong,
+which is twice in one phase that the measuring instrument was the broken part.
+
+**One test re-anchored rather than loosened.** The queue-clock suite asserted
+the merchant card contained `toLocaleTimeString` — the implementation, not the
+property. It failed the moment every date moved behind the pinned formatters,
+which is a false failure on a change that improved the thing it guarded. It
+now asserts `formatTimeIn(` is called.
+
+2285 tests pass; lint, typecheck, tests and build all exit zero.

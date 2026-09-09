@@ -5,6 +5,7 @@ import { pointsSummary } from '@/lib/loyalty/summary';
 import { formatCentavos } from '@/lib/money';
 import { RedeemPoints } from '@/components/loyalty/RedeemPoints';
 import { TierBenefits } from '@/components/loyalty/TierBenefits';
+import { formatDayIn, formatLongFullDayIn } from '@/lib/time/manila';
 
 export const dynamic = 'force-dynamic';
 
@@ -139,11 +140,7 @@ export default async function PointsPage() {
         <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-900">
           {summary.nextExpiry.points.toLocaleString('en-PH')} of your points
           expire on{' '}
-          {summary.nextExpiry.at.toLocaleDateString('en-PH', {
-            day: 'numeric',
-            month: 'long',
-            year: 'numeric',
-          })}
+          {formatLongFullDayIn(summary.nextExpiry.at)}
           . Redeem them before then and the credits do not expire.
         </p>
       ) : null}
@@ -162,10 +159,7 @@ export default async function PointsPage() {
                 <span className="min-w-0">
                   <span className="block text-xs">{row.description}</span>
                   <span className="mt-0.5 block text-[10px] uppercase tracking-wide text-ink-faint">
-                    {row.createdAt.toLocaleDateString('en-PH', {
-                      day: 'numeric',
-                      month: 'short',
-                    })}
+                    {formatDayIn(row.createdAt)}
                   </span>
                 </span>
                 <span

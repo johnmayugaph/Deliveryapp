@@ -11,6 +11,7 @@ import {
   cappedNote,
   windowNote,
 } from '@/lib/merchant/reporting';
+import { formatDateTimeIn } from '@/lib/time/manila';
 import {
   AbsorbedTotalNote,
   OrderBenefitNote,
@@ -107,12 +108,7 @@ export default async function MerchantHistoryPage({
                   {label}
                 </span>
                 <span className="text-[11px] text-ink-faint">
-                  {order.createdAt.toLocaleString('en-PH', {
-                    day: 'numeric',
-                    month: 'short',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
+                  {formatDateTimeIn(order.createdAt)}
                 </span>
               </div>
               <p className="mt-1 truncate text-xs text-ink-muted">

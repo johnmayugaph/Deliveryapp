@@ -6,6 +6,7 @@ import {
   referenceState,
   type DetailValue,
 } from '@/lib/settlement/entry-detail';
+import { formatDateTimeIn, formatLongFullDayIn } from '@/lib/time/manila';
 import {
   bonusTotalLabel,
   describePosition,
@@ -163,12 +164,7 @@ export function PositionPanel({
                 </span>
                 <span className="block text-[11px] text-ink-faint">
                   {entry.description} ·{' '}
-                  {entry.createdAt.toLocaleString('en-PH', {
-                    day: 'numeric',
-                    month: 'short',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
+                  {formatDateTimeIn(entry.createdAt)}
                 </span>
                 {/* What was taken and at what rate. Recorded on every earnings
                     line since settlement was built and read by nothing until
@@ -224,11 +220,7 @@ export function PositionPanel({
             {formatCentavos(Math.abs(lastPayout.amountCentavos))}
           </strong>{' '}
           on{' '}
-          {lastPayout.createdAt.toLocaleDateString('en-PH', {
-            day: 'numeric',
-            month: 'long',
-            year: 'numeric',
-          })}
+          {formatLongFullDayIn(lastPayout.createdAt)}
           {lastPayout.reference?.trim()
             ? `, reference ${lastPayout.reference.trim()}`
             : ''}

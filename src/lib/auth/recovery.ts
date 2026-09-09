@@ -4,6 +4,7 @@ import { normalisePhilippineMobile, maskPhilippineMobile } from '@/lib/auth/phon
 import { normaliseEmail } from '@/lib/auth/email/address';
 import { sendEmailCode, verifyEmailCode } from '@/lib/auth/email-codes';
 import { isEmailConfigured } from '@/lib/auth/email';
+import { formatDayIn } from '@/lib/time/manila';
 
 /**
  * Moving an account to a new phone number.
@@ -356,11 +357,7 @@ export function recoveryAlertText(recovery: {
     'TARA: the sign-in number for your account was changed to ' +
     `${maskPhilippineMobile(recovery.newPhone)}. If this was not you, your ` +
     'credits are frozen until ' +
-    recovery.creditsFrozenUntil.toLocaleDateString('en-PH', {
-      timeZone: 'Asia/Manila',
-      day: 'numeric',
-      month: 'short',
-    }) +
+    formatDayIn(recovery.creditsFrozenUntil) +
     ' — contact support from the app now.'
   );
 }

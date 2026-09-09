@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { signOutEverywhereAction } from '@/lib/actions/auth-actions';
 import type { ActiveSessionSummary } from '@/lib/auth/session';
+import { formatDayIn } from '@/lib/time/manila';
 
 /**
  * Where the account is signed in.
@@ -60,10 +61,7 @@ export function ActiveSessions({ sessions }: { sessions: ActiveSessionSummary[] 
               </span>
               <span className="mt-0.5 block text-[11px] text-ink-faint">
                 Last used{' '}
-                {session.lastSeenAt.toLocaleDateString('en-PH', {
-                  day: 'numeric',
-                  month: 'short',
-                })}
+                {formatDayIn(session.lastSeenAt)}
               </span>
             </span>
           </li>

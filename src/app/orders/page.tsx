@@ -8,6 +8,7 @@ import { formatCentavos } from '@/lib/money';
 import { unratedOrders } from '@/lib/ratings/reviews';
 import { fetchCount, pageOf, readCursor } from '@/lib/pagination/pages';
 import { OlderPager, StrandedPage } from '@/components/ui/OlderPager';
+import { formatFullDayIn } from '@/lib/time/manila';
 
 export const dynamic = 'force-dynamic';
 
@@ -122,11 +123,7 @@ export default async function OrdersPage({
                     {summariseDetails(order.details, `Order ${order.orderNumber}`)}
                   </span>
                   <span className="mt-1 block text-[11px] text-ink-faint">
-                    {order.createdAt.toLocaleDateString('en-PH', {
-                      day: 'numeric',
-                      month: 'short',
-                      year: 'numeric',
-                    })}{' '}
+                    {formatFullDayIn(order.createdAt)}{' '}
                     · {order.orderNumber}
                   </span>
                 </span>

@@ -15,6 +15,7 @@ import { formatCentavos } from '@/lib/money';
 import { statusPresentation } from '@/lib/orders/status-presentation';
 import { formatLate, type QueueClock } from '@/lib/merchant/queue-clock';
 import type { FoodItemSnapshot } from '@/lib/orders/details';
+import { formatTimeIn } from '@/lib/time/manila';
 
 export interface QueueCardOrder {
   id: string;
@@ -158,10 +159,7 @@ export function OrderCard({ order }: { order: QueueCardOrder }) {
         >
           Promised{' '}
           <strong className="font-semibold tabular-nums">
-            {new Date(order.etaAt).toLocaleTimeString('en-PH', {
-              hour: '2-digit',
-              minute: '2-digit',
-            })}
+            {formatTimeIn(new Date(order.etaAt))}
           </strong>
           {order.etaLateSeconds === null ? null : (
             <>

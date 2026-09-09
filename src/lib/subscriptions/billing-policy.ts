@@ -1,4 +1,5 @@
 import type { SubscriptionOrigin, SubscriptionStatus } from '@prisma/client';
+import { formatLongDayIn } from '@/lib/time/manila';
 
 /**
  * Subscription billing: the rules, with no database and no clock.
@@ -305,11 +306,7 @@ export function isCollectable(state: InvoiceState): boolean {
  * Manila time, like every other timestamp a customer sees.
  */
 export function manilaDateLabel(at: Date): string {
-  return at.toLocaleDateString('en-PH', {
-    timeZone: 'Asia/Manila',
-    day: 'numeric',
-    month: 'long',
-  });
+  return formatLongDayIn(at);
 }
 
 /**

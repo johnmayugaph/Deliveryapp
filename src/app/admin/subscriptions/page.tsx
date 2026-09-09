@@ -20,6 +20,7 @@ import {
   Stat,
   manilaTime,
 } from '@/components/admin/primitives';
+import { formatDayIn } from '@/lib/time/manila';
 
 export const dynamic = 'force-dynamic';
 
@@ -318,11 +319,7 @@ export default async function AdminSubscriptionsPage() {
 
 /** "12 Sep". Manila, like every other date anybody here reads. */
 function monthDayLabel(at: Date): string {
-  return at.toLocaleDateString('en-PH', {
-    timeZone: 'Asia/Manila',
-    day: 'numeric',
-    month: 'short',
-  });
+  return formatDayIn(at);
 }
 
 /**

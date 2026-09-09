@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { OrderStatus } from '@prisma/client';
+import { formatDateTimeIn } from '@/lib/time/manila';
 
 /**
  * The console's small vocabulary of shapes.
@@ -203,11 +204,5 @@ export function PersonLink({
 
 /** Manila time, to the minute. Every timestamp in the console reads the same. */
 export function manilaTime(at: Date): string {
-  return at.toLocaleString('en-PH', {
-    timeZone: 'Asia/Manila',
-    day: 'numeric',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  return formatDateTimeIn(at);
 }

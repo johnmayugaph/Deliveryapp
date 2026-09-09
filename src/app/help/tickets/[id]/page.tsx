@@ -6,17 +6,12 @@ import { contactDetails } from '@/lib/support/contact';
 import { TICKET_STATUS_POLICY, customerMayReply } from '@/lib/support/policy';
 import { ContactPanel } from '@/components/support/ContactPanel';
 import { ReplyForm } from '@/components/support/ReplyForm';
+import { formatDateTimeIn } from '@/lib/time/manila';
 
 export const dynamic = 'force-dynamic';
 
 function manilaMoment(at: Date): string {
-  return at.toLocaleString('en-PH', {
-    day: 'numeric',
-    month: 'short',
-    hour: 'numeric',
-    minute: '2-digit',
-    timeZone: 'Asia/Manila',
-  });
+  return formatDateTimeIn(at);
 }
 
 /**

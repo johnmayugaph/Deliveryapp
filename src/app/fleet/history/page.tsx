@@ -3,6 +3,7 @@ import { OrderStatus } from '@prisma/client';
 import { getFleetPartner, listPartnerHistory } from '@/lib/fleet/partner';
 import { statusPresentation } from '@/lib/orders/status-presentation';
 import { formatCentavos } from '@/lib/money';
+import { formatDateTimeIn } from '@/lib/time/manila';
 
 export const dynamic = 'force-dynamic';
 
@@ -56,12 +57,7 @@ export default async function FleetHistoryPage() {
                 </span>
                 <span className="text-[11px] text-ink-faint">
                   {service.displayName} ·{' '}
-                  {(order.completedAt ?? order.updatedAt).toLocaleString('en-PH', {
-                    day: 'numeric',
-                    month: 'short',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
+                  {formatDateTimeIn((order.completedAt ?? order.updatedAt))}
                 </span>
               </div>
               {order.cancellationReason ? (

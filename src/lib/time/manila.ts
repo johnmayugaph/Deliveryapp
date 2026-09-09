@@ -100,3 +100,38 @@ export function formatFullDayIn(at: Date): string {
     timeZone: DISPLAY_ZONE,
   });
 }
+
+/** "September 9" — the long month, for prose rather than a table. */
+export function formatLongDayIn(at: Date): string {
+  return at.toLocaleDateString('en-PH', {
+    day: 'numeric',
+    month: 'long',
+    timeZone: DISPLAY_ZONE,
+  });
+}
+
+/** "September 9, 2026". */
+export function formatLongFullDayIn(at: Date): string {
+  return at.toLocaleDateString('en-PH', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    timeZone: DISPLAY_ZONE,
+  });
+}
+
+/**
+ * "Sep 9, 11:50 PM" — a day and a time together.
+ *
+ * For a log or a ledger row, where a bare time is ambiguous and a full date on
+ * every line is noise.
+ */
+export function formatDateTimeIn(at: Date): string {
+  return at.toLocaleString('en-PH', {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: DISPLAY_ZONE,
+  });
+}

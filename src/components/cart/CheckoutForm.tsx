@@ -16,6 +16,7 @@ import { describeChoices } from '@/lib/merchant/option-policy';
 import { PromoField } from '@/components/cart/PromoField';
 import { promoDisplay } from '@/lib/promo/policy';
 import { describeWithheld } from '@/lib/pricing/benefits';
+import { formatLongDayIn } from '@/lib/time/manila';
 import {
   describeHold,
   shortHoldNote,
@@ -236,10 +237,7 @@ export function CheckoutForm({
   const credits = quote?.price.credits ?? creditsAtLoad;
   const spendableCreditsCentavos = spendableFrom(credits);
   const holdNote = describeHold(credits, formatCentavos, (date) =>
-    date.toLocaleDateString('en-PH', {
-      day: 'numeric',
-      month: 'long',
-    }),
+    formatLongDayIn(date),
   );
 
   const creditsShort = (quote?.creditShortfallCentavos ?? 0) > 0;

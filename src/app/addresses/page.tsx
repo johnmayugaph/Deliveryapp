@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { requireScreen } from '@/lib/auth/access';
 import { formatAddressLine, listAddressBook } from '@/lib/addresses/usage';
+import { formatDayIn } from '@/lib/time/manila';
 
 export const dynamic = 'force-dynamic';
 
@@ -59,10 +60,7 @@ export default async function AddressesPage() {
               <span className="mt-1 block text-[11px] text-ink-faint">
                 Ginamit {address.usageCount}x
                 {address.lastUsedAt
-                  ? ` · huli ${address.lastUsedAt.toLocaleDateString('en-PH', {
-                      day: 'numeric',
-                      month: 'short',
-                    })}`
+                  ? ` · huli ${formatDayIn(address.lastUsedAt)}`
                   : ''}
               </span>
             </li>

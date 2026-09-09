@@ -6,6 +6,7 @@ import { contactDetails } from '@/lib/support/contact';
 import { listHelpCategories } from '@/lib/support/tickets';
 import { ContactPanel } from '@/components/support/ContactPanel';
 import { NewTicketForm } from '@/components/support/NewTicketForm';
+import { formatDayIn } from '@/lib/time/manila';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,11 +49,7 @@ export default async function ContactSupportPage({
 
   const orderChoices = orders.map((row) => ({
     id: row.id,
-    label: `${row.orderNumber} — ${row.createdAt.toLocaleDateString('en-PH', {
-      day: 'numeric',
-      month: 'short',
-      timeZone: 'Asia/Manila',
-    })}`,
+    label: `${row.orderNumber} — ${formatDayIn(row.createdAt)}`,
     live: !getLifecycle(row.serviceType).terminalStatuses.includes(row.status),
   }));
 

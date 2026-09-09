@@ -32,6 +32,7 @@ import {
   verifyRecoveryEmail,
   RECOVERY_CREDIT_FREEZE_DAYS,
 } from '@/lib/auth/recovery';
+import { formatLongDayIn } from '@/lib/time/manila';
 
 /**
  * Adding a recovery address, and using one.
@@ -350,11 +351,7 @@ export async function completeRecoveryAction(formData: FormData): Promise<Action
     throw error;
   }
 
-  const freezeEnds = recoveryFreezeEnd(new Date()).toLocaleDateString('en-PH', {
-    timeZone: 'Asia/Manila',
-    day: 'numeric',
-    month: 'long',
-  });
+  const freezeEnds = formatLongDayIn(recoveryFreezeEnd(new Date()));
 
   return {
     ok: true,

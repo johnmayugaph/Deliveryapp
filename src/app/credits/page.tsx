@@ -11,6 +11,7 @@ import {
 } from '@/lib/wallet/ledger';
 import { formatCentavos } from '@/lib/money';
 import { RedeemGiftCard } from '@/components/credits/RedeemGiftCard';
+import { formatFullDayIn, formatLongDayIn } from '@/lib/time/manila';
 
 export const dynamic = 'force-dynamic';
 
@@ -64,7 +65,7 @@ export default async function CreditsPage({
   const credits = creditsState(wallet, new Date());
   const balanceCentavos = wallet.balanceCentavos;
   const holdNote = describeHold(credits, formatCentavos, (date) =>
-    date.toLocaleDateString('en-PH', { day: 'numeric', month: 'long' }),
+    formatLongDayIn(date),
   );
   const {
     rows: transactions,
@@ -178,11 +179,7 @@ export default async function CreditsPage({
                     {transaction.description}
                   </span>
                   <span className="mt-1 block text-[11px] text-ink-faint">
-                    {transaction.createdAt.toLocaleDateString('en-PH', {
-                      day: 'numeric',
-                      month: 'short',
-                      year: 'numeric',
-                    })}
+                    {formatFullDayIn(transaction.createdAt)}
                   </span>
                 </span>
                 <span className="shrink-0 text-right">
