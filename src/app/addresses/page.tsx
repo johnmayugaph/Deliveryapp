@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { getCurrentUser } from '@/lib/auth/session';
+import { requireScreen } from '@/lib/auth/access';
 import { formatAddressLine, listAddressBook } from '@/lib/addresses/usage';
 
 export const dynamic = 'force-dynamic';
@@ -12,8 +12,8 @@ export const dynamic = 'force-dynamic';
  * the address rather than something a parcel flow would ask for again.
  */
 export default async function AddressesPage() {
-  const user = await getCurrentUser();
-  const addresses = user ? await listAddressBook({ userId: user.id }) : [];
+  const user = await requireScreen('addresses');
+  const addresses = await listAddressBook({ userId: user.id });
 
   return (
     <main>

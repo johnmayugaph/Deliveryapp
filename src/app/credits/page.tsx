@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { WalletTransactionType } from '@prisma/client';
-import { getCurrentUser } from '@/lib/auth/session';
+import { requireScreen } from '@/lib/auth/access';
 import {
   getSpendableCentavos,
   listWalletTransactions,
@@ -31,14 +31,16 @@ const TYPE_LABELS: Readonly<Record<WalletTransactionType, string>> = {
 };
 
 export default async function CreditsPage() {
-  const user = await getCurrentUser();
+  /* The hero on this screen is a peso figure. With no user it rendered
+     ₱0.00 — not "we could not check", but zero, in the largest type on the
+     page, to somebody whose session had simply ended. A balance is the one
+     thing a screen must never guess at. */
+  const user = await requireScreen('credits');
 
-  const [balanceCentavos, transactions] = user
-    ? await Promise.all([
-        getSpendableCentavos(user.id),
-        listWalletTransactions(user.id, { limit: 50 }),
-      ])
-    : [0, []];
+  const [balanceCentavos, transactions] = await Promise.all([
+    getSpendableCentavos(user.id),
+    listWalletTransactions(user.id, { limit: 50 }),
+  ]);
 
   return (
     <main>
@@ -73,11 +75,12 @@ export default async function CreditsPage() {
       </section>
 
       {/* Above the earning links on purpose: somebody who arrived holding a
-          card came here to type it, not to read about points. Only for a
-          signed-in account — there is nowhere to put the credits otherwise,
-          and the action would bounce them to the login screen having lost
-          what they typed. */}
-      {user ? <RedeemGiftCard /> : null}
+          card came here to type it, not to read about points. It used to be
+          hidden when nobody was signed in, so that typing a code could not
+          bounce to the login screen and lose it — the gate on this screen
+          makes that unreachable, and a condition that cannot be false is
+          worse than none: it reads as a case somebody handled. */}
+      <RedeemGiftCard />
 
       {/* Where credits come from, on the screen where somebody is looking at
           how few they have. The two earning paths a customer controls. */}

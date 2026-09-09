@@ -1,5 +1,6 @@
 import Link from 'next/link';
-import { getCurrentCityId, getCurrentUser } from '@/lib/auth/session';
+import { getCurrentCityId } from '@/lib/auth/session';
+import { optionalUser } from '@/lib/auth/access';
 import { loadHomeData } from '@/lib/home/home-data';
 import { LocationHeader } from '@/components/home/LocationHeader';
 import { GlobalSearch } from '@/components/home/GlobalSearch';
@@ -29,7 +30,14 @@ export const dynamic = 'force-dynamic';
  *   6. Recent stores / reorder shortcuts.
  */
 export default async function HomePage() {
-  const [user, cityId] = await Promise.all([getCurrentUser(), getCurrentCityId()]);
+  /* `optionalUser` rather than a bare session read, and the screen name is
+     the point: it refuses on anything the map marks private, so the six
+     screens that rendered a guess for a signed-out visitor could not have
+     been written this way. */
+  const [user, cityId] = await Promise.all([
+    optionalUser('home'),
+    getCurrentCityId(),
+  ]);
   const data = await loadHomeData({ userId: user?.id ?? null, cityId });
 
   const activeServiceNames = data.serviceGroups

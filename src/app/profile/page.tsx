@@ -1,11 +1,7 @@
 import Link from 'next/link';
-import { redirect } from 'next/navigation';
 import { UserRole } from '@prisma/client';
-import {
-  displayNameFor,
-  getCurrentUser,
-  listActiveSessions,
-} from '@/lib/auth/session';
+import { displayNameFor, listActiveSessions } from '@/lib/auth/session';
+import { requireScreen } from '@/lib/auth/access';
 import { prisma } from '@/lib/prisma';
 import { formatAddressLine, listAddressBook } from '@/lib/addresses/usage';
 import { formatPhilippineMobile } from '@/lib/auth/phone';
@@ -37,11 +33,7 @@ const ROLE_LABELS: Readonly<Record<UserRole, string>> = {
 };
 
 export default async function ProfilePage() {
-  const user = await getCurrentUser();
-
-  if (!user) {
-    redirect('/login?next=%2Fprofile');
-  }
+  const user = await requireScreen('profile');
 
   const [addresses, fleetPartner, sessions, stores, plan, subscription, unreadCount] =
     await Promise.all([

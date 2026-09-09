@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { ReferralStatus } from '@prisma/client';
-import { requireOnboardedUser } from '@/lib/auth/session';
+import { requireScreen } from '@/lib/auth/access';
 import { inviteSummary } from '@/lib/referrals/summary';
 import { ensureReferralCode } from '@/lib/referrals/codes';
 import { formatCentavos } from '@/lib/money';
@@ -27,7 +27,7 @@ export const dynamic = 'force-dynamic';
  * likelier.
  */
 export default async function InvitePage() {
-  const user = await requireOnboardedUser();
+  const user = await requireScreen('invite');
   const summary = await inviteSummary(user.id);
 
   // Whether THIS account could still use somebody else's code. Shown only when

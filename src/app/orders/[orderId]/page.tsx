@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { prisma } from '@/lib/prisma';
-import { getCurrentUser } from '@/lib/auth/session';
+import { requireScreen } from '@/lib/auth/access';
 import { StatusPill } from '@/components/ui/StatusPill';
 import { statusPresentation } from '@/lib/orders/status-presentation';
 import { summariseDetails } from '@/lib/orders/details';
@@ -43,7 +43,11 @@ export default async function OrderDetailPage({
   params: Promise<{ orderId: string }>;
 }) {
   const { orderId } = await params;
-  const user = await getCurrentUser();
+  /* Before the query, and carrying this order's id so signing in lands back
+     on it. It used to be a nullable read that fell into the `notFound()`
+     below, which told a customer whose session had ended that their own order
+     did not exist — while the food was on its way. */
+  const user = await requireScreen('orderDetail', orderId);
 
   const order = await prisma.order.findUnique({
     where: { id: orderId },
@@ -70,8 +74,11 @@ export default async function OrderDetailPage({
     },
   });
 
-  // Scoped to the signed-in customer: an order id is not an access token.
-  if (!order || !user || order.customerId !== user.id) {
+  /* Scoped to the signed-in customer: an order id is not an access token.
+     `notFound()` is the right answer to somebody else's order — telling a
+     stranger that an id is real is itself a disclosure — and it is now
+     reached only for that, because the no-user case redirects above. */
+  if (!order || order.customerId !== user.id) {
     notFound();
   }
 

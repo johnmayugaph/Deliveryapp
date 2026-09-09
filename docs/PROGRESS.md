@@ -5283,3 +5283,110 @@ orders. Your payouts were not touched."*
 
 2135 tests pass; lint, typecheck, tests and build all exit zero. That is all
 seven merchant tabs read closely.
+
+## The customer screens: what they say when the session is gone
+
+Twenty-one customer routes, read the same way the merchant tabs were. The
+first finding spans all of them, so it is the whole of this phase.
+
+### Six screens answered a question they had not asked
+
+Fourteen customer screens are private. Ten of them, finding no signed-in user,
+redirected to `/login`. The other four **rendered a falsehood**, and two more
+rendered a fault:
+
+| screen | what it said | what was true |
+| --- | --- | --- |
+| `/credits` | a **₱0.00** hero, the largest type on the page | it had not looked |
+| `/orders` | *"No orders yet."* | it had not looked |
+| `/addresses` | an empty address book | it had not looked |
+| `/orders/[orderId]` | `notFound()` — *this order does not exist* | it was the customer's own order |
+| `/points` | *"This screen did not load. Something on our side broke."* | nothing broke |
+| `/invite` | the same | the same |
+
+The last two are the shape of a defect already fixed once on `/login`: an
+expected refusal escaping as a fault. `requireOnboardedUser()` THROWS, which is
+right in a server action, where the caller can read the failure and say
+something useful. On a page it renders `app/error.tsx`. The monitoring module
+already classifies `NotAuthenticatedError` as expected-and-not-a-fault, which
+is the tell — an expected refusal that reaches the error page is a refusal in
+the wrong shape.
+
+### It is not a rare path, and one of the four ways is a feature
+
+`middleware.ts` checks only that a session cookie is **present**; it runs on the
+edge runtime and cannot reach the database. Its own doc comment says so. So the
+cookie is still in the browser in all four of the ways `loadSession` then
+refuses the row: `expiresAt` passed, `revokedAt` set, the account blocked, or a
+demo account in production.
+
+`revokedAt` is the one that matters. **"Sign out everywhere"** on `/profile`
+revokes the customer's other sessions — so the reward for securing your account
+from a new phone was the phone in your pocket reporting that your credits were
+₱0.00 and you had never ordered anything. Revocability is the feature the
+session design is explicitly proud of, in a comment about a stolen phone. Its
+payoff on the revoked device was a money screen reading zero.
+
+### One rule, and a gate that refuses to be used the wrong way round
+
+`src/lib/auth/screens.ts` is pure and imports nothing: `CUSTOMER_SCREENS`, a
+`Readonly<Record<CustomerScreen, CustomerScreenFacts>>` over all twenty-one
+routes, giving each one its path, whether it is `PUBLIC` / `SIGNED_IN` /
+`ONBOARDED`, and — for the private ones — **what the screen would otherwise
+have to invent**. That last field is the argument for the gate, written beside
+it, because a gate whose reason is not recorded is a gate the next person
+removes.
+
+`src/lib/auth/access.ts` is the impure sibling. `requireScreen(screen, id?)`
+redirects rather than throwing, and `optionalUser(screen)` is how a public
+screen reads a nullable session. Each refuses the other's screens: asking
+`requireScreen` to guard a `PUBLIC` screen throws, and so does asking
+`optionalUser` for a private one. All six defects were written as a bare
+`getCurrentUser()`, and each looked reasonable on its own; naming the screen
+makes the claim explicit.
+
+`loginPathFor` also collapses ten hand-spelled `next=` parameters into one
+encoding. Five were encoded (`%2Fplus`) and five were raw (`/help/tickets`),
+and a raw `next` breaks on the first path carrying a query string — it arrives
+at `/login` as a separate parameter and is dropped. `/orders/[orderId]` now
+carries its id, so signing in returns to the order rather than to the list.
+
+`points` stays `ONBOARDED` — the gate it already had. Loosening it would be a
+separate decision and not one a refactor gets to make quietly.
+
+### Verified
+
+**Thirty-one new units** (2166 total). The load-bearing one reads the routes
+off the filesystem and requires every one to be in the map, in both directions:
+a new private screen nobody added would go back to a nullable read, which is
+precisely how the six were written. It asserts at least twenty routes were
+found first, so an empty sweep cannot pass it. A second sweep reads each
+private page as text and requires `requireScreen`, no `getCurrentUser()`, no
+`requireOnboardedUser()`, and no hand-written `login?next=`.
+
+**A browser, four ways**, on the real database:
+
+- *Live session* — all eleven private screens render. The control.
+- *Session revoked from another device, cookie still in the browser* — all
+  eleven redirect to `/login`, each with the right `next`, the order carrying
+  its id.
+- *Session expired* — the same.
+- *No session at all* — `/`, `/search`, `/help` and a store page still render
+  for a stranger. The gate did not overreach.
+
+**And a negative control, which caught a fault in the check itself.** The walk
+flags the specific falsehoods; run against the restored old code it flagged
+`/orders` and passed `/credits` — because `innerText` returns the CSS-uppercased
+`CREDITS` and the pattern was case-sensitive. A green result from that check
+would have meant nothing. Fixed, re-run, both lies flagged; then the real code
+restored and re-run clean. Worth recording as the argument for the negative
+control: the mutation round is no longer in the loop, so a check that cannot
+fail is now the main way a screen gets reported safe while being broken.
+
+2166 tests pass; lint, typecheck, tests and build all exit zero.
+
+**Still to do on the customer side.** `/orders` stops at fifty rows with no
+note and no way to reach the rest; `/credits` stops at fifty ledger rows the
+same way. Neither carries a total, so this is narrower than the merchant
+History defect was — but a customer's own history becoming unreachable is its
+own problem. Not started.

@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { getCurrentUser } from '@/lib/auth/session';
+import { requireScreen } from '@/lib/auth/access';
 import { formatPhilippineMobile } from '@/lib/auth/phone';
 import { WelcomeForm } from '@/components/auth/WelcomeForm';
 
@@ -13,11 +13,7 @@ export const dynamic = 'force-dynamic';
  * and this screen is the only route out.
  */
 export default async function WelcomePage() {
-  const user = await getCurrentUser();
-
-  if (!user) {
-    redirect('/login?next=%2Fwelcome');
-  }
+  const user = await requireScreen('welcome');
   if (user.onboardedAt !== null) {
     redirect('/');
   }

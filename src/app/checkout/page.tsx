@@ -1,7 +1,6 @@
 import Link from 'next/link';
 import { PaymentMethod } from '@prisma/client';
-import { redirect } from 'next/navigation';
-import { getCurrentUser } from '@/lib/auth/session';
+import { requireScreen } from '@/lib/auth/access';
 import { listAddressBook } from '@/lib/addresses/usage';
 import { getSpendableCentavos } from '@/lib/wallet/ledger';
 import { CheckoutForm } from '@/components/cart/CheckoutForm';
@@ -19,15 +18,10 @@ export const dynamic = 'force-dynamic';
  * rather than by careful maintenance.
  */
 export default async function CheckoutPage() {
-  const user = await getCurrentUser();
-
-  if (!user) {
-    redirect('/login?next=%2Fcheckout');
-  }
-  // Placing an order needs somebody to hand the food to.
-  if (user.onboardedAt === null) {
-    redirect('/welcome');
-  }
+  /* ONBOARDED in the screen map: placing an order needs somebody to hand
+     the food to, so an unfinished account goes to /welcome and a missing
+     session goes to /login and comes back here. */
+  const user = await requireScreen('checkout');
 
   const [addresses, spendableCreditsCentavos] = await Promise.all([
     listAddressBook({ userId: user.id }),

@@ -1,7 +1,6 @@
 import Link from 'next/link';
-import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/prisma';
-import { getCurrentUser } from '@/lib/auth/session';
+import { requireScreen } from '@/lib/auth/access';
 import { getLifecycle } from '@/lib/orders/transitions';
 import { contactDetails } from '@/lib/support/contact';
 import { listHelpCategories } from '@/lib/support/tickets';
@@ -27,8 +26,7 @@ export default async function ContactSupportPage({
 }: {
   searchParams: Promise<{ order?: string }>;
 }) {
-  const user = await getCurrentUser();
-  if (!user) redirect('/login?next=/help/contact');
+  const user = await requireScreen('helpContact');
 
   const { order: initialOrderId } = await searchParams;
 

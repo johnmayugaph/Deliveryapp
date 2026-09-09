@@ -1,12 +1,11 @@
 import Link from 'next/link';
-import { redirect } from 'next/navigation';
 import {
   SubscriptionOrigin,
   SubscriptionStatus,
   type ServiceKey,
   type SubscriptionInvoice,
 } from '@prisma/client';
-import { getCurrentUser } from '@/lib/auth/session';
+import { requireScreen } from '@/lib/auth/access';
 import { getAllServices } from '@/lib/services/registry';
 import {
   benefitScopeLabel,
@@ -133,10 +132,7 @@ async function transferDetailsFor(
 }
 
 export default async function PlusPage() {
-  const user = await getCurrentUser();
-  if (!user) {
-    redirect('/login?next=%2Fplus');
-  }
+  const user = await requireScreen('plus');
 
   const now = new Date();
 

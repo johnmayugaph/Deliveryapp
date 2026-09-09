@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { prisma } from '@/lib/prisma';
-import { getCurrentUser } from '@/lib/auth/session';
+import { requireScreen } from '@/lib/auth/access';
 import { StatusPill } from '@/components/ui/StatusPill';
 import { serviceGlyph } from '@/lib/services/presentation';
 import { summariseDetails } from '@/lib/orders/details';
@@ -19,21 +19,23 @@ export const dynamic = 'force-dynamic';
  * year appears here automatically.
  */
 export default async function OrdersPage() {
-  const user = await getCurrentUser();
+  /* Not a nullable read. This screen's empty state says "No orders yet", and
+     with no user it said that to somebody whose session had ended rather than
+     to somebody who had never ordered — the two are indistinguishable from
+     here and only one of them is true. */
+  const user = await requireScreen('orders');
 
-  const orders = user
-    ? await prisma.order.findMany({
-        where: { customerId: user.id },
-        orderBy: { createdAt: 'desc' },
-        take: 50,
-        include: { service: true },
-      })
-    : [];
+  const orders = await prisma.order.findMany({
+    where: { customerId: user.id },
+    orderBy: { createdAt: 'desc' },
+    take: 50,
+    include: { service: true },
+  });
 
   // Asked for once, here, rather than per row: the prompt is about the most
   // recent unrated delivery, and a badge on every historic order would be
   // nagging rather than a nudge. It empties itself when the window closes.
-  const unrated = user ? await unratedOrders(user.id) : [];
+  const unrated = await unratedOrders(user.id);
 
   return (
     <main>

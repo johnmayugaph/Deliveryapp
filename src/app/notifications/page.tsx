@@ -1,7 +1,6 @@
 import Link from 'next/link';
-import { redirect } from 'next/navigation';
 import { NotificationChannel, NotificationKind } from '@prisma/client';
-import { getCurrentUser } from '@/lib/auth/session';
+import { requireScreen } from '@/lib/auth/access';
 import {
   listChannelSwitches,
   listNotifications,
@@ -113,10 +112,7 @@ function timeAgo(at: Date, now: Date): string {
 }
 
 export default async function NotificationsPage() {
-  const user = await getCurrentUser();
-  if (!user) {
-    redirect('/login?next=%2Fnotifications');
-  }
+  const user = await requireScreen('notifications');
 
   // The public key is read on the server and passed down, rather than sitting
   // in a NEXT_PUBLIC_ variable: one source for it, and no second copy to drift.

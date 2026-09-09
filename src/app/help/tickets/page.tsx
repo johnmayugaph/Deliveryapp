@@ -1,6 +1,5 @@
 import Link from 'next/link';
-import { redirect } from 'next/navigation';
-import { getCurrentUser } from '@/lib/auth/session';
+import { requireScreen } from '@/lib/auth/access';
 import { listUserTickets } from '@/lib/support/tickets';
 import { TICKET_STATUS_POLICY, describeWait, waitingMinutes } from '@/lib/support/policy';
 
@@ -12,8 +11,7 @@ export const dynamic = 'force-dynamic';
  * table, one query, no per-service branches.
  */
 export default async function TicketsPage() {
-  const user = await getCurrentUser();
-  if (!user) redirect('/login?next=/help/tickets');
+  const user = await requireScreen('tickets');
 
   const tickets = await listUserTickets(user.id);
   const now = new Date();

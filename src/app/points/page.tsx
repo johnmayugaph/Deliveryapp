@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { LoyaltyEntryType } from '@prisma/client';
-import { requireOnboardedUser } from '@/lib/auth/session';
+import { requireScreen } from '@/lib/auth/access';
 import { pointsSummary } from '@/lib/loyalty/summary';
 import { formatCentavos } from '@/lib/money';
 import { RedeemPoints } from '@/components/loyalty/RedeemPoints';
@@ -23,7 +23,11 @@ export const dynamic = 'force-dynamic';
  * indistinguishable from a bug; a customer who was warned can spend.
  */
 export default async function PointsPage() {
-  const user = await requireOnboardedUser();
+  /* Was `requireOnboardedUser()`, which THROWS. On a server action that is
+     right; on a page it renders app/error.tsx — "This screen did not load.
+     Something on our side broke." — to a customer whose session merely
+     ended. Nothing broke, and they can fix it in one tap. */
+  const user = await requireScreen('points');
   const summary = await pointsSummary(user.id);
 
   if (!summary.isLive) {

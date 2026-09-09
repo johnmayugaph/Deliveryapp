@@ -1,6 +1,6 @@
 import Link from 'next/link';
-import { notFound, redirect } from 'next/navigation';
-import { getCurrentUser } from '@/lib/auth/session';
+import { notFound } from 'next/navigation';
+import { requireScreen } from '@/lib/auth/access';
 import { getTicketForUser } from '@/lib/support/tickets';
 import { contactDetails } from '@/lib/support/contact';
 import { TICKET_STATUS_POLICY, customerMayReply } from '@/lib/support/policy';
@@ -38,8 +38,7 @@ export default async function TicketPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const user = await getCurrentUser();
-  if (!user) redirect(`/login?next=/help/tickets/${id}`);
+  const user = await requireScreen('ticketDetail', id);
 
   const ticket = await getTicketForUser(id, user.id);
   if (!ticket) notFound();
