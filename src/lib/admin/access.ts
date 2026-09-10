@@ -196,4 +196,7 @@ export const ADMIN_ACTION_LABEL: Readonly<Record<AdminAction, string>> = {
   [AdminAction.SUBSCRIPTION_INVOICE_CONFIRMED]: 'Subscription transfer confirmed',
   [AdminAction.SUBSCRIPTION_INVOICE_REFUSED]: 'Claimed subscription transfer refused',
   [AdminAction.SUBSCRIPTION_INVOICE_VOIDED]: 'Subscription bill cancelled',
+  [AdminAction.SERVICE_AREA_CREATED]: 'City added to the serving area',
+  [AdminAction.SERVICE_AREA_CHANGED]: 'City edited, or switched on or off',
+  [AdminAction.DELIVERY_FEE_RULE_CHANGED]: 'Delivery pricing changed',
 };

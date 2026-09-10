@@ -851,6 +851,13 @@ history of what was decided. Struck through keeps both.
   User-Agent, the rate limit, every failure shape — and the environment has no
   route to `nominatim.openstreetmap.org`. What is unverified is their side:
   whether the results for a Philippine barangay are any good in practice.
+- ~~**`City` and `DeliveryFeeRule` can only be written by the seed.**~~
+  **Closed in the serving-area phase.** `/admin/areas` creates a city, edits
+  it, switches it off, and sets delivery pricing per service — for one city or
+  as the fallback for all of them. What is still true and narrower: a city's
+  `id` cannot be changed after creation, because it is referenced by
+  `Service.availableCityIds`, by every `Address` and `Store` in it, and
+  possibly by `NEXT_PUBLIC_DEFAULT_CITY_ID`. The name can.
 - **A store's own details cannot be edited after it is created.** The console
   can create one and set whether customers see it; the shop can set its prep
   time, open/closed and — since Phase 27 — its whole menu. Changing a name, an
@@ -6579,3 +6586,111 @@ the start of the NEXT declaration, swallowing a doc comment that legitimately
 says "province" — so it failed against correct code. Narrowed to the interface
 body, with an assertion that the slice contains `isPickupCapable` so it cannot
 pass by having sliced nothing.
+
+---
+
+## The serving area, out of the seed file
+
+`City` and `DeliveryFeeRule` rows could only be written by `prisma/seed.ts`.
+Five cities were seeded and a sixth — Arayat, Pampanga — meant editing a
+TypeScript file, rebuilding and redeploying: a developer task standing in front
+of the most ordinary commercial decision this business makes, *we now deliver
+in the next town.*
+
+### The trap that shaped the screen
+
+Creating a city is four fields. The dangerous part is what a city IS:
+
+- **A city name is not a city that works.** Three things have to line up — the
+  row exists and is on, an active service names it in `availableCityIds`, and
+  something prices delivery to it.
+- **Miss the third and checkout FAILS.** The city appears in the customer's
+  address form, they save an address, they fill a cart, and the quote has no
+  rule to read. Not a polite refusal — a failure, and one the operator never
+  sees because it happens to somebody else.
+
+So `cityStanding()` is a four-way enum rather than a boolean, and each state
+gets different words because each has a different fix: `ORDERABLE`,
+`NO_SERVICE_LAUNCHED` (the city politely says it is closed),
+`NO_FEE_RULE` (checkout fails — the only red one) and `SWITCHED_OFF`. The
+screen leads with that answer instead of with a list of names, and the unpriced
+state is the loudest thing on the page.
+
+The **fallback rule** is the part worth understanding. `DeliveryFeeRule.cityId`
+is nullable and documents null as "every city where the service is live", so
+one fallback per service means every city added afterwards is priced from the
+moment it is launched in. A separate amber panel names any active service
+without one, because that absence is what makes the next city unpriced.
+
+### Three decisions in the actions
+
+- **The id is a readable slug, and permanent.** `cityIdFor('Arayat')` is
+  `city_arayat`, matching the seeded `city_manila`. These ids appear in
+  `NEXT_PUBLIC_DEFAULT_CITY_ID`, in `Service.availableCityIds` and in
+  operators' notes, where a cuid is unreadable. A rename therefore changes the
+  LABEL columns and discards the id `readCityEntry` derived — a guard test
+  asserts the update block never sets `id`, because changing what the row IS
+  would orphan every address and store in it silently.
+- **Switching a city off touches nothing else.** It hides the city from the
+  address form and from service availability, and deliberately leaves
+  addresses, stores and orders alone. Cancelling somebody's dinner because an
+  operator unticked a box is a much worse answer than a city that stops taking
+  new orders. The affected counts go in the audit row, because they are the
+  thing a reader will want and cannot reconstruct.
+- **The fee rule is upserted by hand.** The unique key is the composite
+  `[serviceType, cityId]` and `cityId` is nullable — Postgres treats NULLs as
+  distinct in a unique index, so the fallback row cannot be addressed by that
+  key and `upsert` cannot find it. Found by trying it.
+
+### Money is pesos in, centavos out
+
+The columns are centavos and the form is pesos, which is the most dangerous
+conversion on the screen: a rule typed in centavos charges a hundredth of the
+intended fee and looks plausible in the list. `centavosFromPesoInput` already
+existed and goes via a string of centavos rather than `× 100`, because
+`19.99 * 100` is `1998.9999999999998`.
+
+Two combinations are refused rather than accepted-and-ignored, and both are
+controls that would otherwise silently do nothing:
+
+- **A maximum below the minimum.** `quoteDelivery` clamps to the minimum then
+  to the maximum, so this produces the maximum — a fee below the floor
+  somebody set on purpose.
+- **A small-order fee with no threshold.** It can never fire, while the
+  operator believes small orders are being charged.
+
+### Verified
+
+32 new tests, 2456 in total; lint, typecheck, tests and build all exit zero.
+One migration, hand-written: three `ALTER TYPE "AdminAction" ADD VALUE`
+statements, `IF NOT EXISTS` so re-running is a no-op. tsc caught the thing it
+was supposed to — `ADMIN_ACTION_LABEL` is a compile-enforced
+`Record<AdminAction, string>`, so adding an audit action cannot ship without
+English for the log.
+
+The browser round, on the production standalone build against a purged
+database, walked the whole point of the feature:
+
+| | |
+| --- | --- |
+| Added Arayat, Pampanga | `city_arayat`, shown live in the form as it was typed |
+| Its standing, before launching anything | **No service yet** — the polite state |
+| Launched Food in it | **Taking orders**, priced by the seeded FOOD fallback |
+| Priced it specifically | ₱45 base, ₱14/km after 2 km, min ₱45, ₱10 service, ₱20 under ₱150 |
+| **Customer address form** | now offers Arayat alongside the five seeded cities |
+| Audit trail | `SERVICE_AREA_CREATED`, `SERVICE_CITY_CHANGED`, `DELIVERY_FEE_RULE_CHANGED`, each with its reason |
+
+One expectation of mine was wrong and the code was right: I expected Arayat to
+read "Not priced" the moment Food launched there. It read "Taking orders",
+because the seed writes a FOOD **fallback** rule at ₱49 which covers any new
+city — which is precisely the mechanism this phase is built around. Worth
+recording as a correction rather than quietly moving on.
+
+Two negative controls:
+
+- Adding `id: read.entry.id` to the rename's update block fails the
+  id-immutability guard. It is not vacuous.
+- Switching the FOOD fallback and the Arayat rule to `isActive: false` in SQL
+  turned the screen red as designed: **Taking orders 1, Not priced 3**, naming
+  "Arayat — Food, Makati — Food, Quezon City — Food", plus the amber panel
+  saying Food has no fallback. The red state is reachable, not decoration.

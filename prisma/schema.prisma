@@ -2681,6 +2681,20 @@ enum AdminAction {
   /// refusal because this one says the money is no longer owed, which is a
   /// decision to forgo revenue rather than a judgement about a reference.
   SUBSCRIPTION_INVOICE_VOIDED
+  /// A city was added to the serving area. Audited because it decides where
+  /// this deployment claims to operate, and because a city with no delivery
+  /// fee rule is a city where checkout fails rather than one that is simply
+  /// closed.
+  SERVICE_AREA_CREATED
+  /// A city's name, province, region, map centre or on/off state changed.
+  /// Switching one off is the closest thing here to withdrawing from a
+  /// market, so it is not a quiet edit.
+  SERVICE_AREA_CHANGED
+  /// A delivery fee rule was created or changed for a service, either for one
+  /// city or as the fallback for all of them. Audited because it sets what
+  /// every future order in that city pays to be delivered — the same class of
+  /// decision as a store's commission.
+  DELIVERY_FEE_RULE_CHANGED
 }
 
 /// One privileged action, and why.

@@ -259,10 +259,16 @@ costs somebody their account rather than a feature.
   `/admin/fleet`. Approval is **per service** — cleared to carry food is not
   cleared to carry a passenger.
 
-Two limits worth knowing before you promise anything: `City` and
-`DeliveryFeeRule` rows can only be created by `prisma/seed.ts`, so a sixth city
-means editing that file; and a store's name or address cannot be changed after
-creation without a database edit.
+One limit worth knowing before you promise anything: a store's name or address
+cannot be changed after creation without a database edit.
+
+**Adding a town is now three clicks, not a redeploy.** `/admin/areas` creates
+the city, `/admin/services` launches a service in it, and `/admin/areas` prices
+delivery there. The order matters and the screen says so — a city with a live
+service and nothing pricing delivery is one where checkout FAILS rather than
+one that politely says it is closed, so set a **fallback** fee rule per service
+once and every city you add afterwards is priced from the moment you launch in
+it.
 
 ## 12 — Prove it with one real order
 

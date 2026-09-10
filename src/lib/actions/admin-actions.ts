@@ -28,6 +28,12 @@ import {
   firstDescendingStep,
   ladderFor,
 } from '@/lib/pricing/surge-policy';
+import {
+  CITY_ERROR_MESSAGES,
+  FEE_RULE_ERROR_MESSAGES,
+  readCityEntry,
+  readFeeRule,
+} from '@/lib/admin/service-areas';
 import { MAX_REWARD_CENTAVOS, farmerMargin } from '@/lib/referrals/policy';
 import {
   MAX_DISCOUNT_CENTAVOS,
@@ -3724,6 +3730,302 @@ export async function removeLoyaltyTierBenefitAction(
       message:
         `${benefit.tier.name} no longer gets "${TIER_BENEFIT_NAME[benefit.type]}". ` +
         'Receipts for orders it already priced still name it.',
+    };
+  });
+}
+
+// -----------------------------------------------------------------------------
+// The serving area
+// -----------------------------------------------------------------------------
+
+/**
+ * Adds a city.
+ *
+ * In this file, and audited, because it is a commercial decision rather than a
+ * configuration one: it decides where this deployment claims to operate. It
+ * also has a trap that no other create in here has — a city with no delivery
+ * fee rule reaching it is a city where CHECKOUT fails rather than one that
+ * politely says it is closed. So nothing is launched here. The city is created
+ * switched on but with no service in it, which `cityStanding()` reports as
+ * "No service yet" and the screen explains.
+ *
+ * The id is derived from the name (`Arayat` becomes `city_arayat`) rather than
+ * being a cuid, because these ids appear in `NEXT_PUBLIC_DEFAULT_CITY_ID`, in
+ * `Service.availableCityIds` and in operators' notes — see `cityIdFor`.
+ */
+export async function createCityAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const reason = normaliseReason(formData.get('reason'));
+
+    const taken = await prisma.city.findMany({ select: { id: true } });
+    const read = readCityEntry(
+      {
+        name: formData.get('name')?.toString(),
+        province: formData.get('province')?.toString(),
+        region: formData.get('region')?.toString(),
+        centroidLat: formData.get('latitude')?.toString(),
+        centroidLng: formData.get('longitude')?.toString(),
+      },
+      taken.map((city) => city.id),
+    );
+    if (!read.ok) return { ok: false, message: CITY_ERROR_MESSAGES[read.error] };
+
+    await prisma.$transaction(async (tx) => {
+      await tx.city.create({ data: { ...read.entry, isActive: true } });
+      await recordAdminAction(
+        {
+          actorId: admin.id,
+          action: AdminAction.SERVICE_AREA_CREATED,
+          subjectType: 'City',
+          subjectId: read.entry.id,
+          subjectLabel: `${read.entry.name}, ${read.entry.province}`,
+          reason,
+          detail: { ...read.entry },
+        },
+        tx,
+      );
+    });
+
+    revalidatePath('/admin/areas');
+    revalidatePath('/admin/stores');
+    // The home screen and the address form both read the city list.
+    revalidatePath('/', 'layout');
+    return {
+      ok: true,
+      message:
+        `${read.entry.name} is on the map as ${read.entry.id}. ` +
+        'Nothing is orderable there yet — launch a service in it on the Services ' +
+        'screen, and give that service a delivery fee rule for it.',
+    };
+  });
+}
+
+/**
+ * Edits a city, or switches it off.
+ *
+ * The NAME, province, region and centre are editable; the id is not, because
+ * it is referenced by `Service.availableCityIds`, by every `Address` and
+ * `Store` row in it, and possibly by an environment variable. Renaming
+ * "Arayat" to "Arayat, Pampanga" is a label change and safe; changing what the
+ * row IS would orphan those references silently.
+ *
+ * Switching a city off is the closest thing in this console to withdrawing
+ * from a market. It hides the city from the address form and from service
+ * availability, and it deliberately does NOT touch the addresses, stores or
+ * orders already there — cancelling somebody's dinner because an operator
+ * unticked a box would be a much worse answer than a shop that stops taking
+ * new orders.
+ */
+export async function updateCityAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const cityId = String(formData.get('cityId') ?? '');
+    const reason = normaliseReason(formData.get('reason'));
+
+    const city = await prisma.city.findUnique({ where: { id: cityId } });
+    if (!city) return { ok: false, message: 'No such city.' };
+
+    /* An activation-only submit carries no name field. Kept as one action
+       rather than two because both write the same audit row about the same
+       subject, and a screen with two forms for one row is how they drift. */
+    const isActivationOnly = formData.get('name') === null;
+
+    if (isActivationOnly) {
+      const isActive = formData.get('isActive') === 'true';
+      if (isActive === city.isActive) return { ok: false, message: 'Nothing to change.' };
+
+      const [addresses, stores] = await Promise.all([
+        prisma.address.count({ where: { cityId, archivedAt: null } }),
+        prisma.store.count({ where: { cityId } }),
+      ]);
+
+      await prisma.$transaction(async (tx) => {
+        await tx.city.update({ where: { id: cityId }, data: { isActive } });
+        await recordAdminAction(
+          {
+            actorId: admin.id,
+            action: AdminAction.SERVICE_AREA_CHANGED,
+            subjectType: 'City',
+            subjectId: cityId,
+            subjectLabel: `${city.name}, ${city.province}`,
+            reason,
+            // The counts go in the row because they are the thing somebody
+            // reading this later will want and cannot reconstruct.
+            detail: { isActive, addressesAffected: addresses, storesAffected: stores },
+          },
+          tx,
+        );
+      });
+
+      revalidatePath('/admin/areas');
+      revalidatePath('/', 'layout');
+      return {
+        ok: true,
+        message: isActive
+          ? `${city.name} is back on the map.`
+          : `${city.name} is off the map. ` +
+            `${addresses} saved address(es) and ${stores} store(s) there are ` +
+            'untouched — nothing in flight was cancelled.',
+      };
+    }
+
+    const others = await prisma.city.findMany({
+      where: { id: { not: cityId } },
+      select: { id: true },
+    });
+    const read = readCityEntry(
+      {
+        name: formData.get('name')?.toString(),
+        province: formData.get('province')?.toString(),
+        region: formData.get('region')?.toString(),
+        centroidLat: formData.get('latitude')?.toString(),
+        centroidLng: formData.get('longitude')?.toString(),
+      },
+      others.map((row) => row.id),
+    );
+    if (!read.ok) return { ok: false, message: CITY_ERROR_MESSAGES[read.error] };
+
+    await prisma.$transaction(async (tx) => {
+      /* The derived id from the new name is DISCARDED. See the note above:
+         `id` is referenced from too many places to change, and a rename is a
+         label change. */
+      await tx.city.update({
+        where: { id: cityId },
+        data: {
+          name: read.entry.name,
+          province: read.entry.province,
+          region: read.entry.region,
+          centroidLat: read.entry.centroidLat,
+          centroidLng: read.entry.centroidLng,
+        },
+      });
+      await recordAdminAction(
+        {
+          actorId: admin.id,
+          action: AdminAction.SERVICE_AREA_CHANGED,
+          subjectType: 'City',
+          subjectId: cityId,
+          subjectLabel: `${read.entry.name}, ${read.entry.province}`,
+          reason,
+          detail: {
+            before: {
+              name: city.name,
+              province: city.province,
+              region: city.region,
+              centroidLat: city.centroidLat,
+              centroidLng: city.centroidLng,
+            },
+            after: { ...read.entry, id: cityId },
+          },
+        },
+        tx,
+      );
+    });
+
+    revalidatePath('/admin/areas');
+    revalidatePath('/', 'layout');
+    return { ok: true, message: `${read.entry.name} updated. Its id is still ${cityId}.` };
+  });
+}
+
+/**
+ * Sets what delivery costs for one service, in one city or everywhere.
+ *
+ * Audited under its own action because it decides what every future order in
+ * that city pays to be delivered — the same class of decision as a store's
+ * commission, and the one an operator is most likely to get wrong by a factor
+ * of a hundred (centavos versus pesos). The form takes PESOS and
+ * `readFeeRule` converts; it refuses three decimal places rather than
+ * rounding.
+ *
+ * An empty `cityId` means the service's FALLBACK rule — `DeliveryFeeRule`
+ * documents `cityId: null` as "every city where the service is live". That is
+ * the rule worth setting first on a new deployment, because it is what stops a
+ * newly added city being unpriced.
+ */
+export async function setDeliveryFeeRuleAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const serviceType = String(formData.get('serviceType') ?? '') as ServiceKey;
+    const rawCityId = String(formData.get('cityId') ?? '').trim();
+    const cityId = rawCityId === '' ? null : rawCityId;
+    const reason = normaliseReason(formData.get('reason'));
+
+    const [service, city] = await Promise.all([
+      prisma.service.findUnique({ where: { key: serviceType } }),
+      cityId === null
+        ? Promise.resolve(null)
+        : prisma.city.findUnique({ where: { id: cityId } }),
+    ]);
+    if (!service) return { ok: false, message: 'No such service.' };
+    if (cityId !== null && !city) return { ok: false, message: 'No such city.' };
+
+    const read = readFeeRule({
+      baseFee: formData.get('baseFee')?.toString(),
+      perKilometre: formData.get('perKilometre')?.toString(),
+      includedMeters: formData.get('includedMeters')?.toString(),
+      minimumFee: formData.get('minimumFee')?.toString(),
+      maximumFee: formData.get('maximumFee')?.toString(),
+      freeAboveSubtotal: formData.get('freeAboveSubtotal')?.toString(),
+      smallOrderThreshold: formData.get('smallOrderThreshold')?.toString(),
+      smallOrderFee: formData.get('smallOrderFee')?.toString(),
+      serviceFee: formData.get('serviceFee')?.toString(),
+    });
+    if (!read.ok) return { ok: false, message: FEE_RULE_ERROR_MESSAGES[read.error] };
+
+    const where = { serviceType, cityId };
+    const existing = await prisma.deliveryFeeRule.findFirst({
+      where,
+      select: { id: true },
+    });
+
+    const label = `${service.displayName} — ${city ? city.name : 'every city (fallback)'}`;
+
+    await prisma.$transaction(async (tx) => {
+      /* Upsert by hand rather than `upsert`, because the unique key is the
+         COMPOSITE [serviceType, cityId] and `cityId` is nullable — Postgres
+         treats NULLs as distinct in a unique index, so the fallback row cannot
+         be addressed by that key. Found by trying it. */
+      if (existing) {
+        await tx.deliveryFeeRule.update({
+          where: { id: existing.id },
+          data: { ...read.entry, isActive: true },
+        });
+      } else {
+        await tx.deliveryFeeRule.create({
+          data: { serviceType, cityId, ...read.entry, isActive: true },
+        });
+      }
+      await recordAdminAction(
+        {
+          actorId: admin.id,
+          action: AdminAction.DELIVERY_FEE_RULE_CHANGED,
+          subjectType: 'DeliveryFeeRule',
+          subjectId: existing?.id ?? `${serviceType}:${cityId ?? 'fallback'}`,
+          subjectLabel: label,
+          reason,
+          detail: { serviceType, cityId, ...read.entry, created: existing === null },
+        },
+        tx,
+      );
+    });
+
+    revalidatePath('/admin/areas');
+    // Quotes are computed per request, but the storefront and home read cities.
+    revalidatePath('/', 'layout');
+    return {
+      ok: true,
+      message:
+        `${label}: ${existing ? 'updated' : 'created'}. ` +
+        'It applies to orders placed from now on; orders already quoted keep ' +
+        'the fee they were quoted.',
     };
   });
 }
