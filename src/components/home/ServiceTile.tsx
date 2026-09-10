@@ -16,14 +16,17 @@ import { AskForService } from '@/components/home/AskForService';
  * still coming soon to somebody in Manila, and a tappable tile that fails at
  * checkout is the outcome that reads as broken.
  *
- * WHERE THE ACCENT SITS, AND WHY IT MOVED. A live tile is now a white card and
- * the service colour is a chip behind the glyph; it used to be a wash across
- * the whole tile. Five full-bleed pastels in one grid competed with each other
- * and with the page, and the label sitting on tinted paper was the weakest text
- * on the screen. White cards with one saturated chip each let the colour do the
- * one job it is for — telling Parcel from Errands at a glance — while the name
- * gets full contrast. A coming-soon tile keeps the wash, dimmed: it should read
- * as a different kind of object, not a darker version of the same one.
+ * ONE SHAPE, TWO STATES. Both are chips: a round accent disc with the name
+ * under it, sized so five sit in one scrollable row and the shops below them
+ * are the first thing on the screen with real weight. A service that is not
+ * orderable here is the same chip dimmed, with a "Soon" badge and the interest
+ * tally under it — it keeps the tap that means "count me", which is the only
+ * demand signal the product collects.
+ *
+ * The first attempt kept the old wide tile for the coming-soon case, and it
+ * made the row twice as tall as its tallest chip. It looked correct only on a
+ * deployment where every vertical happened to be live, which is the one state
+ * a launch is never in.
  */
 export function ServiceTile({
   service,
@@ -42,29 +45,6 @@ export function ServiceTile({
   const accent = accentClasses(service.accentToken);
   const glyph = serviceGlyph(service.icon);
 
-  /*
-   * The chip's ground is passed in rather than fixed, because the two tiles
-   * put the glyph on different paper: soft-on-white for a live card, and
-   * white-on-soft for the dimmed coming-soon wash, which would otherwise
-   * disappear into its own tile.
-   */
-  const inner = (chipBackground: string) => (
-    <>
-      <span
-        aria-hidden
-        className={`flex h-12 w-12 items-center justify-center rounded-2xl text-[22px] ring-1 ring-ink/5 ${chipBackground} ${accent.iconColor}`}
-      >
-        {glyph}
-      </span>
-      <span className="mt-3 block text-[15px] font-bold leading-tight">
-        {service.displayName}
-      </span>
-      <span className="mt-0.5 block text-[11.5px] leading-snug text-ink-muted">
-        {service.tagline}
-      </span>
-    </>
-  );
-
   if (!service.orderableHere) {
     return (
       <AskForService
@@ -74,8 +54,17 @@ export function ServiceTile({
         askedByMe={askedByMe}
         signedIn={signedIn}
         tileBackground={accent.tileBackground}
+        compact
       >
-        {inner(accent.iconBackground)}
+        <span
+          aria-hidden
+          className={`flex h-[3.75rem] w-[3.75rem] items-center justify-center rounded-full text-[26px] ring-1 ring-ink/[0.06] ${accent.tileBackground} ${accent.iconColor}`}
+        >
+          {glyph}
+        </span>
+        <span className="block text-[12px] font-bold leading-tight text-ink">
+          {service.displayName}
+        </span>
       </AskForService>
     );
   }
@@ -83,16 +72,16 @@ export function ServiceTile({
   return (
     <Link
       href={`/services/${service.key.toLowerCase()}`}
-      className="card-warm press group relative flex flex-col p-3.5"
+      className="press group flex w-[4.75rem] shrink-0 snap-start flex-col items-center gap-1.5 text-center"
     >
-      {inner(accent.tileBackground)}
-      {/* Quiet affordance rather than a chevron on every row: it says the tile
-          goes somewhere without adding a fifth thing to look at. */}
       <span
         aria-hidden
-        className="absolute right-3 top-3 text-sm font-bold text-brand-700 opacity-0 transition-opacity group-hover:opacity-100"
+        className={`flex h-[3.75rem] w-[3.75rem] items-center justify-center rounded-full text-[26px] shadow-tile ring-1 ring-ink/[0.06] ${accent.tileBackground} ${accent.iconColor}`}
       >
-        →
+        {glyph}
+      </span>
+      <span className="block text-[12px] font-bold leading-tight text-ink">
+        {service.displayName}
       </span>
     </Link>
   );

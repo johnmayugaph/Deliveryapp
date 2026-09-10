@@ -33,6 +33,7 @@ export function AskForService({
   askedByMe,
   signedIn,
   tileBackground,
+  compact = false,
   children,
 }: {
   serviceKey: string;
@@ -49,6 +50,19 @@ export function AskForService({
    */
   signedIn: boolean;
   tileBackground: string;
+  /**
+   * Chip shape rather than tile shape.
+   *
+   * The home screen renders live services as 4.75rem chips in a scrolling
+   * row. A coming-soon service in the old tile shape made that row twice as
+   * tall as its tallest member and the whole thing read as broken alignment —
+   * and it only looked right on a deployment where every vertical happened to
+   * be live, which is the one state a launch is never in. Compact keeps the
+   * form, the badge and the status line; it just puts them in a column the
+   * width of a chip and clamps the status to two lines so one long tally
+   * cannot set the height of the row.
+   */
+  compact?: boolean;
   children: React.ReactNode;
 }) {
   const [result, formAction, pending] = useActionState<
@@ -104,21 +118,39 @@ export function AskForService({
             ? `${displayName} is not in ${cityName} yet. You have asked for it.`
             : `Tell us you want ${displayName} in ${cityName}`
         }
-        className={`relative flex flex-col rounded-tile p-3 text-left transition-opacity focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 disabled:cursor-wait ${
-          asked ? 'opacity-80' : 'opacity-55 hover:opacity-80'
-        } ${tileBackground}`}
+        className={
+          compact
+            ? `relative flex w-[4.75rem] shrink-0 snap-start flex-col items-center gap-1.5 text-center transition-opacity disabled:cursor-wait ${
+                asked ? 'opacity-90' : 'opacity-70 hover:opacity-100'
+              }`
+            : `relative flex flex-col rounded-tile p-3 text-left transition-opacity focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 disabled:cursor-wait ${
+                asked ? 'opacity-80' : 'opacity-55 hover:opacity-80'
+              } ${tileBackground}`
+        }
       >
         <span
-          className={`absolute right-2 top-2 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${
-            asked ? 'bg-brand-600 text-white' : 'bg-white/85 text-ink-muted'
-          }`}
+          className={
+            compact
+              ? `absolute -top-0.5 right-0 z-10 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide shadow-tile ${
+                  asked ? 'bg-brand-600 text-white' : 'bg-surface text-ink-muted'
+                }`
+              : `absolute right-2 top-2 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${
+                  asked ? 'bg-brand-600 text-white' : 'bg-white/85 text-ink-muted'
+                }`
+          }
         >
-          {asked ? 'Asked ✓' : 'Coming soon'}
+          {/* "Coming soon" does not fit beside a chip, and a chip that is
+              plainly dimmed has already said it. */}
+          {asked ? 'Asked ✓' : compact ? 'Soon' : 'Coming soon'}
         </span>
         {children}
         <span
           aria-live="polite"
-          className="mt-1 block text-[10px] font-medium leading-tight text-ink-muted"
+          className={
+            compact
+              ? 'line-clamp-2 block text-[10px] font-medium leading-tight text-ink-muted'
+              : 'mt-1 block text-[10px] font-medium leading-tight text-ink-muted'
+          }
         >
           {pending
             ? 'Noting…'
