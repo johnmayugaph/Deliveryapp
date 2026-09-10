@@ -38,6 +38,7 @@ function codeOnly(path: string): string {
 const env = (over: Partial<SmsEnv> = {}): SmsEnv => ({ ...over }) as SmsEnv;
 
 const SEMAPHORE = { SEMAPHORE_API_KEY: 'sem-key' };
+const PHILSMS = { PHILSMS_API_TOKEN: 'phil-token', PHILSMS_SENDER_ID: 'TARA' };
 
 // -----------------------------------------------------------------------------
 // The registry
@@ -109,6 +110,27 @@ describe('which provider a deployment can use', () => {
 
   it('finds the gateway once its key is set', () => {
     expect(configuredSmsProvider(env(SEMAPHORE))).toBe('semaphore');
+    expect(configuredSmsProvider(env(PHILSMS))).toBe('philsms');
+  });
+
+  it('needs BOTH of PhilSMS\'s variables, not just the token', () => {
+    // No longer vacuous: PhilSMS has no account-default sender, so a token
+    // alone is a gateway that fails on the first login rather than one that
+    // half-works. It must read as unconfigured.
+    expect(configuredSmsProvider(env({ PHILSMS_API_TOKEN: 'phil-token' }))).toBeUndefined();
+    expect(configuredSmsProvider(env({ PHILSMS_SENDER_ID: 'TARA' }))).toBeUndefined();
+  });
+
+  it('applies declaration order when BOTH gateways are configured', () => {
+    /*
+     * The decision the single-provider version left open, now that there is a
+     * second adapter: precedence, not fallback, and Semaphore first so an
+     * existing deployment's gateway does not change under it on an upgrade.
+     */
+    expect(configuredSmsProvider(env({ ...SEMAPHORE, ...PHILSMS }))).toBe('semaphore');
+    expect(SMS_PROVIDER_NAMES.indexOf('semaphore')).toBeLessThan(
+      SMS_PROVIDER_NAMES.indexOf('philsms'),
+    );
   });
 
   it('ignores a variable belonging to a gateway this build has no adapter for', () => {
@@ -142,12 +164,14 @@ describe('what resolveSmsSender picks', () => {
       expect(message).toContain(SMS_PROVIDERS[name].requires[0]!);
     }
     expect(describeSmsSetup()).toContain('SEMAPHORE_API_KEY');
+    expect(describeSmsSetup()).toContain('PHILSMS_API_TOKEN');
   });
 
   it('returns the gateway, named as itself, when one is configured', () => {
     // The `provider` field on a send result and on a log line is this name;
     // support reads it off the line.
     expect(resolveSmsSender(env(SEMAPHORE)).name).toBe('semaphore');
+    expect(resolveSmsSender(env(PHILSMS)).name).toBe('philsms');
   });
 
   it('prefers a gateway over the console even in development', () => {
@@ -226,7 +250,8 @@ describe('no vendor name outside the sms directory', () => {
 
     for (const file of [...walk('src'), ...walk('scripts')]) {
       if (file.includes('tests') || file.includes(join('auth', 'sms'))) continue;
-      if (/SEMAPHORE_[A-Z_]+|TWILIO_[A-Z_]+/.test(codeOnly(file))) found.push(file);
+      if (/SEMAPHORE_[A-Z_]+|PHILSMS_[A-Z_]+|TWILIO_[A-Z_]+/.test(codeOnly(file)))
+        found.push(file);
     }
     return found;
   }
@@ -236,6 +261,8 @@ describe('no vendor name outside the sms directory', () => {
     // no longer exists and would pass over any file.
     expect(codeOnly('src/lib/auth/sms/registry.ts')).toMatch(/SEMAPHORE_API_KEY/);
     expect(codeOnly('src/lib/auth/sms/build.ts')).toMatch(/SEMAPHORE_API_KEY/);
+    expect(codeOnly('src/lib/auth/sms/registry.ts')).toMatch(/PHILSMS_API_TOKEN/);
+    expect(codeOnly('src/lib/auth/sms/build.ts')).toMatch(/PHILSMS_API_TOKEN/);
   });
 
   it('leaves no provider variable spelled in code elsewhere', () => {
@@ -278,7 +305,7 @@ describe('adding a second gateway stays cheap', () => {
        DECIDE must have no provider-specific branch in them. Sliced from the
        first of them to the end of the file. */
     const selection = barrel.slice(barrel.indexOf('export function smsSendingIsRefused'));
-    expect(selection).not.toMatch(/semaphore|twilio/i);
+    expect(selection).not.toMatch(/semaphore|philsms|twilio/i);
     expect(selection).toMatch(
       /SMS_BUILDERS\[configured\]\(env, devEndpointFor\(configured, env\)\)/,
     );
@@ -291,6 +318,7 @@ describe('adding a second gateway stays cheap', () => {
     // exists on a screen and not in fact.
     const cases: Readonly<Record<SmsProviderName, SmsEnv>> = {
       semaphore: env(SEMAPHORE),
+      philsms: env(PHILSMS),
     };
     for (const name of SMS_PROVIDER_NAMES) {
       const sender = SMS_BUILDERS[name](cases[name], undefined);
@@ -307,7 +335,7 @@ describe('adding a second gateway stays cheap', () => {
      * screen and in nobody's inbox. Adding one has to change this signature,
      * which forces a decision about what happens when both are configured.
      */
-    const answer = configuredSmsProvider(env(SEMAPHORE));
+    const answer = configuredSmsProvider(env({ ...SEMAPHORE, ...PHILSMS }));
     expect(Array.isArray(answer)).toBe(false);
     expect(answer).toBe('semaphore');
   });

@@ -1,3 +1,4 @@
+import { PhilSmsSender } from '@/lib/auth/sms/philsms';
 import { SemaphoreSmsSender } from '@/lib/auth/sms/semaphore';
 import { type SmsProviderName } from '@/lib/auth/sms/registry';
 import type { SmsEnv, SmsSender } from '@/lib/auth/sms/types';
@@ -27,4 +28,12 @@ export const SMS_BUILDERS: Readonly<
           endpoint,
         )
       : new SemaphoreSmsSender(env.SEMAPHORE_API_KEY!, env.SEMAPHORE_SENDER_NAME),
+  /*
+   * Both variables are non-null here because the registry's `isConfigured`
+   * requires both, and a builder only runs for a provider that answered yes.
+   */
+  philsms: (env, endpoint) =>
+    endpoint
+      ? new PhilSmsSender(env.PHILSMS_API_TOKEN!, env.PHILSMS_SENDER_ID!, endpoint)
+      : new PhilSmsSender(env.PHILSMS_API_TOKEN!, env.PHILSMS_SENDER_ID!),
 };

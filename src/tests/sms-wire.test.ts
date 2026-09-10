@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
-import { SemaphoreSmsSender, SmsDeliveryError } from '@/lib/auth/sms';
+import { PhilSmsSender, SemaphoreSmsSender, SmsDeliveryError } from '@/lib/auth/sms';
 
 /**
  * Wire-level tests for the SMS adapter.
@@ -11,18 +11,25 @@ import { SemaphoreSmsSender, SmsDeliveryError } from '@/lib/auth/sms';
  * actually receive: the method, the content type, the form field names, and the
  * exact encoding of a `+`-prefixed E.164 number.
  *
- * What this cannot establish is how Semaphore itself behaves — whether it
- * accepts the sender name, what it charges, whether the handset rings. Only a
- * real send answers that, and this environment's network policy blocks every
+ * What this cannot establish is how the gateways themselves behave — whether
+ * one accepts the sender name, what it charges, whether the handset rings. Only
+ * a real send answers that, and this environment's network policy blocks every
  * SMS gateway (403 on CONNECT), so it is not answerable from here. See
  * `scripts/send-one-sms.ts`, which is the command for doing it from somewhere
  * with egress and an account.
+ *
+ * Both adapters are covered. They differ on the wire in ways that only a
+ * byte-level test catches: a form body against a JSON one, an `apikey` field
+ * against a bearer header, a `+`-prefixed recipient against a bare one, and a
+ * refusal that arrives as a 4xx against one that arrives inside a 200.
  */
 
 interface Capture {
   method: string;
   url: string;
   contentType: string | undefined;
+  /** Bearer credentials travel in a header rather than the body for PhilSMS. */
+  authorization: string | undefined;
   /** Raw request body, before any parsing. */
   raw: string;
 }
@@ -50,6 +57,7 @@ async function gateway(
         method: req.method ?? '',
         url: req.url ?? '',
         contentType: req.headers['content-type'],
+        authorization: req.headers['authorization'],
         raw: Buffer.concat(chunks).toString('utf8'),
       };
       reply(res);
@@ -241,4 +249,134 @@ describe('what comes back', () => {
       /request failed or timed out/,
     );
   }, 10_000);
+});
+
+// -----------------------------------------------------------------------------
+// PhilSMS
+// -----------------------------------------------------------------------------
+
+/** One accepted message, in the envelope PhilSMS documents. */
+const ACCEPTED = {
+  status: 'success',
+  data: { uid: 'a1b2c3d4', recipient: '639171234567', sender_id: 'TARA' },
+};
+
+describe('the request that reaches PhilSMS', () => {
+  it('POSTs JSON with a bearer token over a real socket', async () => {
+    const { endpoint, captured } = await gateway(json(200, ACCEPTED));
+    const sender = new PhilSmsSender('tok-abc', 'TARA', endpoint);
+
+    await sender.send({ to: '+639171234567', body: 'Your TARA code is 481920.' });
+
+    const request = captured();
+    expect(request?.method).toBe('POST');
+    expect(request?.contentType).toContain('application/json');
+    expect(request?.authorization).toBe('Bearer tok-abc');
+
+    // Field names are the gateway's contract, asserted literally for the same
+    // reason as Semaphore's: a rename is a silent failure otherwise.
+    const body = JSON.parse(request?.raw ?? '{}') as Record<string, unknown>;
+    expect(Object.keys(body).sort()).toEqual([
+      'message',
+      'recipient',
+      'sender_id',
+      'type',
+    ]);
+    expect(body.sender_id).toBe('TARA');
+    expect(body.type).toBe('plain');
+    expect(body.message).toBe('Your TARA code is 481920.');
+  });
+
+  it('strips the leading + from the recipient', async () => {
+    // PhilSMS documents `639171234567`. The rest of the application speaks
+    // E.164, so this adapter is the one place the `+` comes off — and sending
+    // it raw is a rejection that only a real send would reveal.
+    const { endpoint, captured } = await gateway(json(200, ACCEPTED));
+
+    await new PhilSmsSender('tok', 'TARA', endpoint).send({
+      to: '+639171234567',
+      body: 'hi',
+    });
+
+    const body = JSON.parse(captured()?.raw ?? '{}') as { recipient?: string };
+    expect(body.recipient).toBe('639171234567');
+    expect(body.recipient).not.toContain('+');
+  });
+});
+
+describe('what comes back from PhilSMS', () => {
+  it('returns the provider message id when the envelope carries one', async () => {
+    const { endpoint } = await gateway(json(200, ACCEPTED));
+
+    const result = await new PhilSmsSender('tok', 'TARA', endpoint).send({
+      to: '+639171234567',
+      body: 'hi',
+    });
+
+    expect(result).toEqual({ providerMessageId: 'a1b2c3d4', provider: 'philsms' });
+  });
+
+  it('accepts a success envelope that carries no id', async () => {
+    // `data` is documented only as "sms reports with all details". A missing
+    // id is a cosmetic loss in a log line and must not fail a login.
+    const { endpoint } = await gateway(json(200, { status: 'success', data: 'queued' }));
+
+    const result = await new PhilSmsSender('tok', 'TARA', endpoint).send({
+      to: '+639171234567',
+      body: 'hi',
+    });
+
+    expect(result).toEqual({ providerMessageId: null, provider: 'philsms' });
+  });
+
+  it('REFUSES to call a 200 with status error a delivery', async () => {
+    /*
+     * The trap this gateway sets. It answers 200 and reports the refusal in
+     * the body, so an adapter that trusts the status code tells a customer a
+     * code is on its way to a handset that will never ring.
+     */
+    const { endpoint } = await gateway(
+      json(200, { status: 'error', message: 'Sender ID not approved' }),
+    );
+
+    await expect(
+      new PhilSmsSender('tok', 'NOPE', endpoint).send({
+        to: '+639171234567',
+        body: 'hi',
+      }),
+    ).rejects.toThrow(/refused: Sender ID not approved/);
+  });
+
+  it('treats an unreadable 200 as an unknown outcome, not a success', async () => {
+    // The opposite of the Semaphore case above, and deliberately so: a gateway
+    // that reports refusals inside a 200 gives an unparseable body no meaning.
+    const { endpoint } = await gateway((res) => {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<html>OK</html>');
+    });
+
+    await expect(
+      new PhilSmsSender('tok', 'TARA', endpoint).send({ to: '+639171234567', body: 'hi' }),
+    ).rejects.toThrow(/unreadable body/);
+  });
+
+  it('surfaces the status and the reason on a rejection', async () => {
+    const { endpoint } = await gateway(json(401, { message: 'Unauthenticated.' }));
+
+    await expect(
+      new PhilSmsSender('bad-token', 'TARA', endpoint).send({
+        to: '+639171234567',
+        body: 'hi',
+      }),
+    ).rejects.toThrow(/HTTP 401.*Unauthenticated/s);
+  });
+
+  it('reports a refused connection as a delivery failure', async () => {
+    await expect(
+      new PhilSmsSender('tok', 'TARA', 'http://127.0.0.1:1/api/v3/sms/send').send({
+        to: '+639171234567',
+        body: 'hi',
+      }),
+    ).rejects.toThrow(SmsDeliveryError);
+  });
 });

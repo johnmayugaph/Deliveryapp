@@ -10,6 +10,7 @@ import type { SmsEnv, SmsSender } from '@/lib/auth/sms/types';
 export type { SmsEnv, SmsMessage, SmsSender, SmsSendResult } from '@/lib/auth/sms/types';
 export { SmsDeliveryError } from '@/lib/auth/sms/types';
 export { ConsoleSmsSender } from '@/lib/auth/sms/console';
+export { PhilSmsSender } from '@/lib/auth/sms/philsms';
 export { SemaphoreSmsSender } from '@/lib/auth/sms/semaphore';
 export { SMS_BUILDERS } from '@/lib/auth/sms/build';
 export {

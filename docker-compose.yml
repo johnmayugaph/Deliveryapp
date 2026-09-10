@@ -85,6 +85,11 @@ services:
       # it is missing, rather than pretending.
       SEMAPHORE_API_KEY: ${SEMAPHORE_API_KEY:-}
       SEMAPHORE_SENDER_NAME: ${SEMAPHORE_SENDER_NAME:-}
+      # The other gateway. Configure one or the other — with both set,
+      # Semaphore wins, which is a precedence and not a fallback. See
+      # src/lib/auth/sms/registry.ts.
+      PHILSMS_API_TOKEN: ${PHILSMS_API_TOKEN:-}
+      PHILSMS_SENDER_ID: ${PHILSMS_SENDER_ID:-}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       EMAIL_FROM: ${EMAIL_FROM:-}
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
@@ -135,6 +140,8 @@ services:
       AUTH_SECRET: ${AUTH_SECRET:?}
       SEMAPHORE_API_KEY: ${SEMAPHORE_API_KEY:-}
       SEMAPHORE_SENDER_NAME: ${SEMAPHORE_SENDER_NAME:-}
+      PHILSMS_API_TOKEN: ${PHILSMS_API_TOKEN:-}
+      PHILSMS_SENDER_ID: ${PHILSMS_SENDER_ID:-}
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       VAPID_SUBJECT: ${VAPID_SUBJECT:-}
@@ -243,6 +250,12 @@ services:
       DIRECT_URL: postgresql://tara:${POSTGRES_PASSWORD}@db:5432/tara?schema=public
       AUTH_SECRET: ${AUTH_SECRET:?}
       BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:-}
+      # `npm run sms:send-one` runs here, and it is the only way to find out
+      # whether a token is live and a sender approved before a customer does.
+      SEMAPHORE_API_KEY: ${SEMAPHORE_API_KEY:-}
+      SEMAPHORE_SENDER_NAME: ${SEMAPHORE_SENDER_NAME:-}
+      PHILSMS_API_TOKEN: ${PHILSMS_API_TOKEN:-}
+      PHILSMS_SENDER_ID: ${PHILSMS_SENDER_ID:-}
     volumes:
       - ./backups:/backups
 

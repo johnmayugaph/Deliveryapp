@@ -11,15 +11,26 @@ import type { SmsEnv } from '@/lib/auth/sms/types';
  * spelled `SEMAPHORE_API_KEY` by hand, in six files. So "swap the provider"
  * meant editing copy in places nobody would think to grep.
  *
- * This is the one list. There is exactly one gateway on it today. That is not
- * an oversight and this file is not scaffolding for a second: it is where the
- * variable names, the setup copy and the development redirect live, so that a
- * screen can say what is missing without naming a vendor, and so that a swap
- * is one entry rather than a hunt through six files.
+ * This is the one list. It is where the variable names, the setup copy and the
+ * development redirect live, so that a screen can say what is missing without
+ * naming a vendor, and so that a swap is one entry rather than a hunt through
+ * six files.
+ *
+ * There are two gateways on it, which makes the question the single-provider
+ * version left open a real one: WHAT HAPPENS WHEN BOTH ARE CONFIGURED. The
+ * answer is declaration order in `SMS_PROVIDER_NAMES`, first one wins, and it
+ * is a precedence rather than a fallback — a send that fails is not retried
+ * against the other gateway, because a login code delivered twice is worse
+ * than one delivered late, and because a gateway that is down and a key that
+ * is wrong are indistinguishable from here. Semaphore stays first so that a
+ * deployment which had it configured before PhilSMS existed keeps the gateway
+ * it was already using after an upgrade. To move to PhilSMS on such a
+ * deployment, unset `SEMAPHORE_API_KEY`; leaving both set is not an error and
+ * `/admin/health` shows which one is in use.
  */
 
-/** Every gateway with an adapter. A second forces the decisions below. */
-export type SmsProviderName = 'semaphore';
+/** Every gateway with an adapter. Declaration order below is precedence. */
+export type SmsProviderName = 'semaphore' | 'philsms';
 
 export interface SmsProviderSpec {
   /** What a screen calls it. */
@@ -76,10 +87,30 @@ export const SMS_PROVIDERS: Readonly<Record<SmsProviderName, SmsProviderSpec>> =
     fix: 'SEMAPHORE_API_KEY=… (from semaphore.co → Account → API Keys)',
     isConfigured: (env) => hasAll(env, ['SEMAPHORE_API_KEY']),
   },
+  philsms: {
+    label: 'PhilSMS',
+    /*
+     * BOTH, and the sender ID is the reason this is a two-variable provider.
+     * PhilSMS has no account-default sender: a send without `sender_id` is
+     * refused, so a deployment holding only a token is not a gateway that
+     * half-works, it is a gateway that fails on the first login. Naming both
+     * here is what makes `/admin/health` say which one is missing.
+     */
+    requires: ['PHILSMS_API_TOKEN', 'PHILSMS_SENDER_ID'],
+    optional: [],
+    endpointVar: 'PHILSMS_ENDPOINT',
+    fix: 'PHILSMS_API_TOKEN=… and PHILSMS_SENDER_ID=… (from app.philsms.com → Developers → API Tokens, and your approved Sender ID)',
+    isConfigured: (env) => hasAll(env, ['PHILSMS_API_TOKEN', 'PHILSMS_SENDER_ID']),
+  },
 };
 
-/** Declaration order. What a screen listing gateways iterates. */
-export const SMS_PROVIDER_NAMES: readonly SmsProviderName[] = ['semaphore'];
+/**
+ * Declaration order. What a screen listing gateways iterates, and — since
+ * there is more than one — the precedence `configuredSmsProvider` applies.
+ * Semaphore first, so an existing deployment's gateway does not change under
+ * it on an upgrade. See the note at the top of this file.
+ */
+export const SMS_PROVIDER_NAMES: readonly SmsProviderName[] = ['semaphore', 'philsms'];
 
 export function isSmsProviderName(value: string): value is SmsProviderName {
   return Object.prototype.hasOwnProperty.call(SMS_PROVIDERS, value);
@@ -88,12 +119,12 @@ export function isSmsProviderName(value: string): value is SmsProviderName {
 /**
  * The gateway this deployment can actually use, or undefined.
  *
- * Singular, deliberately. With one adapter there is nothing to order and
- * nothing to fall back to, and a function returning an array would let a
- * second gateway be added later and then silently ignored — the first entry
- * used, the rest dead. Adding one has to change this signature, which makes
- * "what happens when two are configured" a decision somebody takes rather
- * than one that gets taken for them.
+ * Singular, deliberately, and it stayed singular when the second adapter
+ * arrived. A function returning an array would read as a fallback chain and is
+ * not one: nothing here retries a failed send against another gateway. What
+ * this answers is "which gateway does this deployment use", and the answer is
+ * the first configured entry in declaration order — the decision recorded at
+ * the top of this file rather than one that got taken by accident.
  */
 export function configuredSmsProvider(env: SmsEnv): SmsProviderName | undefined {
   return SMS_PROVIDER_NAMES.find((name) => SMS_PROVIDERS[name].isConfigured(env));
