@@ -16,17 +16,13 @@ import { AskForService } from '@/components/home/AskForService';
  * still coming soon to somebody in Manila, and a tappable tile that fails at
  * checkout is the outcome that reads as broken.
  *
- * ONE SHAPE, TWO STATES. Both are chips: a round accent disc with the name
- * under it, sized so five sit in one scrollable row and the shops below them
- * are the first thing on the screen with real weight. A service that is not
- * orderable here is the same chip dimmed, with a "Soon" badge and the interest
- * tally under it — it keeps the tap that means "count me", which is the only
- * demand signal the product collects.
- *
- * The first attempt kept the old wide tile for the coming-soon case, and it
- * made the row twice as tall as its tallest chip. It looked correct only on a
- * deployment where every vertical happened to be live, which is the one state
- * a launch is never in.
+ * ONE SHAPE, TWO STATES. A rounded square in the service's own colour with the
+ * name under it, in a four-across grid. A service that is not orderable here
+ * is the same tile dimmed, with a "Soon" badge and its interest tally beneath
+ * — it keeps the tap that means "count me". Both states are the same size, so
+ * the grid stays a grid whatever the registry says is live; a launch, when
+ * most verticals are still coming, is exactly the state that has to look
+ * deliberate.
  */
 export function ServiceTile({
   service,
@@ -45,6 +41,21 @@ export function ServiceTile({
   const accent = accentClasses(service.accentToken);
   const glyph = serviceGlyph(service.icon);
 
+  const chip = (
+    <span
+      aria-hidden
+      className={`flex h-14 w-14 items-center justify-center rounded-2xl text-[26px] ring-1 ring-ink/[0.06] ${accent.tileBackground} ${accent.iconColor}`}
+    >
+      {glyph}
+    </span>
+  );
+
+  const label = (
+    <span className="block text-center text-[11.5px] font-bold leading-tight text-ink">
+      {service.displayName}
+    </span>
+  );
+
   if (!service.orderableHere) {
     return (
       <AskForService
@@ -56,15 +67,8 @@ export function ServiceTile({
         tileBackground={accent.tileBackground}
         compact
       >
-        <span
-          aria-hidden
-          className={`flex h-[3.75rem] w-[3.75rem] items-center justify-center rounded-full text-[26px] ring-1 ring-ink/[0.06] ${accent.tileBackground} ${accent.iconColor}`}
-        >
-          {glyph}
-        </span>
-        <span className="block text-[12px] font-bold leading-tight text-ink">
-          {service.displayName}
-        </span>
+        {chip}
+        {label}
       </AskForService>
     );
   }
@@ -72,17 +76,10 @@ export function ServiceTile({
   return (
     <Link
       href={`/services/${service.key.toLowerCase()}`}
-      className="press group flex w-[4.75rem] shrink-0 snap-start flex-col items-center gap-1.5 text-center"
+      className="press flex flex-col items-center gap-2"
     >
-      <span
-        aria-hidden
-        className={`flex h-[3.75rem] w-[3.75rem] items-center justify-center rounded-full text-[26px] shadow-tile ring-1 ring-ink/[0.06] ${accent.tileBackground} ${accent.iconColor}`}
-      >
-        {glyph}
-      </span>
-      <span className="block text-[12px] font-bold leading-tight text-ink">
-        {service.displayName}
-      </span>
+      {chip}
+      {label}
     </Link>
   );
 }

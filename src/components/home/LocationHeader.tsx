@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { Wordmark } from '@/components/brand/Wordmark';
 
 /**
  * Current delivery location with a tap-to-change control.
@@ -18,39 +19,40 @@ export function LocationHeader({
 }) {
   return (
     /*
-     * THE SUN BAND. The one place the brand yellow is allowed to fill a whole
-     * area rather than accent one, and it is at the top of the screen for two
-     * reasons: it is the first thing seen, and it is the region where nothing
-     * has to be read against it except two lines the band is light enough to
-     * carry. The rounded bottom edge and the search pill that overlaps it are
-     * what turn a coloured strip into a masthead.
+     * THE HEADER BLOCK. Solid brand blue, white type, and the wordmark on the
+     * right — the shape every Philippine delivery app converges on, and the
+     * one the search field and the panel below are positioned against. Nothing
+     * is read against it except two short lines, which is what lets it be a
+     * saturated colour rather than a tint.
      */
-    <header className="relative rounded-b-[2rem] bg-sun px-4 pb-11 pt-6">
-      <div className="flex items-start gap-2">
-        <Link
-          href="/addresses"
-          className="press group flex min-w-0 flex-1 items-center gap-2.5 rounded-full bg-surface/80 py-2 pl-3 pr-4 text-left ring-1 ring-ink/[0.06] backdrop-blur"
+    <header className="flex items-center gap-3 px-4 pb-3 pt-5">
+      <Link
+        href="/addresses"
+        className="group flex min-w-0 flex-1 items-center gap-2.5 text-left"
+      >
+        <span
+          aria-hidden
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/15 text-base"
         >
-          <span aria-hidden className="text-base leading-none">
-            📍
+          📍
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-[10px] font-bold uppercase tracking-[0.14em] text-white/70">
+            Deliver to
           </span>
-          <span className="min-w-0 flex-1">
-            <span className="block text-[10px] font-bold uppercase tracking-[0.14em] text-brand-800">
-              Deliver to
+          <span className="flex items-center gap-1">
+            <span className="truncate text-[15px] font-bold leading-tight text-white">
+              {addressLabel ?? `Set your address · ${cityName}`}
             </span>
-            <span className="flex items-center gap-1">
-              <span className="truncate text-[13.5px] font-bold leading-tight text-ink">
-                {addressLabel ?? `Set your address · ${cityName}`}
-              </span>
-              <span aria-hidden className="text-[10px] text-ink-muted">
-                ▾
-              </span>
+            <span aria-hidden className="text-[10px] text-white/70">
+              ▾
             </span>
           </span>
-          <span className="sr-only">Change delivery location</span>
-        </Link>
-        {bell}
-      </div>
+        </span>
+        <span className="sr-only">Change delivery location</span>
+      </Link>
+      {bell}
+      <Wordmark size="sm" tone="light" className="shrink-0" />
     </header>
   );
 }

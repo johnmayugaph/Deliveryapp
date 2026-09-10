@@ -85,11 +85,11 @@ h3 {
   /**
    * Section eyebrow: the small uppercase label above a group of tiles.
    *
-   * Amber rather than grey. It is the one place a warm accent can carry
-   * structural meaning without competing with the tiles underneath, and it is
-   * `brand-700`, so it is 7.2:1 on both white and cream.
+   * Grey rather than blue. With a blue header block at the top of the screen,
+   * a second blue for every section label turned the page into a list of
+   * competing brand-coloured things; the labels are structure, not accent.
    */
   .eyebrow {
-    @apply text-[11px] font-bold uppercase tracking-[0.14em] text-brand-700;
+    @apply text-[11px] font-bold uppercase tracking-[0.14em] text-ink-muted;
   }
 }

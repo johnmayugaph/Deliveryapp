@@ -47,7 +47,14 @@ export default async function HomePage() {
 
   return (
     <main>
-      <div className="sticky top-0 z-30 shadow-sm">
+      {/*
+        * THE HEADER BLOCK: brand blue, holding the address and the search
+        * field, with the service panel overlapping its bottom edge. Not
+        * sticky any more — a coloured block a fifth of the screen tall that
+        * follows you down a shop list is a lot of chrome for two lines of
+        * text, and the search it contains has its own screen.
+        */}
+      <div className="rounded-b-3xl bg-brand-600">
         <LocationHeader
           addressLabel={data.currentAddressLabel}
           cityName={data.currentCityName}
@@ -60,7 +67,7 @@ export default async function HomePage() {
                  an account exists at all. */
               <Link
                 href="/login?next=%2F"
-                className="shrink-0 rounded-full bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500"
+                className="shrink-0 rounded-full bg-white/15 px-3 py-1.5 text-xs font-bold text-white ring-1 ring-white/25 hover:bg-white/25"
               >
                 Sign in
               </Link>

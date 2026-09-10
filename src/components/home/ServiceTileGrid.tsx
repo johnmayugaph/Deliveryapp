@@ -1,24 +1,24 @@
+import Link from 'next/link';
 import type { ServiceGroup } from '@/lib/services/registry';
 import { ServiceTile } from '@/components/home/ServiceTile';
 
 /**
- * Service tiles, grouped by intent, straight from the registry.
+ * The service picker: one white panel, four tiles across.
  *
  * There is no list of services in this file. It renders whatever
- * `getServicesByIntentGroup()` returns, in whatever grouping the data says —
- * which is what makes activating MART a one-row change.
+ * `getServicesByIntentGroup()` returns — which is what makes activating MART a
+ * one-row change.
  *
- * WHY ROWS AND NOT A GRID. A grid of five large cards was the whole first
- * screen, and it pushed the shops — the thing somebody opened the app to
- * reach — below the fold. Each group is now a horizontally scrollable row of
- * chips, which is the pattern every delivery app converges on for the same
- * reason: picking a vertical is a one-tap decision that does not deserve half
- * a phone screen. The grouping survives because it is data; only the shape of
- * the row changed.
+ * WHY THE INTENT GROUPING IS FLATTENED HERE, and only here. The registry still
+ * groups services by intent, and the group pages still use it. On this screen
+ * it cost a heading, a rule and a row of its own per group — three groups for
+ * five services, so most of the panel was labels. A four-across grid holds all
+ * five in two rows and has room for the sixth without moving anything. The
+ * data is untouched; this screen just stopped rendering the seams.
  *
- * The row scrolls rather than wraps. Wrapping would make the home screen's
- * height depend on how many verticals are live, so activating a sixth would
- * quietly push everything below it down.
+ * The panel overlaps the header block above it by design: it is what makes the
+ * blue a masthead rather than a stripe, and it puts the first tile within a
+ * thumb's reach of the bottom of the screen.
  */
 export function ServiceTileGrid({
   groups,
@@ -34,59 +34,51 @@ export function ServiceTileGrid({
   /** Whether this visitor has an account. The screen is public. */
   signedIn: boolean;
 }) {
-  if (groups.length === 0) {
+  const services = groups.flatMap((group) => group.services);
+
+  if (services.length === 0) {
     return (
-      <p className="px-4 py-6 text-sm text-ink-muted">
-        No service is available in your area yet. We will come back to you.
-      </p>
+      <div className="relative -mt-6 px-4">
+        <div className="card-warm p-5">
+          <p className="text-sm text-ink-muted">
+            No service is available in your area yet. We will come back to you.
+          </p>
+        </div>
+      </div>
     );
   }
 
   return (
-    <div className="space-y-5 pb-1 pt-5">
-      {groups.map(({ group, presentation, services }, index) => (
-        <section
-          key={group}
-          aria-labelledby={`group-${group}`}
-          className="animate-rise-in"
-          /* Staggered by group, not by tile: five chips arriving one after
-             another is a flourish somebody sees once and then waits through
-             every day. Three groups at 60ms apart is under a fifth of a
-             second in total and reads as the page settling. */
-          style={{ animationDelay: `${index * 60}ms` }}
-        >
-          <div className="flex items-baseline gap-3 px-4">
-            <h2 id={`group-${group}`} className="eyebrow">
-              {presentation.label}
-            </h2>
-            {/* A hairline that starts where the label ends. Cheap way to give
-                a group a top edge without drawing a box around it. */}
-            <span aria-hidden className="h-px flex-1 bg-ink/[0.08]" />
-          </div>
-          {/*
-            * `overflow-x-auto` with padding rather than margin on the sides,
-            * so the first chip starts on the page's gutter and the last one
-            * can scroll clear of the edge instead of being clipped by it.
-            * `scrollbar-width: none` because a visible scrollbar under five
-            * chips reads as a rendering fault on a phone.
-            */}
-          <ul
-            className="mt-2.5 flex snap-x snap-mandatory items-start gap-3.5 overflow-x-auto px-4 pb-1"
-            style={{ scrollbarWidth: 'none' }}
-          >
-            {services.map((service) => (
-              <li key={service.key} className="contents">
-                <ServiceTile
-                  service={service}
-                  cityName={cityName}
-                  askedByMe={askedFor.includes(service.key)}
-                  signedIn={signedIn}
-                />
-              </li>
-            ))}
-          </ul>
-        </section>
-      ))}
+    <div className="relative -mt-6 px-4">
+      <section aria-labelledby="services-heading" className="card-warm animate-rise-in p-4">
+        <div className="flex items-center justify-between gap-3">
+          <h2 id="services-heading" className="text-[17px] font-extrabold tracking-tight">
+            What can we bring you?
+          </h2>
+          {/* Only where there is somewhere to go: with every vertical on this
+              panel already, "view all" would be a link back to itself. */}
+          {services.length > 8 ? (
+            <Link
+              href="/services"
+              className="text-[12.5px] font-bold text-brand-700 hover:text-brand-800"
+            >
+              View all <span aria-hidden>›</span>
+            </Link>
+          ) : null}
+        </div>
+
+        <div className="mt-4 grid grid-cols-4 gap-x-2 gap-y-5">
+          {services.map((service) => (
+            <ServiceTile
+              key={service.key}
+              service={service}
+              cityName={cityName}
+              askedByMe={askedFor.includes(service.key)}
+              signedIn={signedIn}
+            />
+          ))}
+        </div>
+      </section>
     </div>
   );
 }

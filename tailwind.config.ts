@@ -27,59 +27,57 @@ const config: Config = {
       },
       colors: {
         /*
-         * MANGO AT THE LIGHT END, BURNT AMBER AT THE DARK END — and that shape
-         * is the whole trick of a yellow brand.
+         * ROYAL BLUE, WITH THE YELLOW MOVED TO ITS OWN TOKEN.
          *
-         * Yellow is the one hue that cannot carry white text. #ffb100 against
-         * white is 1.7:1, which is not a contrast failure so much as an
-         * unreadable button. Fifty-five controls in this application are
-         * `bg-brand-600`/`bg-brand-700` with `text-white`, and a hundred and
-         * sixteen labels are `text-brand-700` on white — so a ramp that is
-         * yellow all the way down would have quietly broken every one of them,
-         * and repainting a hundred and seventy call sites to chase a hue is how
-         * a redesign turns into a fortnight.
+         * The blue is the chrome: the header block, the primary buttons, the
+         * links. It carries white text from 500 down (500 is 7.0:1, 700 is
+         * 9.6:1), which is why the fifty-five `bg-brand-600 text-white`
+         * controls in this application needed no edits when the hue changed.
          *
-         * So the ramp does two jobs at two ends. 300–500 are the mango the
-         * brand actually is: tile halos, highlights, the sun band behind the
-         * header, the focus ring, the primary CTA where the label goes dark.
-         * 600–900 are the same pigment cooked down to a deep amber that white
-         * sits on comfortably — 600 is 5.4:1 with white, 700 is 7.2:1, and 700
-         * on white is 7.2:1 the other way round. Both readings pass AA for body
-         * text, which is what makes this a palette swap rather than a rewrite.
-         *
-         * The rule when adding a control: yellow surface, ink label; amber
-         * surface, white label. Never white on 500 or lighter.
+         * The mango did not survive as the brand colour but it survives as
+         * `sun`, because a promotion is the one thing on a blue screen that
+         * has to shout, and a brighter blue cannot shout past the header. Ink
+         * on `sun-400` is 9.6:1; white on it is 1.7:1, so a yellow surface
+         * always takes a dark label. That rule is the only thing to remember
+         * when adding a control: blue surface, white label; yellow surface,
+         * ink label.
          */
         brand: {
-          50: '#fff9e8',
+          50: '#eef3ff',
+          100: '#dbe5ff',
+          200: '#b9cbff',
+          300: '#8ea9fb',
+          400: '#5c80f3',
+          500: '#2f5be0',
+          600: '#1e46c8',
+          700: '#1837a1',
+          800: '#142c80',
+          900: '#101f5c',
+        },
+        /*
+         * Cool neutrals again, now that the chrome is blue: warm ink over a
+         * blue header reads as two different greys. Same three steps, same
+         * lightness, so every contrast ratio in the application is unchanged.
+         */
+        /* The promotion colour. See the note on `brand`. */
+        sun: {
           100: '#fff0c4',
-          200: '#ffe289',
           300: '#ffd24a',
           400: '#ffc01c',
           500: '#ffb100',
-          600: '#a85f00',
           700: '#8a4b00',
-          800: '#6e3b00',
-          900: '#522b00',
         },
-        /*
-         * Ink is warmed off neutral. #101828 was a blue-grey, correct beside a
-         * blue brand and slightly cold beside this one: the same text over
-         * cream reads as a different colour temperature to the paper behind it.
-         * These are the same three steps, rotated warm and kept at the same
-         * lightness, so every contrast ratio in the application is unchanged.
-         */
         ink: {
-          DEFAULT: '#1a1611',
-          muted: '#5b5346',
-          faint: '#9a9284',
+          DEFAULT: '#101828',
+          muted: '#475467',
+          faint: '#98a2b3',
         },
         surface: {
           DEFAULT: '#ffffff',
-          // Cream rather than grey. The page behind white cards is where a
-          // warm palette either reads as deliberate or as a white app with
-          // yellow buttons stuck on it.
-          sunken: '#fbf7ef',
+          // The ground the white panels sit on. Cool and very light, so the
+          // blue header above it and the cards on it are the only two things
+          // with any weight.
+          sunken: '#f2f5fb',
           raised: '#ffffff',
         },
         // Per-service accents, resolved from `Service.accentToken`. Adding a
@@ -108,14 +106,14 @@ const config: Config = {
          * shadow plus a wide soft one — the pair is what reads as a card
          * resting on a surface rather than a box with a grey edge.
          */
-        tile: '0 1px 2px rgba(26,22,17,0.05), 0 10px 24px -14px rgba(26,22,17,0.22)',
-        lifted: '0 2px 4px rgba(26,22,17,0.06), 0 18px 40px -18px rgba(26,22,17,0.28)',
-        nav: '0 -1px 0 rgba(26,22,17,0.06), 0 -12px 28px -22px rgba(26,22,17,0.35)',
+        tile: '0 1px 2px rgba(16,24,40,0.05), 0 10px 24px -14px rgba(16,24,40,0.22)',
+        lifted: '0 2px 4px rgba(16,24,40,0.06), 0 18px 40px -18px rgba(16,24,40,0.28)',
+        nav: '0 -1px 0 rgba(16,24,40,0.06), 0 -12px 28px -22px rgba(16,24,40,0.35)',
       },
       backgroundImage: {
-        // The sun band behind the location header. A radial rather than a
-        // linear gradient, so the warmth has a source instead of a direction.
-        sun: 'radial-gradient(120% 100% at 12% -20%, #ffd24a 0%, #ffe289 38%, #fff9e8 72%, #ffffff 100%)',
+        // The promotion card's ground. Kept as a gradient rather than a flat
+        // fill so a rail of them does not read as one long yellow block.
+        sun: 'linear-gradient(135deg, #ffd24a 0%, #ffc01c 55%, #ffb100 100%)',
       },
       keyframes: {
         'rise-in': {

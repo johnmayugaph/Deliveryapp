@@ -120,7 +120,7 @@ export function AskForService({
         }
         className={
           compact
-            ? `relative flex w-[4.75rem] shrink-0 snap-start flex-col items-center gap-1.5 text-center transition-opacity disabled:cursor-wait ${
+            ? `relative flex flex-col items-center gap-2 text-center transition-opacity disabled:cursor-wait ${
                 asked ? 'opacity-90' : 'opacity-70 hover:opacity-100'
               }`
             : `relative flex flex-col rounded-tile p-3 text-left transition-opacity focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 disabled:cursor-wait ${
@@ -131,7 +131,7 @@ export function AskForService({
         <span
           className={
             compact
-              ? `absolute -top-0.5 right-0 z-10 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide shadow-tile ${
+              ? `absolute -top-1 right-0 z-10 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide shadow-tile ${
                   asked ? 'bg-brand-600 text-white' : 'bg-surface text-ink-muted'
                 }`
               : `absolute right-2 top-2 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${
