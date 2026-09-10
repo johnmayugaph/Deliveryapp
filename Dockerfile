@@ -31,6 +31,10 @@
 # -----------------------------------------------------------------------------
 FROM node:22-bookworm-slim AS base
 ENV NEXT_TELEMETRY_DISABLED=1
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends openssl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 # Both images run in Manila time. This is a MITIGATION and not the fix: the
 # app should reach every date through `lib/time/manila`, which pins the zone
 # per call and is unaffected by this. Until it does, 45 `toLocale*` sites
