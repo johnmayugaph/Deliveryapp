@@ -80,6 +80,13 @@ services:
     environment:
       DATABASE_URL: postgresql://tara:${POSTGRES_PASSWORD}@db:5432/tara?schema=public
       AUTH_SECRET: ${AUTH_SECRET:?generate one with openssl rand -hex 32}
+      # The dry-run allowlist. LAUNCH.md step 9 offers it as the way to sign in
+      # before a gateway is funded, and .env.example documents it as honoured
+      # in production on purpose — but it was never passed in here, so on this
+      # compose file setting it in .env did nothing at all and the fallback the
+      # launch runbook depends on silently was not one. Found by running that
+      # runbook on a real deployment.
+      AUTH_TEST_NUMBERS: ${AUTH_TEST_NUMBERS:-}
       NEXT_PUBLIC_DEFAULT_CITY_ID: ${NEXT_PUBLIC_DEFAULT_CITY_ID:-city_manila}
       # Everything below is optional and the app says so on /admin/health when
       # it is missing, rather than pretending.
@@ -103,6 +110,13 @@ services:
       SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
       SUPPORT_FACEBOOK: ${SUPPORT_FACEBOOK:-}
       SUPPORT_HOURS: ${SUPPORT_HOURS:-}
+      # Paying in advance by bank or e-wallet transfer. All three or the
+      # method stays off, which is what /admin/payments and /admin/health both
+      # say — and they said it about variables this file never passed in, so
+      # the method could not be switched on from .env whatever it held.
+      PAYMENT_TRANSFER_LABEL: ${PAYMENT_TRANSFER_LABEL:-}
+      PAYMENT_TRANSFER_ACCOUNT_NAME: ${PAYMENT_TRANSFER_ACCOUNT_NAME:-}
+      PAYMENT_TRANSFER_ACCOUNT_NUMBER: ${PAYMENT_TRANSFER_ACCOUNT_NUMBER:-}
       # The store form's map. OpenStreetMap unless set — see .env.example.
       MAP_TILE_URL: ${MAP_TILE_URL:-}
       MAP_TILE_ATTRIBUTION: ${MAP_TILE_ATTRIBUTION:-}
