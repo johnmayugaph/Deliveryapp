@@ -35,9 +35,13 @@ export function BottomNav() {
   return (
     <nav
       aria-label="Main"
-      className="fixed inset-x-0 bottom-0 z-40 border-t border-black/5 bg-surface/95 backdrop-blur"
+      className="fixed inset-x-0 bottom-0 z-40 border-t border-ink/[0.06] bg-surface/95 shadow-nav backdrop-blur-md"
+      /* The home-bar inset, so the labels are not sitting under it on an
+         iPhone. `env()` resolves to 0 everywhere else, which is why it can be
+         unconditional. */
+      style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
-      <ul className="mx-auto flex max-w-lg items-stretch">
+      <ul className="mx-auto flex max-w-lg items-stretch px-2 py-1.5">
         {ITEMS.map((item) => {
           const isCurrent =
             item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);
@@ -46,11 +50,19 @@ export function BottomNav() {
               <Link
                 href={item.href}
                 aria-current={isCurrent ? 'page' : undefined}
-                className={`flex flex-col items-center gap-1 py-2.5 text-[11px] font-medium transition-colors ${
-                  isCurrent ? 'text-brand-700' : 'text-ink-faint hover:text-ink-muted'
+                /*
+                 * The current tab is a filled pill rather than coloured text.
+                 * Four small labels in four shades of the same hue is a
+                 * distinction people squint at; a shape is legible at a
+                 * glance and survives being looked at in sunlight.
+                 */
+                className={`flex flex-col items-center gap-0.5 rounded-2xl py-2 text-[11px] font-bold transition-colors ${
+                  isCurrent
+                    ? 'bg-brand-100 text-brand-800'
+                    : 'text-ink-faint hover:bg-ink/[0.04] hover:text-ink-muted'
                 }`}
               >
-                <span aria-hidden className="text-lg leading-none">
+                <span aria-hidden className="text-[19px] leading-none">
                   {item.glyph}
                 </span>
                 {item.label}

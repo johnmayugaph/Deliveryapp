@@ -12,13 +12,20 @@ export function GlobalSearch({ activeServiceNames }: { activeServiceNames: strin
       : 'Search';
 
   return (
-    <div className="bg-surface px-4 pb-4">
+    /*
+     * Lifted onto the sun band above it by a negative margin, so the two read
+     * as one masthead rather than a yellow strip with a search box under it.
+     * The overlap is 1.75rem against the band's 2.75rem of bottom padding,
+     * which leaves the pill clear of the rounded corners at every width the
+     * shell allows.
+     */
+    <div className="relative -mt-7 px-4 pb-1">
       <form action="/search" method="get" role="search">
         <label htmlFor="global-search" className="sr-only">
           Search across services
         </label>
-        <div className="flex items-center gap-2 rounded-xl bg-surface-sunken px-3 py-2.5 ring-1 ring-black/5 focus-within:ring-2 focus-within:ring-brand-500">
-          <span aria-hidden className="text-sm text-ink-faint">
+        <div className="flex items-center gap-2.5 rounded-full bg-surface px-4 py-3 shadow-tile ring-1 ring-ink/[0.06] transition-shadow focus-within:shadow-lifted">
+          <span aria-hidden className="text-sm">
             🔎
           </span>
           <input
@@ -27,7 +34,7 @@ export function GlobalSearch({ activeServiceNames }: { activeServiceNames: strin
             type="search"
             autoComplete="off"
             placeholder={placeholder}
-            className="w-full bg-transparent text-sm text-ink placeholder:text-ink-faint focus:outline-none"
+            className="w-full bg-transparent text-[13.5px] text-ink placeholder:text-ink-faint focus:outline-none"
           />
         </div>
       </form>

@@ -15,6 +15,15 @@ import { AskForService } from '@/components/home/AskForService';
  * The condition is `orderableHere`, not `isActive`: a vertical live in Cebu is
  * still coming soon to somebody in Manila, and a tappable tile that fails at
  * checkout is the outcome that reads as broken.
+ *
+ * WHERE THE ACCENT SITS, AND WHY IT MOVED. A live tile is now a white card and
+ * the service colour is a chip behind the glyph; it used to be a wash across
+ * the whole tile. Five full-bleed pastels in one grid competed with each other
+ * and with the page, and the label sitting on tinted paper was the weakest text
+ * on the screen. White cards with one saturated chip each let the colour do the
+ * one job it is for — telling Parcel from Errands at a glance — while the name
+ * gets full contrast. A coming-soon tile keeps the wash, dimmed: it should read
+ * as a different kind of object, not a darker version of the same one.
  */
 export function ServiceTile({
   service,
@@ -33,18 +42,24 @@ export function ServiceTile({
   const accent = accentClasses(service.accentToken);
   const glyph = serviceGlyph(service.icon);
 
-  const inner = (
+  /*
+   * The chip's ground is passed in rather than fixed, because the two tiles
+   * put the glyph on different paper: soft-on-white for a live card, and
+   * white-on-soft for the dimmed coming-soon wash, which would otherwise
+   * disappear into its own tile.
+   */
+  const inner = (chipBackground: string) => (
     <>
       <span
         aria-hidden
-        className={`flex h-11 w-11 items-center justify-center rounded-full text-xl shadow-sm ${accent.iconBackground} ${accent.iconColor}`}
+        className={`flex h-12 w-12 items-center justify-center rounded-2xl text-[22px] ring-1 ring-ink/5 ${chipBackground} ${accent.iconColor}`}
       >
         {glyph}
       </span>
-      <span className="mt-2.5 block text-sm font-semibold leading-tight">
+      <span className="mt-3 block text-[15px] font-bold leading-tight">
         {service.displayName}
       </span>
-      <span className="mt-0.5 block text-[11px] leading-tight text-ink-muted">
+      <span className="mt-0.5 block text-[11.5px] leading-snug text-ink-muted">
         {service.tagline}
       </span>
     </>
@@ -60,7 +75,7 @@ export function ServiceTile({
         signedIn={signedIn}
         tileBackground={accent.tileBackground}
       >
-        {inner}
+        {inner(accent.iconBackground)}
       </AskForService>
     );
   }
@@ -68,9 +83,17 @@ export function ServiceTile({
   return (
     <Link
       href={`/services/${service.key.toLowerCase()}`}
-      className={`flex flex-col rounded-tile p-3 transition-transform hover:scale-[1.02] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 ${accent.tileBackground}`}
+      className="card-warm press group relative flex flex-col p-3.5"
     >
-      {inner}
+      {inner(accent.tileBackground)}
+      {/* Quiet affordance rather than a chevron on every row: it says the tile
+          goes somewhere without adding a fifth thing to look at. */}
+      <span
+        aria-hidden
+        className="absolute right-3 top-3 text-sm font-bold text-brand-700 opacity-0 transition-opacity group-hover:opacity-100"
+      >
+        →
+      </span>
     </Link>
   );
 }

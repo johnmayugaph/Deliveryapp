@@ -37,3 +37,59 @@ h3 {
 .app-shell {
   padding-bottom: 5.5rem;
 }
+
+/**
+ * The focus ring, once, for the whole application.
+ *
+ * Mango at full strength on cream is a visible ring without being a colour
+ * nobody chose; the offset is what keeps it off the glyphs it surrounds. Set
+ * here rather than per component because a keyboard user meets it on every
+ * screen and it should not vary by which one.
+ */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid theme('colors.brand.500');
+  outline-offset: 2px;
+  border-radius: 0.375rem;
+}
+
+@layer components {
+  /**
+   * A card that rests on the cream page.
+   *
+   * White ground, hairline warm ring, the paired contact-and-soft shadow. The
+   * ring matters more than the shadow at phone sizes: on a bright screen
+   * outdoors — which is where a rider and half the customers are — the shadow
+   * disappears and the edge is the only thing left holding the card together.
+   */
+  .card-warm {
+    @apply rounded-card bg-surface shadow-tile ring-1 ring-ink/[0.06];
+  }
+
+  /**
+   * Anything tappable that should feel like a physical press.
+   *
+   * Scale down rather than change colour, and only on `:active`. A hover state
+   * on a touch device sticks after the tap and reads as a stuck selection, so
+   * the hover lift is kept behind `@media (hover: hover)`.
+   */
+  .press {
+    @apply transition-[transform,box-shadow] duration-150 ease-out active:scale-[0.97];
+  }
+
+  @media (hover: hover) {
+    .press:hover {
+      @apply -translate-y-0.5 shadow-lifted;
+    }
+  }
+
+  /**
+   * Section eyebrow: the small uppercase label above a group of tiles.
+   *
+   * Amber rather than grey. It is the one place a warm accent can carry
+   * structural meaning without competing with the tiles underneath, and it is
+   * `brand-700`, so it is 7.2:1 on both white and cream.
+   */
+  .eyebrow {
+    @apply text-[11px] font-bold uppercase tracking-[0.14em] text-brand-700;
+  }
+}

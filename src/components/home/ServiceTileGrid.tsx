@@ -8,6 +8,19 @@ import { ServiceTile } from '@/components/home/ServiceTile';
  * `getServicesByIntentGroup()` returns, in whatever grouping the data says —
  * which is what makes activating MART a one-row change.
  */
+
+/**
+ * How many columns a group gets.
+ *
+ * Two rather than three when a group holds one or two services, which is what
+ * the registry actually returns today: a three-column grid holding two tiles
+ * leaves a third of the row empty and reads as a tile that failed to load.
+ * Returned as whole class names because Tailwind cannot build one from a
+ * runtime value.
+ */
+const GRID_COLUMNS = (count: number): string =>
+  count >= 3 ? 'grid-cols-3' : 'grid-cols-2';
+
 export function ServiceTileGrid({
   groups,
   cityName,
@@ -31,17 +44,30 @@ export function ServiceTileGrid({
   }
 
   return (
-    <div className="space-y-5 px-4 py-4">
-      {groups.map(({ group, presentation, services }) => (
-        <section key={group} aria-labelledby={`group-${group}`}>
-          <h2
-            id={`group-${group}`}
-            className="text-[13px] font-semibold uppercase tracking-wide text-ink-muted"
-          >
-            {presentation.label}
-          </h2>
-          <p className="mt-0.5 text-[11px] text-ink-faint">{presentation.tagline}</p>
-          <div className="mt-2.5 grid grid-cols-3 gap-2.5">
+    <div className="space-y-7 px-4 pb-2 pt-5">
+      {groups.map(({ group, presentation, services }, index) => (
+        <section
+          key={group}
+          aria-labelledby={`group-${group}`}
+          className="animate-rise-in"
+          /* Staggered by group, not by tile: five tiles arriving one after
+             another is a flourish somebody sees once and then waits through
+             every day. Three groups at 60ms apart is under a fifth of a
+             second in total and reads as the page settling. */
+          style={{ animationDelay: `${index * 60}ms` }}
+        >
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 id={`group-${group}`} className="eyebrow">
+              {presentation.label}
+            </h2>
+            {/* A hairline that stops where the label starts. Cheap way to give
+                a group a top edge without drawing a box around it. */}
+            <span aria-hidden className="h-px flex-1 bg-ink/[0.08]" />
+          </div>
+          <p className="mt-1 text-[13px] leading-snug text-ink-muted">
+            {presentation.tagline}
+          </p>
+          <div className={`mt-3 grid gap-3 ${GRID_COLUMNS(services.length)}`}>
             {services.map((service) => (
               <ServiceTile
                 key={service.key}
