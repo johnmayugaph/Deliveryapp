@@ -187,7 +187,19 @@ link, or type the coordinates. If your network cannot reach the tile server the
 map says so and the other three keep working — that is how this rehearsal was
 done, typing `14.6042, 120.9822`.
 
-## 8 — Make the shop visible
+## 8 — The shop adds a dish
+
+Sign in as 09991110002 and open `/merchant`. The store is already attached, by
+the owner's number from step 7.
+
+`/merchant/<storeId>/menu` → **Add an item**. Name, section, price. One dish at
+₱100 is enough for the whole rehearsal. The menu then reads *"1 of 1
+orderable"*.
+
+This comes before making the shop visible, and the order is not a preference —
+the next step is refused without it.
+
+## 9 — Make the shop visible
 
 A new shop is created **hidden**, and this catches people out: the owner can
 sign in, see their store and add a menu, and the shop still cannot be found.
@@ -196,14 +208,11 @@ now."* — and Settings explains that only TARA can change it.
 
 `/admin/stores/<storeId>` → **Make visible**.
 
-## 9 — The shop adds a dish
-
-Sign in as 09991110002 and open `/merchant`. The store is already attached, by
-the owner's number from step 7.
-
-`/merchant/<storeId>/menu` → **Add an item**. Name, section, price. One dish at
-₱100 is enough for the whole rehearsal. The menu then reads *"1 of 1
-orderable"*.
+**Menu first, and the button says so.** Pressed on a shop with an empty menu it
+refuses: *"That shop has no menu yet. A customer would find it, open it and see
+nothing — have the owner add items first."* This file had these two steps the
+other way round until a rehearsal ran them in the printed order and hit the
+refusal.
 
 ## 10 — The rider applies, and you approve
 
@@ -262,8 +271,15 @@ npm run jobs:orders
 ```
 
 The first run said `no approved partner online in range.` — **the rider has to
-be Online.** As 09991110003, open `/fleet` and tap the Offline pill. Then run
-the sweep again:
+be Online.** As 09991110003, open `/fleet` and tap the Offline pill.
+
+**Allow location when the browser asks.** Going online needs it, and a refusal
+is silent: the pill shows its pending state, then settles back on Offline with
+nothing said. A rider who denied the prompt once, or who is on a browser that
+refuses it, taps that pill and simply stays offline — and the sweep then blames
+the range.
+
+Then run the sweep again:
 
 ```
 DA-20260909-RNGX2: offered to 1 partner(s).
@@ -335,8 +351,10 @@ is really running:
 | --- | --- |
 | No way to add a delivery address | `/checkout` sent people to a page with no form. Purging the demo data was what exposed it. |
 | Store-form copy on the customer's address screen | *"Where the shop is / Every delivery fee from this shop is measured from here"*, shown to somebody adding their own home. |
-| A shop that is invisible with nothing saying why | Fixed in an earlier phase; step 8 exists because of it. |
+| A shop that is invisible with nothing saying why | Fixed in an earlier phase; step 9 exists because of it. |
 | `information_schema` answering 619 CHECK constraints | The measuring instrument was the broken part. Fourth time in this project. |
+| Steps 8 and 9 printed in an order the app refuses | Visibility is gated on the menu existing. Running the file top to bottom was what found it; they are now the other way round. |
+| The Offline pill fails silently without location permission | It shows pending, then returns to Offline with no message, and `no approved partner online in range.` is what you see instead. |
 
 ## If something fails
 
@@ -344,8 +362,9 @@ is really running:
   `prisma migrate deploy` without the seed.
 - **The login screen has no code field.** → the per-number throttle. See the
   note in step 5.
-- **`no approved partner online in range.`** → the rider is Offline, or was
-  approved for a different service.
+- **`no approved partner online in range.`** → the rider is Offline, was
+  approved for a different service, or tapped the pill with location permission
+  denied and stayed offline without being told.
 - **The offer vanished before you could take it.** → 60 seconds. Have `/fleet`
   open before running the sweep.
 - **Signed in, then immediately signed out.** → plain http on a real hostname.
