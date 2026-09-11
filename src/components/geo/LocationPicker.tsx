@@ -70,6 +70,14 @@ const FIELD =
   'mt-1 w-full rounded-lg border border-black/10 bg-surface px-2.5 py-1.5 text-[13px]';
 
 export function LocationPicker({
+  /**
+   * A pin this shop already has, for the EDIT form.
+   *
+   * Without it the edit form opened with an empty picker over a city centroid
+   * and no pin — which reads as "this shop has no location", and any save
+   * would have needed somebody to drop the pin again from memory.
+   */
+  initial,
   /** Centre of the chosen city, so the map opens near the place. */
   centre,
   /** Changes when the city select changes, so the map can follow — once. */
@@ -84,6 +92,7 @@ export function LocationPicker({
   heading = 'Where the shop is',
   help = 'Tap the map, or drag the pin. Every delivery fee from this shop is measured from here, so put it on the building rather than the street.',
 }: {
+  initial?: Coordinate | undefined;
   centre?: Coordinate | undefined;
   centreKey?: string | undefined;
   tiles: TileSource;
@@ -106,10 +115,14 @@ export function LocationPicker({
     null,
   );
 
-  const [point, setPoint] = useState<Coordinate | null>(null);
+  const [point, setPoint] = useState<Coordinate | null>(initial ?? null);
   /** What the person typed, kept separate so a half-typed number is not clobbered. */
-  const [latText, setLatText] = useState('');
-  const [lngText, setLngText] = useState('');
+  const [latText, setLatText] = useState(
+    initial ? formatCoordinate(initial.latitude) : '',
+  );
+  const [lngText, setLngText] = useState(
+    initial ? formatCoordinate(initial.longitude) : '',
+  );
   const [pasted, setPasted] = useState('');
   const [note, setNote] = useState<string | null>(null);
   const [noteIsError, setNoteIsError] = useState(false);
@@ -145,10 +158,12 @@ export function LocationPicker({
         const L = await import('leaflet');
         if (cancelled || mapRef.current) return;
 
-        const start = centre ?? FALLBACK_CENTRE;
+        // The shop's own pin wins over the city centroid: an edit form should
+        // open on the building, not on the middle of the city.
+        const start = initial ?? centre ?? FALLBACK_CENTRE;
         const map = L.map(container, {
           center: [start.latitude, start.longitude],
-          zoom: centre ? 13 : 11,
+          zoom: initial ? 16 : centre ? 13 : 11,
           // A shop is a point, not a region. Rotating gestures and a scroll
           // wheel that zooms while somebody is scrolling the form past it are
           // both annoyances rather than features.

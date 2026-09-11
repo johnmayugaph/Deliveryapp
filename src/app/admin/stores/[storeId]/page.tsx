@@ -19,6 +19,11 @@ import { ReferralStatus } from '@prisma/client';
 import { formatCentavos } from '@/lib/money';
 import { StoreBrandingControls } from '@/components/admin/StoreBrandingControls';
 import { StoreActiveToggle } from '@/components/admin/StoreActiveToggle';
+import { StoreProfileForm } from '@/components/admin/StoreProfileForm';
+import { prisma } from '@/lib/prisma';
+import { getAllServices } from '@/lib/services/registry';
+import { tileSource } from '@/lib/geo/tiles';
+import { geocodingIsAvailable } from '@/lib/geo/geocode';
 import { ReasonForm } from '@/components/admin/ReasonForm';
 import { Empty, Panel, PersonLink, Pill, Stat, manilaTime } from '@/components/admin/primitives';
 import { displayNameFor } from '@/lib/auth/session';
@@ -27,12 +32,23 @@ import { formatPhilippineMobile } from '@/lib/auth/phone';
 export const dynamic = 'force-dynamic';
 
 /**
- * One partner shop.
+ * One partner shop — everything about it, on one page.
  *
- * The console's job here is narrow on purpose: whether customers can see the
- * shop, and who has the keys. The menu, the prep time and the day-to-day staff
- * are the shop's own, and duplicating those controls would mean two screens
- * that disagree.
+ * THE SECOND DRAFT. The first one was narrow on purpose: the console did only
+ * what a shop could not do for itself, and everything else lived in the shop's
+ * own back office. In practice that meant a shop's details were spread over
+ * four screens, two of which did not exist — the name, the address, the city,
+ * the coordinates and the services could not be changed ANYWHERE, so a partner
+ * who gave the wrong address at onboarding needed somebody with a psql prompt.
+ *
+ * So the top of this page is now ONE form with ONE button covering every
+ * column of `Store` a person may set. Below it sit the things that are not
+ * form fields: the two image uploads, who has the keys, and who introduced the
+ * shop.
+ *
+ * The shop's own back office still edits its prep time and its menu. That
+ * overlap is deliberate and the two do not disagree — both write the same
+ * column, and checkout snapshots the value onto the order anyway.
  */
 export default async function AdminStoreDetailPage({
   params,
@@ -45,7 +61,16 @@ export default async function AdminStoreDetailPage({
   const store = await consoleStoreDetail(storeId);
   if (!store) notFound();
 
-  const referral = await storeAttributionFor(store.id);
+  const [referral, cities, services] = await Promise.all([
+    storeAttributionFor(store.id),
+    prisma.city.findMany({
+      where: { isActive: true },
+      orderBy: { name: 'asc' },
+      // The centroid is what the map falls back to when the city changes.
+      select: { id: true, name: true, centroidLat: true, centroidLng: true },
+    }),
+    getAllServices(),
+  ]);
 
   const now = new Date();
   const liveInvites = store.invites.filter((invite) => inviteIsLive(invite, now));
@@ -88,6 +113,38 @@ export default async function AdminStoreDetailPage({
         />
         <Stat label="Invitations waiting" value={String(liveInvites.length)} />
       </div>
+
+      <Panel
+        title="Store details"
+        description="Everything about this shop in one place. One save covers every section."
+      >
+        <div className="px-4 py-4">
+          <StoreProfileForm
+            store={{
+              id: store.id,
+              name: store.name,
+              slug: store.slug,
+              description: store.description,
+              contactPhone: store.contactPhone,
+              cityId: store.cityId,
+              addressLine: store.addressLine,
+              latitude: store.latitude,
+              longitude: store.longitude,
+              serviceKeys: store.serviceKeys,
+              preparationMinutes: store.preparationMinutes,
+              commissionBasisPoints: store.commissionBasisPoints,
+            }}
+            cities={cities}
+            services={services.map((service) => ({
+              key: service.key,
+              displayName: service.displayName,
+              isActive: service.isActive,
+            }))}
+            tiles={tileSource()}
+            searchAvailable={geocodingIsAvailable()}
+          />
+        </div>
+      </Panel>
 
       {/*
         * THE IMAGES. Two columns that existed from the first migration and

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  changedStoreFields,
   filterConsoleStores,
   ImageUrlNotUnderstoodError,
   ImageUrlTooLongError,
@@ -170,5 +171,84 @@ describe('narrowing the console store list', () => {
     // table is a worse answer to a stale link than an unfiltered one.
     expect(filterConsoleStores(rows, { status: 'banana' })).toHaveLength(4);
     expect(filterConsoleStores(rows, { visibility: '' })).toHaveLength(4);
+  });
+});
+
+describe('what the one store form actually changed', () => {
+  const stored = {
+    name: 'Aling Nena Carinderia',
+    description: null,
+    contactPhone: '+639171234567',
+    cityId: 'city_pampanga',
+    addressLine: '12 Rehearsal St',
+    latitude: 14.6091,
+    longitude: 121.0223,
+    serviceKeys: ['FOOD', 'MART'],
+    preparationMinutes: 20,
+    commissionBasisPoints: 0,
+  };
+
+  it('reports nothing when the form comes back untouched', () => {
+    expect(changedStoreFields(stored, { ...stored })).toEqual({});
+  });
+
+  it('reports the one field that moved, with both sides', () => {
+    const changed = changedStoreFields(stored, { ...stored, commissionBasisPoints: 250 });
+    expect(changed).toEqual({ commissionBasisPoints: { before: 0, after: 250 } });
+  });
+
+  /*
+   * The map picker writes more precision than the column round-trips, so a
+   * plain !== called an untouched pin a change on EVERY save — which fills the
+   * audit log with edits nobody made and makes the real ones unfindable.
+   */
+  it('does not call an untouched pin a move', () => {
+    expect(
+      changedStoreFields(stored, { ...stored, latitude: 14.60910000004 }),
+    ).toEqual({});
+  });
+
+  it('still catches a pin that genuinely moved', () => {
+    const changed = changedStoreFields(stored, { ...stored, latitude: 14.6092 });
+    expect(Object.keys(changed)).toEqual(['latitude']);
+  });
+
+  /*
+   * Checkboxes submit in DOM order, the column comes back in insertion order.
+   * Comparing them as lists made "tick a box, untick it again" look like an
+   * edit.
+   */
+  it('compares services as a set, not as a list', () => {
+    expect(changedStoreFields(stored, { ...stored, serviceKeys: ['MART', 'FOOD'] })).toEqual(
+      {},
+    );
+  });
+
+  /*
+   * Two keys, both directions — deliberately NOT the whole registry. A test
+   * that lists every service key is the same hardcoded-service-list mistake
+   * the guard in `no-service-branches.test.ts` exists to catch, and it caught
+   * this fixture doing it.
+   */
+  it('catches a service actually being dropped, and one being added back', () => {
+    const dropped = changedStoreFields(stored, { ...stored, serviceKeys: ['FOOD'] });
+    expect(Object.keys(dropped)).toEqual(['serviceKeys']);
+    expect(dropped.serviceKeys?.after).toEqual(['FOOD']);
+
+    const added = changedStoreFields(
+      { ...stored, serviceKeys: ['FOOD'] },
+      { ...stored, serviceKeys: ['FOOD', 'MART'] },
+    );
+    expect(Object.keys(added)).toEqual(['serviceKeys']);
+  });
+
+  it('treats clearing an optional field as a change, not as no-op', () => {
+    // An empty description box means REMOVE it. If this read as "unchanged",
+    // a shop could never delete a description somebody typed by mistake.
+    const changed = changedStoreFields(
+      { ...stored, description: 'Old blurb' },
+      { ...stored, description: null },
+    );
+    expect(changed).toEqual({ description: { before: 'Old blurb', after: null } });
   });
 });

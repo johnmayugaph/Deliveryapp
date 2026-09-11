@@ -351,3 +351,49 @@ export function filterConsoleStores(
     return true;
   });
 }
+
+/** A value the store edit form can put in an audit row. */
+export type StoreFieldValue = string | number | null | string[];
+
+/**
+ * What actually changed between the stored row and the submitted form.
+ *
+ * Pure and separate from the action because the two comparisons here are both
+ * easy to get subtly wrong, and both fail QUIETLY:
+ *
+ *  - **Coordinates** are compared to eight decimal places rather than by
+ *    equality. The map picker writes a float with more precision than the
+ *    column round-trips, so a plain `!==` reported a moved pin on every save
+ *    of an untouched map — filling the audit log with edits nobody made.
+ *  - **Service keys** are compared as SETS. The checkboxes submit in DOM
+ *    order and the column comes back in insertion order, so ticking a box and
+ *    unticking it again looked like a change.
+ *
+ * The other direction is worse: a comparison that is too loose reports
+ * "nothing is different yet" at somebody who just corrected an address.
+ */
+export function changedStoreFields(
+  before: Record<string, StoreFieldValue>,
+  after: Record<string, StoreFieldValue>,
+): Record<string, { before: StoreFieldValue; after: StoreFieldValue }> {
+  const changed: Record<string, { before: StoreFieldValue; after: StoreFieldValue }> = {};
+
+  for (const [key, next] of Object.entries(after)) {
+    const current = before[key] ?? null;
+
+    let same: boolean;
+    if (Array.isArray(next)) {
+      const wasList = Array.isArray(current) ? current : [];
+      same =
+        JSON.stringify([...next].sort()) === JSON.stringify([...wasList].sort());
+    } else if (typeof next === 'number' && typeof current === 'number') {
+      same = next.toFixed(8) === current.toFixed(8);
+    } else {
+      same = current === next;
+    }
+
+    if (!same) changed[key] = { before: current, after: next };
+  }
+
+  return changed;
+}

@@ -121,10 +121,12 @@ import {
   LastOwnerError,
 } from '@/lib/merchant/staff-policy';
 import {
+  changedStoreFields,
   ImageUrlNotUnderstoodError,
   ImageUrlTooLongError,
   parseImageUrl,
   uniqueStoreSlug,
+  type StoreFieldValue,
 } from '@/lib/admin/stores';
 import {
   ImageTooLargeError,
@@ -966,6 +968,198 @@ export async function createStoreAction(
  * in `store-staff.test.ts` and `admin-access.test.ts` record that this action
  * is the exception, so the next one cannot join it quietly.
  */
+/** Prep time bounds, the same pair the shop's own settings screen enforces. */
+const MIN_PREP_MINUTES = 1;
+const MAX_PREP_MINUTES = 180;
+
+/**
+ * One shop, one form, one save.
+ *
+ * WHY THIS REPLACED FIVE PANELS. A shop's details were spread across the
+ * console and the shop's own back office — the name and address could only be
+ * changed with a psql prompt, the commission had its own panel, the prep time
+ * lived in the merchant screen, and nothing put them on one page. Somebody
+ * onboarding a partner had to know which of four screens held the field they
+ * wanted, and two of them did not exist.
+ *
+ * So every column of `Store` that a person may set is in this one action, and
+ * the page above it is one form with one button. The exceptions are the two
+ * that are not really fields:
+ *
+ *  - The **logo and banner** stay their own upload controls. A file picker is
+ *    not a text input; making it part of the form would mean re-uploading two
+ *    images every time somebody fixes a phone number.
+ *  - **Active / inactive** stays a switch. It is one bit, it is flipped far
+ *    more often than anything else here, and burying it in a form behind a
+ *    Save button is how a shop stays dark for an hour longer than it should.
+ *
+ * **The slug is NOT editable**, and that is deliberate rather than an
+ * oversight: it is the shop's public address. Changing it turns every link a
+ * customer saved, every link the shop posted on Facebook, and every search
+ * result into a 404 — silently, with nothing in the console to say so. The
+ * form shows it so an operator can copy it; changing one is a job for somebody
+ * who can also put a redirect in front of it.
+ *
+ * ONE AUDIT ROW, listing only what actually changed. A row saying "the store
+ * was edited" is no use six months later; a row saying the commission went
+ * from 0 to 250 and the address moved is the whole point of keeping it.
+ */
+export async function updateStoreProfileAction(
+  _previous: AdminActionResult | null,
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+    const reason = normaliseReason(formData.get('reason'));
+    const storeId = String(formData.get('storeId') ?? '').trim();
+
+    const text = (field: string): string => String(formData.get(field) ?? '').trim();
+
+    const name = text('name');
+    const addressLine = text('addressLine');
+    const cityId = text('cityId');
+    const description = text('description');
+    const phoneRaw = text('contactPhone');
+    const latitude = Number(formData.get('latitude'));
+    const longitude = Number(formData.get('longitude'));
+    const serviceKeys = formData
+      .getAll('serviceKeys')
+      .map((value) => String(value))
+      .filter((value): value is ServiceKey => value in ServiceKey);
+
+    if (name.length < 2) return { ok: false, message: 'The shop needs a name.' };
+    if (addressLine.length < 4) return { ok: false, message: 'The shop needs an address.' };
+    if (serviceKeys.length === 0) {
+      return { ok: false, message: 'Pick at least one service this shop is for.' };
+    }
+
+    // The same coordinate checks the create form makes, for the same reason: a
+    // store at 0,0 is in the Atlantic, and every delivery fee quoted from it
+    // would be computed from the Gulf of Guinea.
+    if (!isFiniteCoordinate(latitude) || !isFiniteCoordinate(longitude)) {
+      return { ok: false, message: 'The shop needs coordinates.' };
+    }
+    if (!isInPhilippines({ latitude, longitude })) {
+      return {
+        ok: false,
+        message: looksSwapped({ latitude, longitude })
+          ? 'Those look like the right numbers the wrong way round — latitude ' +
+            'first, then longitude.'
+          : 'Those coordinates are not in the Philippines.',
+      };
+    }
+
+    const prepMinutes = Math.floor(Number(formData.get('preparationMinutes')));
+    if (
+      !Number.isInteger(prepMinutes) ||
+      prepMinutes < MIN_PREP_MINUTES ||
+      prepMinutes > MAX_PREP_MINUTES
+    ) {
+      return {
+        ok: false,
+        message: `Prep time is between ${MIN_PREP_MINUTES} and ${MAX_PREP_MINUTES} minutes.`,
+      };
+    }
+
+    const basisPoints = Number(text('commissionBasisPoints'));
+    if (!Number.isFinite(basisPoints)) {
+      return { ok: false, message: 'Write the commission in basis points, like 250 for 2.5%.' };
+    }
+    // Throws `InvalidCommissionError`, which `guarded` turns into a sentence.
+    assertCommissionInRange(basisPoints);
+
+    // Stored in one shape so two shops entered by two people are searchable as
+    // one number rather than as "0917…" and "+63917…".
+    let contactPhone: string | null = null;
+    if (phoneRaw !== '') {
+      try {
+        contactPhone = normalisePhilippineMobile(phoneRaw);
+      } catch (error) {
+        if (error instanceof InvalidPhoneNumberError) {
+          return { ok: false, message: "Check the shop's mobile number." };
+        }
+        throw error;
+      }
+    }
+
+    const city = await prisma.city.findUnique({ where: { id: cityId }, select: { id: true } });
+    if (!city) return { ok: false, message: 'Pick a city.' };
+
+    const store = await prisma.store.findUnique({
+      where: { id: storeId },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        description: true,
+        contactPhone: true,
+        cityId: true,
+        addressLine: true,
+        latitude: true,
+        longitude: true,
+        serviceKeys: true,
+        preparationMinutes: true,
+        commissionBasisPoints: true,
+      },
+    });
+    if (!store) return { ok: false, message: 'No such store.' };
+
+    const next = {
+      name,
+      description: description === '' ? null : description,
+      contactPhone,
+      cityId,
+      addressLine,
+      latitude,
+      longitude,
+      serviceKeys,
+      preparationMinutes: prepMinutes,
+      commissionBasisPoints: basisPoints,
+    };
+
+    // The comparison is its own function, and tested: both halves of it fail
+    // quietly. See `changedStoreFields`.
+    const changed = changedStoreFields(
+      store as unknown as Record<string, StoreFieldValue>,
+      next as unknown as Record<string, StoreFieldValue>,
+    );
+
+    if (Object.keys(changed).length === 0) {
+      return { ok: false, message: 'Nothing on that form is different yet.' };
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.store.update({ where: { id: store.id }, data: next });
+      await recordAdminAction(
+        {
+          actorId: admin.id,
+          action: AdminAction.STORE_PROFILE_CHANGED,
+          subjectType: 'Store',
+          subjectId: store.id,
+          subjectLabel: store.name,
+          reason,
+          detail: { changed },
+        },
+        tx,
+      );
+    });
+
+    revalidatePath('/admin/stores');
+    revalidatePath(`/admin/stores/${store.id}`);
+    revalidatePath(`/stores/${store.slug}`);
+    // The shop's own screens read the prep time and the name too.
+    revalidatePath(`/merchant/${store.id}/settings`);
+    // Money: the settlement screen shows the rate this just changed.
+    if (changed.commissionBasisPoints) revalidatePath('/admin/settlement');
+
+    const fields = Object.keys(changed).length;
+    return {
+      ok: true,
+      message: `Saved ${fields} ${fields === 1 ? 'change' : 'changes'} to ${name}.`,
+    };
+  });
+}
+
 export async function setStoreVisibilityAction(
   _previous: AdminActionResult | null,
   formData: FormData,
