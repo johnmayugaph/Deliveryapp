@@ -6,8 +6,11 @@ import { groupByCategory } from '@/lib/merchant/menu-policy';
 import { menuImageHref } from '@/lib/media/image-bytes';
 import { formatCentavos } from '@/lib/money';
 import { findDeliveryFeeRule } from '@/lib/pricing/delivery-fee';
+import { publicStoreReviews } from '@/lib/ratings/reviews';
 import { AddToCartControls } from '@/components/cart/AddToCartControls';
 import { RatingBadge } from '@/components/ui/RatingBadge';
+import { DealRail } from '@/components/stores/DealRail';
+import { ReviewRail } from '@/components/stores/ReviewRail';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,14 +28,17 @@ function categoryId(category: string): string {
  *
  * THE SHAPE IS THE ONE EVERY DELIVERY APP USES, and each part of it answers a
  * question a customer asks before they can order: what is this place (cover,
- * name), is it any good (rating), how long and how much (the delivery card),
- * and what is on the menu (tabs, then the menu itself). The old version
- * answered those in a paragraph of small grey text under the name.
+ * name, branch), is it any good (rating, and what people said), what does it
+ * cost to get here (the card), what is on offer (the deals), and what is on
+ * the menu. The old version answered those in a paragraph of small grey text
+ * under the name.
  *
- * The delivery card is built from the SAME fee rule checkout will apply, not
- * from copy typed here — `findDeliveryFeeRule` is the function that decides
- * the real fee. A store page quoting a number the checkout then disagrees with
- * is the fastest way to lose somebody's trust in the middle of ordering.
+ * The delivery terms come from the SAME fee rule checkout will apply, not from
+ * copy typed here — `findDeliveryFeeRule` is the function that decides the real
+ * fee. A store page quoting a number the checkout then disagrees with is the
+ * fastest way to lose somebody's trust in the middle of ordering. The deals
+ * come from the same `PromoCode` rows and the same label function the shop
+ * list uses, for the same reason.
  */
 export default async function StorePage({
   params,
@@ -83,16 +89,40 @@ export default async function StorePage({
   // a cart nobody can check out with is a worse experience than no cart.
   const canOrder = store.isOpen && liveServices.length > 0;
 
-  // The rule for this shop's first live vertical, so the card below quotes
-  // what checkout will charge. Null when nothing is live here, which is the
-  // same condition that hides the add buttons.
-  const feeRule = liveServices[0]
-    ? await findDeliveryFeeRule(liveServices[0].key, store.cityId)
-    : null;
+  const now = new Date();
+  const [feeRule, reviews, deals] = await Promise.all([
+    // The rule for this shop's first live vertical, so the card below quotes
+    // what checkout will charge. Null when nothing is live here, which is the
+    // same condition that hides the add buttons.
+    liveServices[0]
+      ? findDeliveryFeeRule(liveServices[0].key, store.cityId)
+      : Promise.resolve(null),
+    publicStoreReviews(store.id),
+    prisma.promoCode.findMany({
+      where: {
+        isActive: true,
+        storeId: store.id,
+        startsAt: { lte: now },
+        endsAt: { gte: now },
+        OR: [{ cityIds: { isEmpty: true } }, { cityIds: { has: store.cityId } }],
+      },
+      orderBy: { minimumOrderCentavos: 'asc' },
+      take: 6,
+    }),
+  ]);
 
   // Grouped by the same rule the merchant screen uses, so what a shop arranges
   // is what a customer sees.
   const groups = groupByCategory(store.menuItems);
+
+  /** The card's one-line summary of getting this here. */
+  const deliveryTerms = [
+    `From ${store.preparationMinutes} mins`,
+    feeRule ? `${formatCentavos(feeRule.baseFeeCentavos)} delivery` : null,
+    feeRule?.freeAboveSubtotalCentavos != null
+      ? `Free over ${formatCentavos(feeRule.freeAboveSubtotalCentavos)}`
+      : null,
+  ].filter((term): term is string => term !== null);
 
   return (
     <main className="pb-4">
@@ -110,23 +140,31 @@ export default async function StorePage({
             alt=""
             width={1200}
             height={600}
-            className={`block h-48 w-full object-cover ${store.isOpen ? '' : 'opacity-70 grayscale'}`}
+            className={`block h-44 w-full object-cover ${store.isOpen ? '' : 'opacity-70 grayscale'}`}
           />
         ) : (
-          <div className="h-40 w-full bg-gradient-to-br from-brand-500 to-brand-700" />
+          <div className="h-36 w-full bg-gradient-to-br from-brand-500 to-brand-700" />
         )}
 
         <Link
           href="/"
           aria-label="Back"
-          className="absolute left-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-surface/95 text-base font-bold shadow-tile backdrop-blur"
+          className="absolute left-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-ink/45 text-base font-bold text-white backdrop-blur"
         >
           <span aria-hidden>←</span>
         </Link>
+      </div>
 
-        {/* The shop's own mark, straddling the edge of the cover — the device
-            that makes a hero read as a shop's page rather than a banner. */}
-        <div className="absolute inset-x-0 -bottom-8 flex justify-center">
+      {/*
+        * THE INFO CARD, overlapping the cover.
+        *
+        * One card rather than a centred name and a separate table of terms.
+        * Everything a customer weighs before opening a menu is in it — who,
+        * how good, how long, how much — and the overlap is what makes the
+        * photograph read as this shop's rather than as a banner above it.
+        */}
+      <div className="relative -mt-8 px-4">
+        <div className="card-warm flex items-start gap-3 p-3.5">
           {store.logoUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -134,116 +172,95 @@ export default async function StorePage({
               alt=""
               width={128}
               height={128}
-              className="h-16 w-16 rounded-2xl bg-surface object-cover shadow-lifted ring-4 ring-surface"
+              className="h-16 w-16 shrink-0 rounded-2xl object-cover ring-1 ring-ink/[0.06]"
             />
           ) : (
             <span
               aria-hidden
-              className="flex h-16 w-16 items-center justify-center rounded-2xl bg-brand-50 text-2xl font-extrabold text-brand-700 shadow-lifted ring-4 ring-surface"
+              className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-brand-50 text-2xl font-extrabold text-brand-700 ring-1 ring-ink/[0.06]"
             >
               {store.name.slice(0, 1).toUpperCase()}
             </span>
           )}
+
+          <div className="min-w-0 flex-1">
+            <h1 className="text-[19px] font-extrabold leading-tight tracking-tight">
+              {store.name}
+            </h1>
+            {/* The branch, the way the reference sets it: the shop's own
+                street under its name, so two branches of one name are
+                tellable apart before you have opened either. */}
+            <p className="mt-0.5 truncate text-[12.5px] text-ink-muted">
+              {store.addressLine}
+            </p>
+            <p className="mt-1 text-[13px] font-bold text-ink">
+              <RatingBadge
+                ratingAvg={store.ratingAvg}
+                ratingCount={store.ratingCount}
+                withCount
+              />
+            </p>
+            <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[12.5px] text-ink-muted">
+              {deliveryTerms.map((term, index) => (
+                <span key={term} className="flex items-center gap-1.5">
+                  {index > 0 ? <span aria-hidden>·</span> : null}
+                  {term}
+                </span>
+              ))}
+            </p>
+          </div>
         </div>
+
+        {feeRule?.smallOrderThresholdCentavos != null && feeRule.smallOrderFeeCentavos > 0 ? (
+          /* The one term that is a surprise rather than a selling point, so it
+             is said before the menu rather than discovered at the till. */
+          <p className="mt-1.5 px-1 text-[11.5px] text-ink-faint">
+            {formatCentavos(feeRule.smallOrderFeeCentavos)} small-order fee under{' '}
+            {formatCentavos(feeRule.smallOrderThresholdCentavos)}.
+          </p>
+        ) : null}
       </div>
 
-      <header className="bg-surface px-4 pb-4 pt-11 text-center">
-        <h1 className="text-[21px] font-extrabold tracking-tight">{store.name}</h1>
-        <p className="mt-1 text-[13px] font-bold text-ink">
-          <RatingBadge
-            ratingAvg={store.ratingAvg}
-            ratingCount={store.ratingCount}
-            withCount
-          />
+      <DealRail deals={deals} />
+
+      {liveServices.length > 0 ? (
+        <ul className="flex flex-wrap gap-1.5 px-4 pt-3">
+          {liveServices.map((service) => (
+            <li
+              key={service.key}
+              className="rounded-full bg-brand-50 px-2.5 py-1 text-[11px] font-bold text-brand-800"
+            >
+              {service.displayName}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mx-4 mt-3 rounded-xl bg-surface-sunken px-3 py-2 text-[12px] text-ink-muted">
+          This store is not available in the app yet.
         </p>
-        {store.description ? (
-          <p className="mt-1.5 text-[13px] text-ink-muted">{store.description}</p>
-        ) : null}
+      )}
 
-        {liveServices.length > 0 ? (
-          <ul className="mt-3 flex flex-wrap justify-center gap-1.5">
-            {liveServices.map((service) => (
-              <li
-                key={service.key}
-                className="rounded-full bg-brand-50 px-2.5 py-1 text-[11px] font-bold text-brand-800"
-              >
-                {service.displayName}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="mt-3 rounded-xl bg-surface-sunken px-3 py-2 text-[12px] text-ink-muted">
-            This store is not available in the app yet.
-          </p>
-        )}
-
-        {!store.isOpen ? (
-          <p className="mt-3 rounded-xl bg-brand-50 px-3 py-2 text-[13px] font-bold text-brand-800">
-            Sarado right now — you can look, but not order.
-          </p>
-        ) : null}
-      </header>
-
-      {/*
-        * THE DELIVERY CARD. Time from the shop's own quoted prep, money from
-        * the fee rule checkout will use. The free-delivery and small-order
-        * lines appear only when the rule sets them, because a card that lists
-        * every possible term reads as fine print rather than as an answer.
-        */}
-      {feeRule ? (
-        <div className="px-4">
-          {/* A two-column grid, not a wrapping row. With four terms a wrapping
-              row puts two on the first line and one on each of the next two at
-              360px — the same four facts, read as three ragged rows. */}
-          <dl className="card-warm grid grid-cols-2 gap-x-4 gap-y-3 p-3.5 text-left">
-            <div>
-              <dt className="text-[11px] font-bold uppercase tracking-wide text-ink-faint">
-                Delivery
-              </dt>
-              <dd className="mt-0.5 text-[14px] font-bold">
-                from {store.preparationMinutes} min
-              </dd>
-            </div>
-            <div>
-              <dt className="text-[11px] font-bold uppercase tracking-wide text-ink-faint">
-                Delivery fee
-              </dt>
-              <dd className="mt-0.5 text-[14px] font-bold tabular-nums">
-                from {formatCentavos(feeRule.baseFeeCentavos)}
-              </dd>
-            </div>
-            {feeRule.freeAboveSubtotalCentavos !== null ? (
-              <div>
-                <dt className="text-[11px] font-bold uppercase tracking-wide text-ink-faint">
-                  Free delivery
-                </dt>
-                <dd className="mt-0.5 text-[14px] font-bold tabular-nums text-brand-700">
-                  over {formatCentavos(feeRule.freeAboveSubtotalCentavos)}
-                </dd>
-              </div>
-            ) : null}
-            {feeRule.smallOrderThresholdCentavos !== null &&
-            feeRule.smallOrderFeeCentavos > 0 ? (
-              <div>
-                <dt className="text-[11px] font-bold uppercase tracking-wide text-ink-faint">
-                  Small order fee
-                </dt>
-                <dd className="mt-0.5 text-[14px] font-bold tabular-nums">
-                  {formatCentavos(feeRule.smallOrderFeeCentavos)} under{' '}
-                  {formatCentavos(feeRule.smallOrderThresholdCentavos)}
-                </dd>
-              </div>
-            ) : null}
-          </dl>
-        </div>
+      {!store.isOpen ? (
+        <p className="mx-4 mt-3 rounded-xl bg-brand-50 px-3 py-2 text-[13px] font-bold text-brand-800">
+          Sarado right now — you can look, but not order.
+        </p>
       ) : null}
+
+      <div className="mt-4">
+        <ReviewRail reviews={reviews} />
+      </div>
 
       {/*
         * SECTION TABS. Anchor links, not a client-side tab control: they work
         * before JavaScript arrives, they survive being shared as a URL, and
         * the browser's own smooth scrolling is better than anything worth
-        * writing here. Sticky, because the point of them is reaching a section
-        * from halfway down a long menu.
+        * writing here.
+        *
+        * CHIPS RATHER THAN THE REFERENCE'S DROPDOWN, deliberately. That app
+        * has twenty sections on one menu and a dropdown is the only thing that
+        * fits; a carinderia has three, and a select holding three options
+        * costs a tap to open, a tap to choose, and the ability to see what the
+        * choices are without doing either.
         */}
       {groups.length > 1 ? (
         <nav
@@ -272,10 +289,10 @@ export default async function StorePage({
         /*
          * A section goes to the photo grid only when EVERY item in it has a
          * photograph. One missing photo in a two-column grid is a hole, and
-         * the storefront's rule is already that a menu without photographs
-         * reads as a plain list rather than a column of empty boxes. Shops
-         * upload photos a section at a time, so this is the grain that
-         * matches how the menu actually fills up.
+         * the rule below is already that a menu without photographs reads as
+         * a plain list rather than a column of empty boxes. Shops upload
+         * photos a section at a time, so this is the grain that matches how
+         * the menu actually fills up.
          */
         const hasEveryPhoto = group.items.every((item) => item.image !== null);
 
@@ -294,36 +311,35 @@ export default async function StorePage({
             </h2>
 
             {hasEveryPhoto ? (
-              <ul className="mt-3 grid grid-cols-2 gap-3 px-4">
+              /*
+               * THE GRID. The photograph is the card; the name and the price
+               * sit under it on the page itself, and the + floats on the
+               * picture's bottom corner.
+               *
+               * That is the reference's arrangement and it is not only
+               * fashion: a white card around the text doubles every border on
+               * a screen that is already a column of rectangles, and putting
+               * the control ON the photo is what lets two columns of dishes
+               * fit a phone without the button stealing a line from the name.
+               */
+              <ul className="mt-3 grid grid-cols-2 gap-x-3 gap-y-4 px-4">
                 {group.items.map((item) => (
-                  <li
-                    key={item.id}
-                    id={`item-${item.id}`}
-                    className="card-warm flex flex-col overflow-hidden"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={menuImageHref(item.image!.id)}
-                      alt={item.name}
-                      width={400}
-                      height={400}
-                      loading="lazy"
-                      decoding="async"
-                      className="block aspect-square w-full object-cover"
-                    />
-                    {/* A column with the control at its foot. Two cards in a
-                        row are the same height whatever their names do, and
-                        `mt-auto` is what puts their buttons on one line rather
-                        than wherever each name stopped wrapping. */}
-                    <div className="flex flex-1 flex-col p-3">
-                      <p className="text-[13.5px] font-bold leading-tight">{item.name}</p>
-                      <p className="mt-1 text-[13px] font-bold tabular-nums text-ink">
-                        {item.optionGroups.length > 0 ? 'from ' : ''}
-                        {formatCentavos(item.priceCentavos)}
-                      </p>
+                  <li key={item.id} id={`item-${item.id}`}>
+                    <div className="relative">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={menuImageHref(item.image!.id)}
+                        alt={item.name}
+                        width={400}
+                        height={400}
+                        loading="lazy"
+                        decoding="async"
+                        className="block aspect-square w-full rounded-2xl object-cover ring-1 ring-ink/[0.06]"
+                      />
                       {canOrder ? (
-                        <div className="mt-auto pt-2">
+                        <div className="absolute bottom-2 right-2">
                           <AddToCartControls
+                            variant="round"
                             store={{ id: store.id, name: store.name, slug: store.slug }}
                             menuItemId={item.id}
                             itemName={item.name}
@@ -344,96 +360,88 @@ export default async function StorePage({
                         </div>
                       ) : null}
                     </div>
+                    <p className="mt-2 text-[13.5px] font-bold leading-tight">
+                      {item.name}
+                    </p>
+                    <p className="mt-0.5 text-[13.5px] font-extrabold tabular-nums">
+                      {item.optionGroups.length > 0 ? 'from ' : ''}
+                      {formatCentavos(item.priceCentavos)}
+                    </p>
                   </li>
                 ))}
               </ul>
             ) : (
+              /*
+               * THE LIST. A photograph on the left where there is one, the
+               * dish and its price in the middle, and the + on the right.
+               *
+               * Only where there is one: a menu with no photographs should
+               * read as a plain list, not as a column of empty boxes.
+               *
+               * A plain `<img>` and not `next/image`, deliberately. The file
+               * was already sized for this use when it was uploaded (800px,
+               * ~80 KB) and is served with a year-long immutable cache, so an
+               * optimizer would re-encode it into a cache directory this
+               * container does not have, by fetching our own route from our
+               * own server while it is answering a request. It would also make
+               * the storefront's photographs depend on `sharp`, which is here
+               * as a transitive dependency of Next rather than one this
+               * project declares.
+               */
               <ul className="mt-2 divide-y divide-ink/[0.06]">
                 {group.items.map((item) => (
-                  <li key={item.id} id={`item-${item.id}`} className="bg-surface px-4 py-3">
-                    <div className="flex items-start justify-between gap-3">
-                      {/* Only where there is one. A menu with no photographs
-                          should read as a plain list, not as a column of empty
-                          boxes.
-
-                          A plain `<img>` and not `next/image`, deliberately.
-                          The file was already sized for this use when it was
-                          uploaded (800px, ~80 KB) and is served with a
-                          year-long immutable cache, so an optimizer would
-                          re-encode it into a cache directory this container
-                          does not have, by fetching our own route from our own
-                          server while it is answering a request. It would also
-                          make the storefront's photographs depend on `sharp`,
-                          which is here as a transitive dependency of Next
-                          rather than one this project declares. */}
+                  <li key={item.id} id={`item-${item.id}`} className="bg-surface px-4 py-3.5">
+                    <div className="flex items-center gap-3">
                       {item.image ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
                           src={menuImageHref(item.image.id)}
                           alt={item.name}
-                          width={72}
-                          height={72}
+                          width={112}
+                          height={112}
                           loading="lazy"
                           decoding="async"
-                          className="shrink-0 rounded-xl object-cover ring-1 ring-ink/[0.06]"
-                          style={{ height: '4.5rem', width: '4.5rem' }}
+                          className="h-[4.5rem] w-[4.5rem] shrink-0 rounded-2xl object-cover ring-1 ring-ink/[0.06]"
                         />
                       ) : null}
 
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-[14.5px] font-bold leading-tight">
-                          {item.name}
-                        </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[14.5px] font-bold leading-tight">{item.name}</p>
                         {item.description ? (
-                          <span className="mt-1 block text-[12.5px] text-ink-muted">
+                          <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-snug text-ink-muted">
                             {item.description}
-                          </span>
+                          </p>
                         ) : null}
-                      </span>
-                      <span className="flex shrink-0 flex-col items-end gap-1.5">
-                        <span className="text-[14px] font-bold tabular-nums">
+                        <p className="mt-1 text-[14px] font-extrabold tabular-nums">
+                          {item.optionGroups.length > 0 ? 'from ' : ''}
                           {formatCentavos(item.priceCentavos)}
-                        </span>
-                        {/* A dish that asks nothing keeps its control here,
-                            beside the price, where it has always been. A dish
-                            with choices puts it in the full-width row below: a
-                            chooser squeezed into the price column leaves the
-                            dish name wrapping to three lines on a 360px
-                            phone. */}
-                        {canOrder && item.optionGroups.length === 0 ? (
+                        </p>
+                      </div>
+
+                      {canOrder ? (
+                        <div className="shrink-0 self-end">
                           <AddToCartControls
+                            variant="round"
                             store={{ id: store.id, name: store.name, slug: store.slug }}
                             menuItemId={item.id}
                             itemName={item.name}
                             basePriceCentavos={item.priceCentavos}
-                            groups={[]}
+                            groups={item.optionGroups.map((optionGroup) => ({
+                              id: optionGroup.id,
+                              name: optionGroup.name,
+                              minChoices: optionGroup.minChoices,
+                              maxChoices: optionGroup.maxChoices,
+                              options: optionGroup.options.map((option) => ({
+                                id: option.id,
+                                name: option.name,
+                                priceDeltaCentavos: option.priceDeltaCentavos,
+                                isAvailable: option.isAvailable,
+                              })),
+                            }))}
                           />
-                        ) : null}
-                      </span>
+                        </div>
+                      ) : null}
                     </div>
-
-                    {canOrder && item.optionGroups.length > 0 ? (
-                      <div className="mt-2">
-                        <AddToCartControls
-                          store={{ id: store.id, name: store.name, slug: store.slug }}
-                          menuItemId={item.id}
-                          itemName={item.name}
-                          basePriceCentavos={item.priceCentavos}
-                          groups={item.optionGroups.map((optionGroup) => ({
-                            id: optionGroup.id,
-                            name: optionGroup.name,
-                            minChoices: optionGroup.minChoices,
-                            maxChoices: optionGroup.maxChoices,
-                            options: optionGroup.options.map((option) => ({
-                              id: option.id,
-                              name: option.name,
-                              priceDeltaCentavos: option.priceDeltaCentavos,
-                              isAvailable: option.isAvailable,
-                            })),
-                          }))}
-                        />
-                      </div>
-                    ) : null}
                   </li>
                 ))}
               </ul>

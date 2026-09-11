@@ -648,3 +648,46 @@ export async function markRatingsNotified(input: {
   });
   return count;
 }
+
+/** What a stranger may read: a score and the words, and nothing else. */
+export interface PublicReview {
+  id: string;
+  stars: number;
+  comment: string;
+}
+
+/**
+ * A shop's reviews as a CUSTOMER sees them.
+ *
+ * Separate from `storeReviews` rather than a flag on it, for the same reason
+ * that one has no author: what a function cannot return, a page cannot leak.
+ * The merchant view carries the order number so a shop can look up the
+ * transaction it is being told about — printing that on a public page hands a
+ * stranger an order reference for somebody else's delivery, and no amount of
+ * care in the JSX is as reliable as a return type without the field.
+ *
+ * Only reviews with words in them. A bare five stars adds nothing to a rail
+ * whose whole job is to say what the score felt like, and the number itself is
+ * already on the shop's card.
+ */
+export async function publicStoreReviews(
+  storeId: string,
+  limit = 8,
+): Promise<PublicReview[]> {
+  const rows = await prisma.orderReview.findMany({
+    where: {
+      storeId,
+      storeStars: { not: null },
+      comment: { not: null },
+    },
+    select: { id: true, storeStars: true, comment: true },
+    orderBy: { createdAt: 'desc' },
+    take: limit,
+  });
+
+  return rows.flatMap((row) => {
+    const comment = row.comment?.trim() ?? '';
+    if (comment === '' || row.storeStars === null) return [];
+    return [{ id: row.id, stars: row.storeStars, comment }];
+  });
+}
