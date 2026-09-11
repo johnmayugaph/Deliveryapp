@@ -19,6 +19,7 @@ export interface ConsoleStoreRow {
   id: string;
   name: string;
   slug: string;
+  cityId: string;
   cityName: string;
   isVisible: boolean;
   isOpen: boolean;
@@ -29,6 +30,49 @@ export interface ConsoleStoreRow {
   pendingInvites: number;
   /** The one number that says whether this store can actually take an order. */
   readyForCustomers: boolean;
+
+  /** What the shop looks like on the storefront, so the list can show it. */
+  logoUrl: string | null;
+  coverUrl: string | null;
+  addressLine: string;
+  contactPhone: string | null;
+  /** Whoever is named OWNER, for the column that says who to ring. */
+  owner: { name: string; phone: string } | null;
+  /** Orders ever placed at this shop, in any state. */
+  orders: number;
+}
+
+/** What the console's store list can be narrowed by. */
+export interface ConsoleStoreFilter {
+  /** Name, slug, phone or owner — one box, because an operator has one string. */
+  search?: string | undefined;
+  /** 'open' | 'closed' */
+  status?: string | undefined;
+  /** 'live' | 'hidden' */
+  visibility?: string | undefined;
+  /** A city id. */
+  cityId?: string | undefined;
+}
+
+/**
+ * Orders per store, counted once for the whole list.
+ *
+ * `storeId` lives inside the vertical's own details container rather than in a
+ * column, so this reads every order's `details` and groups in memory — the
+ * same shape `admin/series.ts` uses. One pass for the page rather than one
+ * query per row, which is what a count inside the table loop would have been.
+ */
+async function orderCountsByStore(): Promise<Map<string, number>> {
+  const orders = await prisma.order.findMany({ select: { details: true } });
+  const counts = new Map<string, number>();
+  for (const order of orders) {
+    const details = order.details;
+    if (details === null || typeof details !== 'object' || Array.isArray(details)) continue;
+    const storeId = (details as Record<string, unknown>).storeId;
+    if (typeof storeId !== 'string' || storeId === '') continue;
+    counts.set(storeId, (counts.get(storeId) ?? 0) + 1);
+  }
+  return counts;
 }
 
 /**
@@ -41,26 +85,37 @@ export interface ConsoleStoreRow {
 export async function listConsoleStores(
   now: Date = new Date(),
 ): Promise<ConsoleStoreRow[]> {
-  const stores = await prisma.store.findMany({
-    include: {
-      city: { select: { name: true } },
-      _count: { select: { menuItems: true, members: true } },
-      members: { select: { role: true } },
-      invites: {
-        select: { acceptedAt: true, revokedAt: true, expiresAt: true },
+  const [stores, orderCounts] = await Promise.all([
+    prisma.store.findMany({
+      include: {
+        city: { select: { name: true } },
+        _count: { select: { menuItems: true, members: true } },
+        members: {
+          select: {
+            role: true,
+            user: { select: { fullName: true, displayName: true, phone: true } },
+          },
+        },
+        invites: {
+          select: { acceptedAt: true, revokedAt: true, expiresAt: true },
+        },
       },
-    },
-    orderBy: { name: 'asc' },
-  });
+      orderBy: { name: 'asc' },
+    }),
+    orderCountsByStore(),
+  ]);
 
   return stores
     .map((store) => {
-      const owners = store.members.filter((m) => m.role === StoreRole.OWNER).length;
+      const ownerRows = store.members.filter((m) => m.role === StoreRole.OWNER);
+      const owners = ownerRows.length;
       const menuItems = store._count.menuItems;
+      const firstOwner = ownerRows[0];
       return {
         id: store.id,
         name: store.name,
         slug: store.slug,
+        cityId: store.cityId,
         cityName: store.city.name,
         isVisible: store.isVisible,
         isOpen: store.isOpen,
@@ -73,6 +128,18 @@ export async function listConsoleStores(
         // All three, because any one missing means a customer either cannot
         // find it or finds an empty shop.
         readyForCustomers: store.isVisible && menuItems > 0 && owners > 0,
+        logoUrl: store.logoUrl,
+        coverUrl: store.coverUrl,
+        addressLine: store.addressLine,
+        contactPhone: store.contactPhone,
+        owner: firstOwner
+          ? {
+              name:
+                firstOwner.user.displayName ?? firstOwner.user.fullName ?? 'Unnamed',
+              phone: firstOwner.user.phone,
+            }
+          : null,
+        orders: orderCounts.get(store.id) ?? 0,
       };
     })
     .sort((left, right) => {
@@ -176,4 +243,103 @@ export async function uniqueStoreSlug(name: string): Promise<string> {
   }
   // Fifty shops with one name is not a real case; a timestamp beats throwing.
   return `${base}-${Date.now().toString(36)}`;
+}
+
+export class ImageUrlNotUnderstoodError extends Error {
+  constructor() {
+    super(
+      'That does not look like an image address. Use a link starting https:// ' +
+        '(or a data:image/… you pasted from an upload tool).',
+    );
+    this.name = 'ImageUrlNotUnderstoodError';
+  }
+}
+
+/** How long a pasted data URL may be, to keep a row from becoming a file store. */
+export const MAX_IMAGE_URL_LENGTH = 512_000;
+
+export class ImageUrlTooLongError extends Error {
+  constructor(readonly length: number) {
+    super(
+      `That address is ${Math.round(length / 1024)} KB. Paste a link instead of ` +
+        'the whole image, or upload it somewhere and use the link.',
+    );
+    this.name = 'ImageUrlTooLongError';
+  }
+}
+
+/**
+ * A logo or banner address a shop may be given, or null to clear it.
+ *
+ * WHAT IS ALLOWED AND WHY. `https:` because that is where a hosted image
+ * lives; `data:image/...` because the seed writes one and an operator with an
+ * inline image from a resize tool should be able to paste it. Everything else
+ * is refused — most usefully `http:`, which a browser on an HTTPS page blocks
+ * as mixed content, so a shop's logo would simply fail to appear with no
+ * message anywhere.
+ *
+ * This is NOT primarily an injection guard: a browser does not execute
+ * `javascript:` in an `<img src>`. It is a typo guard, for a field whose
+ * failure mode is a broken image on a customer's screen that nobody in the
+ * office ever sees.
+ */
+export function parseImageUrl(raw: string): string | null {
+  const value = raw.trim();
+  if (value === '') return null;
+  if (value.length > MAX_IMAGE_URL_LENGTH) throw new ImageUrlTooLongError(value.length);
+
+  if (value.startsWith('data:image/')) return value;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new ImageUrlNotUnderstoodError();
+  }
+  if (parsed.protocol !== 'https:') throw new ImageUrlNotUnderstoodError();
+  return parsed.toString();
+}
+
+/**
+ * Narrow the console's store list.
+ *
+ * Filtering in memory rather than in SQL, deliberately: `listConsoleStores`
+ * already reads every store to work out which are ready, and one of the
+ * filters — the search box — has to match the OWNER'S name and number, which
+ * live on a joined user rather than on the store. Doing half in SQL and half
+ * here would be two places to look when a row does not appear.
+ *
+ * An unrecognised value is ignored rather than matching nothing. These come
+ * from a query string somebody may have edited or bookmarked, and an empty
+ * table is a worse answer to a stale link than an unfiltered one.
+ */
+export function filterConsoleStores(
+  rows: readonly ConsoleStoreRow[],
+  filter: ConsoleStoreFilter,
+): ConsoleStoreRow[] {
+  const needle = (filter.search ?? '').trim().toLowerCase();
+
+  return rows.filter((row) => {
+    if (filter.status === 'open' && !row.isOpen) return false;
+    if (filter.status === 'closed' && row.isOpen) return false;
+    if (filter.visibility === 'live' && !row.isVisible) return false;
+    if (filter.visibility === 'hidden' && row.isVisible) return false;
+    if (filter.cityId !== undefined && filter.cityId !== '' && row.cityId !== filter.cityId) {
+      return false;
+    }
+    if (needle !== '') {
+      const haystack = [
+        row.name,
+        row.slug,
+        row.contactPhone ?? '',
+        row.addressLine,
+        row.owner?.name ?? '',
+        row.owner?.phone ?? '',
+      ]
+        .join(' ')
+        .toLowerCase();
+      if (!haystack.includes(needle)) return false;
+    }
+    return true;
+  });
 }

@@ -1,0 +1,11 @@
+-- One audit action for changing a shop's logo or banner.
+--
+-- Its own value rather than reusing STORE_MEMBERSHIP_CHANGED, which is what
+-- the visibility toggle already borrows. An audit log whose action names do
+-- not say what happened is a log nobody can search, and "who replaced this
+-- shop's banner" is exactly the question somebody asks when a wrong image is
+-- live on the storefront.
+--
+-- IF NOT EXISTS so re-running this on a database that already has it is a
+-- no-op rather than an error.
+ALTER TYPE "AdminAction" ADD VALUE IF NOT EXISTS 'STORE_BRANDING_CHANGED';

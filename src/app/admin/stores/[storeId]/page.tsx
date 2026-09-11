@@ -13,6 +13,7 @@ import {
   attributeStoreReferralAction,
   grantStoreAccessAction,
   revokeStoreAccessAction,
+  setStoreBrandingAction,
   setStoreVisibilityAction,
 } from '@/lib/actions/admin-actions';
 import { ReferralStatus } from '@prisma/client';
@@ -96,6 +97,98 @@ export default async function AdminStoreDetailPage({
               : store._count.menuItems === 0
                 ? 'This shop has no menu yet, so it cannot be made visible. The owner adds items from the store back office.'
                 : 'Customers cannot find this shop yet.'}
+          </ReasonForm>
+        </div>
+      </Panel>
+
+      {/*
+        * THE IMAGES. These two columns existed from the first migration and
+        * nothing in the console could write them — a shop onboarded here got
+        * no logo and no banner, and the only fix was a psql prompt. That is
+        * also why the storefront grew a tinted-initial fallback for both.
+        *
+        * Shown as well as edited: an operator should be able to see what is
+        * live on a customer's screen without opening the storefront, because
+        * the case that matters is a WRONG image, and you cannot fix what you
+        * cannot see.
+        */}
+      <Panel
+        title="Logo and banner"
+        description="What customers see on the shop list and at the top of its page. Paste an https:// link, or leave a box empty to remove that image."
+      >
+        <div className="space-y-4 px-4 py-4">
+          <div className="flex flex-wrap items-start gap-5">
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-wide text-ink-muted">
+                Logo
+              </p>
+              {store.logoUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={store.logoUrl}
+                  alt=""
+                  width={128}
+                  height={128}
+                  className="mt-1 h-16 w-16 rounded-xl object-cover ring-1 ring-black/5"
+                />
+              ) : (
+                <p className="mt-1 flex h-16 w-16 items-center justify-center rounded-xl bg-surface-sunken text-[11px] text-ink-faint ring-1 ring-black/5">
+                  None
+                </p>
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-ink-muted">
+                Banner
+              </p>
+              {store.coverUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={store.coverUrl}
+                  alt=""
+                  width={640}
+                  height={240}
+                  className="mt-1 h-16 w-full max-w-sm rounded-xl object-cover ring-1 ring-black/5"
+                />
+              ) : (
+                <p className="mt-1 flex h-16 w-full max-w-sm items-center justify-center rounded-xl bg-surface-sunken text-[11px] text-ink-faint ring-1 ring-black/5">
+                  None
+                </p>
+              )}
+            </div>
+          </div>
+
+          <ReasonForm
+            action={setStoreBrandingAction}
+            hidden={{ storeId: store.id }}
+            submitLabel="Save images"
+            extraFields={
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block">
+                  <span className="text-[11px] font-bold text-ink-muted">Logo address</span>
+                  <input
+                    name="logoUrl"
+                    type="text"
+                    defaultValue={store.logoUrl ?? ''}
+                    placeholder="https://…"
+                    className="mt-0.5 w-full rounded-lg bg-surface-sunken px-3 py-2 font-mono text-[12px] ring-1 ring-black/5 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-[11px] font-bold text-ink-muted">Banner address</span>
+                  <input
+                    name="coverUrl"
+                    type="text"
+                    defaultValue={store.coverUrl ?? ''}
+                    placeholder="https://…"
+                    className="mt-0.5 w-full rounded-lg bg-surface-sunken px-3 py-2 font-mono text-[12px] ring-1 ring-black/5 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                </label>
+              </div>
+            }
+          >
+            A square logo and a wide banner read best — the storefront crops
+            both to fit. An empty box removes that image.
           </ReasonForm>
         </div>
       </Panel>

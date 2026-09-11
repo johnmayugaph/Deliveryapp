@@ -2604,6 +2604,9 @@ enum AdminAction {
   SETTLEMENT_ADJUSTED
   /// A store's commission rate was changed. Audited because it changes what
   /// every future order pays that shop.
+  /// A shop's logo or banner was replaced from the console.
+  STORE_BRANDING_CHANGED
+
   STORE_COMMISSION_CHANGED
   /// A customer's payment was confirmed as received. Audited because it is the
   /// moment somebody decides money arrived, on the word of a person reading a

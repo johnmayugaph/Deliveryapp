@@ -120,7 +120,12 @@ import {
   InviteNotFoundError,
   LastOwnerError,
 } from '@/lib/merchant/staff-policy';
-import { uniqueStoreSlug } from '@/lib/admin/stores';
+import {
+  ImageUrlNotUnderstoodError,
+  ImageUrlTooLongError,
+  parseImageUrl,
+  uniqueStoreSlug,
+} from '@/lib/admin/stores';
 import {
   AlreadyInThatStateError,
   DecisionNeedsReasonError,
@@ -993,6 +998,100 @@ export async function setStoreVisibilityAction(
       ? `${store.name} is now visible to customers.`
       : `${store.name} is hidden from customers.`,
   };
+}
+
+/**
+ * A shop's logo and banner.
+ *
+ * These two columns have existed since the first migration and until now
+ * nothing in the console could write them — they were set by the seed and
+ * otherwise by somebody with a psql prompt. So every shop onboarded through
+ * this console had no logo and no banner, which is why the storefront grew a
+ * tinted-initial fallback for both.
+ *
+ * BOTH FIELDS ARE SENT TOGETHER, and an empty box clears that field rather
+ * than leaving it alone. A form where blank means "no change" cannot express
+ * "remove the wrong banner", and removing a wrong banner is the urgent case:
+ * the image is on a customer's screen right now.
+ */
+export async function setStoreBrandingAction(
+  formData: FormData,
+): Promise<AdminActionResult> {
+  let admin;
+  try {
+    admin = await requireAdmin();
+  } catch (error) {
+    if (error instanceof AdminAccessRequiredError) return DENIED;
+    throw error;
+  }
+
+  const storeId = String(formData.get('storeId') ?? '').trim();
+
+  let reason: string;
+  try {
+    reason = normaliseReason(formData.get('reason'));
+  } catch (error) {
+    if (error instanceof AuditReasonRequiredError) {
+      return { ok: false, message: error.message };
+    }
+    throw error;
+  }
+
+  let logoUrl: string | null;
+  let coverUrl: string | null;
+  try {
+    logoUrl = parseImageUrl(String(formData.get('logoUrl') ?? ''));
+    coverUrl = parseImageUrl(String(formData.get('coverUrl') ?? ''));
+  } catch (error) {
+    if (
+      error instanceof ImageUrlNotUnderstoodError ||
+      error instanceof ImageUrlTooLongError
+    ) {
+      return { ok: false, message: error.message };
+    }
+    throw error;
+  }
+
+  const store = await prisma.store.findUnique({
+    where: { id: storeId },
+    select: { id: true, name: true, slug: true, logoUrl: true, coverUrl: true },
+  });
+  if (!store) return { ok: false, message: 'No such store.' };
+
+  if (store.logoUrl === logoUrl && store.coverUrl === coverUrl) {
+    return { ok: false, message: 'Those are already the images on that shop.' };
+  }
+
+  await prisma.$transaction(async (tx) => {
+    // `null` rather than `undefined`: undefined means "leave this column" to
+    // Prisma, and an empty box has to be able to REMOVE an image.
+    await tx.store.update({
+      where: { id: store.id },
+      data: { logoUrl, coverUrl },
+    });
+    await recordAdminAction(
+      {
+        actorId: admin.id,
+        action: AdminAction.STORE_BRANDING_CHANGED,
+        subjectType: 'Store',
+        subjectId: store.id,
+        subjectLabel: store.name,
+        reason,
+        // What changed, not the addresses themselves — a data URL would put a
+        // whole image into the audit row.
+        detail: {
+          logo: store.logoUrl === logoUrl ? 'unchanged' : logoUrl === null ? 'removed' : 'set',
+          banner: store.coverUrl === coverUrl ? 'unchanged' : coverUrl === null ? 'removed' : 'set',
+        },
+      },
+      tx,
+    );
+  });
+
+  revalidatePath('/admin/stores');
+  revalidatePath(`/admin/stores/${store.id}`);
+  revalidatePath(`/stores/${store.slug}`);
+  return { ok: true, message: `Updated the images on ${store.name}.` };
 }
 
 export async function grantStoreAccessAction(
