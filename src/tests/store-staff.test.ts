@@ -442,34 +442,38 @@ describe('creating a partner store', () => {
   });
 
   /*
-   * THE EXCEPTIONS, written down so they stay a closed list.
+   * THE EXCEPTIONS, and the rule behind them.
    *
-   * Two console controls compose their own audit reason instead of asking for
-   * one, and both were deliberate product calls rather than oversights:
+   * Most console actions are judgement calls — suspending a shop, moving a
+   * phone number, adjusting credits — and for those the typed reason IS the
+   * record: the row is worthless without knowing who asked and why.
    *
-   *  - `setStoreVisibilityAction` is a SWITCH in the page header. A switch
-   *    cannot stop to ask why.
-   *  - `updateStoreProfileAction` is the store edit form, where the reason box
-   *    was removed on request: correcting an address a partner just gave you
-   *    over the phone is routine, and a mandatory sentence before every save
-   *    is friction on the common case.
+   * A few are not. A switch, or a form filled in from a partner reading
+   * details down the phone, has no "why" beyond the act itself, and demanding
+   * a sentence in front of each one buys a log that says "logo" four hundred
+   * times while slowing down the common case. Those compose their reason from
+   * what actually happened, which says MORE than a typed one would.
    *
-   * Both still require an admin and both still write a row naming who acted,
-   * when, and what moved — which is what is actually needed when a shop goes
-   * dark, or when a partner disputes the commission they were paid at.
+   * The test is the fence: the composing set has to be exactly this list, so a
+   * new one cannot join by imitation. Adding to it is a decision somebody
+   * makes here, in the open, against the rule above — not something that
+   * happens because a new action looked like an old one.
    *
-   * This test is the fence around that list. An earlier version of it checked
-   * only action names beginning `set` or `grant`, which meant the store form
-   * slipped past without anybody deciding it should: a guard that cannot fail
-   * is worse than no guard, because it reports a safety it does not provide.
-   * It now checks EVERY exported action.
+   * An earlier version checked only names beginning `set` or `grant`, and the
+   * store form slipped past it unnoticed because it begins `update`. A guard
+   * that cannot fail is worse than no guard: it reports a safety it does not
+   * provide. It now walks every exported action.
    */
   const SYSTEM_WRITTEN_REASONS = [
+    // A switch in the page header. It cannot stop to ask.
     'setStoreVisibilityAction',
+    // The store edit form. Reason box removed on request.
     'updateStoreProfileAction',
+    // Adding a dish: the reason is the dish, and it is already in the row.
+    'addStoreMenuItemAction',
   ];
 
-  it('composes its own reason in exactly the two places that are allowed to', () => {
+  it('composes its own reason in exactly the places that are allowed to', () => {
     const actions = source('src/lib/actions/admin-actions.ts');
     const chunks = actions.split('export async function ').slice(1);
 
@@ -491,7 +495,10 @@ describe('creating a partner store', () => {
       .split('export async function ')
       .slice(1)
       .filter((chunk) => chunk.includes('normaliseReason(formData'));
+    // If this ever approaches the composing set's size, the exception has
+    // become the rule and the list above needs arguing about, not extending.
     expect(askers.length).toBeGreaterThan(10);
+    expect(askers.length).toBeGreaterThan(SYSTEM_WRITTEN_REASONS.length * 5);
   });
 
   it('masks the phone number it writes into the audit detail', () => {

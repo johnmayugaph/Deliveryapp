@@ -121,6 +121,16 @@ import {
   LastOwnerError,
 } from '@/lib/merchant/staff-policy';
 import { parseMinuteOfDay } from '@/lib/merchant/opening-hours';
+import { addMenuItem } from '@/lib/merchant/menu';
+import {
+  DEFAULT_CATEGORY,
+  DuplicateItemNameError,
+  ItemNameRequiredError,
+  MenuFullError,
+  parsePrice,
+  PriceNotUnderstoodError,
+  PriceOutOfRangeError,
+} from '@/lib/merchant/menu-policy';
 import {
   changedStoreFields,
   ImageUrlNotUnderstoodError,
@@ -1219,6 +1229,107 @@ export async function updateStoreProfileAction(
     return {
       ok: true,
       message: `Saved ${fields} ${fields === 1 ? 'change' : 'changes'} to ${name}.`,
+    };
+  });
+}
+
+/**
+ * Putting a dish on a shop's menu, from the console.
+ *
+ * WHY THE CONSOLE CAN DO THIS AT ALL. A store with no menu cannot be made
+ * Active — a customer would find it, open it and see nothing — and until now
+ * the only way to get a first dish onto it was for the owner to sign in and
+ * do it themselves. So a shop onboarded on a Friday afternoon sat dark until
+ * somebody at the shop got round to it, and the operator who onboarded them
+ * could see the problem on their screen and do nothing about it.
+ *
+ * THE SAME `addMenuItem` THE SHOP USES. Not a second insert with the same
+ * shape: one path means the duplicate-name check, the category placement, the
+ * 300-item cap and the sort ordering cannot drift between the two doors. What
+ * differs is only who is allowed through — `requireAdmin` here, membership
+ * there.
+ *
+ * NOT a general admin override on `requireStoreAccess`. That would have been
+ * two lines and would have quietly handed every administrator the merchant's
+ * whole surface — accepting orders, changing prices, printing the queue — on
+ * a page about adding a dish.
+ */
+export async function addStoreMenuItemAction(
+  _previous: AdminActionResult | null,
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+
+    const storeId = String(formData.get('storeId') ?? '').trim();
+    const name = String(formData.get('name') ?? '').trim();
+    const category = String(formData.get('category') ?? '').trim();
+    const description = String(formData.get('description') ?? '').trim();
+    const priceRaw = String(formData.get('price') ?? '').trim();
+
+    const store = await prisma.store.findUnique({
+      where: { id: storeId },
+      select: { id: true, name: true, slug: true },
+    });
+    if (!store) return { ok: false, message: 'No such store.' };
+
+    // The shop's own refusals, in the shop's own words. They are thrown rather
+    // than returned, and `guarded` does not know them — without this a typo in
+    // a price would land on `/admin/errors` as a fault of ours instead of as a
+    // sentence next to the field.
+    let created;
+    try {
+      // Through the shop's own parser, so "120", "120.50" and "₱120" are read
+      // here exactly as they are read on the merchant screen.
+      const priceCentavos = parsePrice(priceRaw, centavosFromPesoInput);
+
+      created = await addMenuItem({
+        storeId: store.id,
+        name,
+        category: category === '' ? DEFAULT_CATEGORY : category,
+        priceCentavos,
+        description: description === '' ? null : description,
+      });
+    } catch (error) {
+      if (
+        error instanceof ItemNameRequiredError ||
+        error instanceof PriceNotUnderstoodError ||
+        error instanceof PriceOutOfRangeError ||
+        error instanceof DuplicateItemNameError ||
+        error instanceof MenuFullError
+      ) {
+        return { ok: false, message: error.message };
+      }
+      throw error;
+    }
+
+    await recordAdminAction({
+      actorId: admin.id,
+      action: AdminAction.STORE_MENU_ITEM_ADDED,
+      subjectType: 'Store',
+      subjectId: store.id,
+      subjectLabel: store.name,
+      reason: normaliseReason(
+        `Added "${created.name}" to the menu from the console.`,
+      ),
+      detail: {
+        itemId: created.id,
+        name: created.name,
+        category: created.category,
+        priceCentavos: created.priceCentavos,
+      },
+    });
+
+    revalidatePath('/admin/stores');
+    revalidatePath(`/admin/stores/${store.id}`);
+    revalidatePath(`/stores/${store.slug}`);
+    revalidatePath(`/merchant/${store.id}/menu`);
+
+    return {
+      ok: true,
+      message: `${created.name} added under ${created.category}, at ${formatCentavos(
+        created.priceCentavos,
+      )}.`,
     };
   });
 }

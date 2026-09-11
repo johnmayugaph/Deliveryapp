@@ -20,6 +20,10 @@ import { formatCentavos } from '@/lib/money';
 import { StoreBrandingControls } from '@/components/admin/StoreBrandingControls';
 import { StoreActiveToggle } from '@/components/admin/StoreActiveToggle';
 import { StoreProfileForm } from '@/components/admin/StoreProfileForm';
+import { StoreMenuPanel } from '@/components/admin/StoreMenuPanel';
+import { storeMenu } from '@/lib/merchant/menu';
+import { categoriesOf } from '@/lib/merchant/menu-policy';
+import { menuImageHref } from '@/lib/media/image-bytes';
 import { prisma } from '@/lib/prisma';
 import { getAllServices } from '@/lib/services/registry';
 import { tileSource } from '@/lib/geo/tiles';
@@ -61,7 +65,7 @@ export default async function AdminStoreDetailPage({
   const store = await consoleStoreDetail(storeId);
   if (!store) notFound();
 
-  const [referral, cities, services] = await Promise.all([
+  const [referral, cities, services, menu] = await Promise.all([
     storeAttributionFor(store.id),
     prisma.city.findMany({
       where: { isActive: true },
@@ -70,6 +74,7 @@ export default async function AdminStoreDetailPage({
       select: { id: true, name: true, centroidLat: true, centroidLng: true },
     }),
     getAllServices(),
+    storeMenu(store.id),
   ]);
 
   const now = new Date();
@@ -149,6 +154,20 @@ export default async function AdminStoreDetailPage({
           />
         </div>
       </Panel>
+
+      <StoreMenuPanel
+        storeId={store.id}
+        items={menu.map((item) => ({
+          id: item.id,
+          name: item.name,
+          category: item.category,
+          description: item.description,
+          priceCentavos: item.priceCentavos,
+          isAvailable: item.isAvailable,
+          imageHref: item.image ? menuImageHref(item.image.id) : null,
+        }))}
+        categories={categoriesOf(menu)}
+      />
 
       {/*
         * SIDE BY SIDE FROM `lg`.

@@ -2682,6 +2682,9 @@ enum AdminAction {
   /// A store's commission rate was changed. Audited because it changes what
   /// every future order pays that shop.
   /// A shop's logo or banner was replaced from the console.
+  /// A dish added to a shop's menu from the console rather than by the shop.
+  STORE_MENU_ITEM_ADDED
+
   /// Name, address, city, coordinates, services, prep time or commission —
   /// the one consolidated store edit form.
   STORE_PROFILE_CHANGED
