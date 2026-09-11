@@ -724,8 +724,35 @@ model Store {
   longitude    Float
   contactPhone String?
 
+  /// The shop's own switch — "we are trading today".
+  ///
+  /// NOT the whole answer once a schedule is set. A customer can order when
+  /// this is true AND the clock is inside the opening hours below; see
+  /// `isAcceptingOrders` in `lib/merchant/opening-hours.ts`. Keeping the two
+  /// separate means a shop can still close early on a dead Tuesday without
+  /// editing its posted hours, and reopens on its own the next morning.
   isOpen    Boolean @default(true)
   isVisible Boolean @default(true)
+
+  /// Posted opening hours, as minutes from midnight in Manila time.
+  ///
+  /// Null means NO SCHEDULE: the shop is open whenever `isOpen` says so, which
+  /// is how every store behaved before this existed and is still the right
+  /// default for a shop that keeps irregular hours.
+  ///
+  /// Minutes rather than a `DateTime`, because a time of day is not an
+  /// instant: storing 08:00 as a timestamp forces a date onto it and then a
+  /// timezone conversion onto that, and the first daylight-saving discussion
+  /// about a country that has none is a bug nobody needed.
+  ///
+  /// `closes` BELOW `opens` means the shop trades past midnight — 18:00 to
+  /// 02:00 is a real carinderia, not a typo — and the check handles it.
+  opensAtMinute  Int?
+  closesAtMinute Int?
+
+  /// An optional daily break, same units. Kitchen shut between these.
+  breakStartMinute Int?
+  breakEndMinute   Int?
 
   /// Written only by `prisma/seed.ts`. An invented restaurant with invented
   /// prices that a real customer can order from is a promise nobody will keep,

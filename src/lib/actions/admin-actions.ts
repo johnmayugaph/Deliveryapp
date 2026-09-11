@@ -120,6 +120,7 @@ import {
   InviteNotFoundError,
   LastOwnerError,
 } from '@/lib/merchant/staff-policy';
+import { parseMinuteOfDay } from '@/lib/merchant/opening-hours';
 import {
   changedStoreFields,
   ImageUrlNotUnderstoodError,
@@ -1072,6 +1073,44 @@ export async function updateStoreProfileAction(
       };
     }
 
+    // --- posted opening hours -------------------------------------------
+    //
+    // Read as a pair. A window with one end is a schedule nothing can
+    // evaluate, and the database refuses it anyway — better to say so here
+    // than to hand somebody a constraint violation.
+    const readWindow = (
+      openField: string,
+      closeField: string,
+      label: string,
+    ): { from: number | null; to: number | null } | { error: string } => {
+      const openRaw = text(openField);
+      const closeRaw = text(closeField);
+      if (openRaw === '' && closeRaw === '') return { from: null, to: null };
+      if (openRaw === '' || closeRaw === '') {
+        return { error: `Give both a start and an end for the ${label}, or neither.` };
+      }
+      const from = parseMinuteOfDay(openRaw);
+      const to = parseMinuteOfDay(closeRaw);
+      if (from === null || to === null) {
+        return { error: `Those ${label} times are not times. Use 24-hour, like 08:00.` };
+      }
+      if (from === to) {
+        return { error: `A ${label} that starts and ends at the same minute is never open.` };
+      }
+      return { from, to };
+    };
+
+    const hours = readWindow('opensAt', 'closesAt', 'opening hours');
+    if ('error' in hours) return { ok: false, message: hours.error };
+    const brk = readWindow('breakStart', 'breakEnd', 'break');
+    if ('error' in brk) return { ok: false, message: brk.error };
+    if (brk.from !== null && hours.from === null) {
+      return {
+        ok: false,
+        message: 'A break only means something inside posted opening hours. Set those first.',
+      };
+    }
+
     const basisPoints = Number(text('commissionBasisPoints'));
     if (!Number.isFinite(basisPoints)) {
       return { ok: false, message: 'Write the commission in basis points, like 250 for 2.5%.' };
@@ -1111,6 +1150,10 @@ export async function updateStoreProfileAction(
         serviceKeys: true,
         preparationMinutes: true,
         commissionBasisPoints: true,
+        opensAtMinute: true,
+        closesAtMinute: true,
+        breakStartMinute: true,
+        breakEndMinute: true,
       },
     });
     if (!store) return { ok: false, message: 'No such store.' };
@@ -1126,6 +1169,10 @@ export async function updateStoreProfileAction(
       serviceKeys,
       preparationMinutes: prepMinutes,
       commissionBasisPoints: basisPoints,
+      opensAtMinute: hours.from,
+      closesAtMinute: hours.to,
+      breakStartMinute: brk.from,
+      breakEndMinute: brk.to,
     };
 
     // The comparison is its own function, and tested: both halves of it fail

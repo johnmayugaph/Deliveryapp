@@ -27,6 +27,7 @@ import { spendOnOrder } from '@/lib/wallet/ledger';
 import { bumpAddressUsage } from '@/lib/addresses/usage';
 import { generateOrderNumber } from '@/lib/reference-numbers';
 import { resolveChoices, unitPriceWithChoices } from '@/lib/merchant/option-policy';
+import { withinOpeningHours } from '@/lib/merchant/opening-hours';
 
 /**
  * Order placement for the FOOD vertical.
@@ -228,6 +229,13 @@ export async function quoteCheckout(input: CheckoutInput): Promise<CheckoutQuote
   }
   if (!store.isOpen) {
     throw new StoreUnavailableError(input.storeId, 'closed');
+  }
+  // The posted hours, checked HERE and not only on the listing. A shop greyed
+  // out on the list but still orderable at checkout is the failure this gate
+  // exists to prevent — and the schedule is derived from the clock, so there
+  // is no job whose last run this depends on.
+  if (!withinOpeningHours(store, new Date())) {
+    throw new StoreUnavailableError(input.storeId, 'outside opening hours');
   }
   if (!store.serviceKeys.includes(ServiceKey.FOOD)) {
     throw new StoreUnavailableError(input.storeId, 'does not serve FOOD');

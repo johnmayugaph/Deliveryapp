@@ -133,6 +133,10 @@ export default async function AdminStoreDetailPage({
               serviceKeys: store.serviceKeys,
               preparationMinutes: store.preparationMinutes,
               commissionBasisPoints: store.commissionBasisPoints,
+              opensAtMinute: store.opensAtMinute,
+              closesAtMinute: store.closesAtMinute,
+              breakStartMinute: store.breakStartMinute,
+              breakEndMinute: store.breakEndMinute,
             }}
             cities={cities}
             services={services.map((service) => ({

@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { storeMenuStock } from '@/lib/merchant/menu';
 import { findDeliveryFeeRule } from '@/lib/pricing/delivery-fee';
 import { getAllServices, isOrderableIn } from '@/lib/services/registry';
+import { withinOpeningHours } from '@/lib/merchant/opening-hours';
 import {
   storefrontState,
   type StorefrontServiceFacts,
@@ -76,6 +77,8 @@ export const loadStorefront = cache(async function loadStorefront(
   return storefrontState({
     isVisible: store.isVisible,
     isOpen: store.isOpen,
+    // The clock enters here and nowhere deeper: the policy module stays pure.
+    withinOpeningHours: withinOpeningHours(store, new Date()),
     cityName: city?.name ?? 'your city',
     services,
     sellableMenuItems: menu.stock.sellable,

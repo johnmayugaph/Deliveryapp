@@ -1,5 +1,6 @@
 import type { Promotion, PromoCode, ServiceKey, Store } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { isAcceptingOrders } from '@/lib/merchant/opening-hours';
 
 /**
  * Everything a service's landing screen needs.
@@ -30,6 +31,16 @@ export interface CategoryTile {
 
 /** A store, with the things the row shows beside its name. */
 export interface StoreRow {
+  /**
+   * The shop as a CUSTOMER sees it right now.
+   *
+   * One field is not the database column: `isOpen` here means "a customer
+   * could order from this shop at this moment" — the shop's own switch AND
+   * the posted opening hours. The row is a view model, and the alternative
+   * was every component on every listing remembering to check the clock
+   * itself, which is how a shop ends up greyed out on the list and still
+   * orderable at checkout.
+   */
   store: Store;
   /** Live codes for this shop, for the chips under the row. */
   deals: PromoCode[];
@@ -144,7 +155,15 @@ export async function loadServicePageData(input: {
       : Promise.resolve(null),
   ]);
 
-  const filtered = allStores.filter((store) => {
+  // The clock, applied once, here. Everything below — the filter, the three
+  // sorts, and every component reading `row.store.isOpen` — then agrees with
+  // what checkout will actually do.
+  const visible = allStores.map((store) => ({
+    ...store,
+    isOpen: isAcceptingOrders(store, now),
+  }));
+
+  const filtered = visible.filter((store) => {
     if (input.filters.openNow && !store.isOpen) return false;
     if (input.filters.fast && store.preparationMinutes > FAST_PREP_MINUTES) return false;
     if (input.filters.deals && (dealsByStore.get(store.id) ?? []).length === 0) return false;
@@ -191,7 +210,7 @@ export async function loadServicePageData(input: {
       store,
       deals: dealsByStore.get(store.id) ?? [],
     })),
-    totalInCity: allStores.length,
+    totalInCity: visible.length,
   };
 }
 

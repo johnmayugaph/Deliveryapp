@@ -29,7 +29,8 @@ export type StorefrontBlocker =
   | 'SERVICE_NOT_LIVE_HERE'
   | 'NO_DELIVERY_PRICING'
   | 'NOTHING_ON_THE_MENU'
-  | 'CLOSED_BY_THE_SHOP';
+  | 'CLOSED_BY_THE_SHOP'
+  | 'OUTSIDE_OPENING_HOURS';
 
 /**
  * Where the fix is.
@@ -139,6 +140,19 @@ export const STOREFRONT_BLOCKERS: Readonly<Record<StorefrontBlocker, BlockerCopy
     fix: { kind: 'SWITCH' },
     hidesTheShop: false,
   },
+  /*
+   * Not a fault either, and not the switch. The switch is ON and the clock is
+   * outside the posted hours — so telling this shop to "tap Bukas" would be
+   * advice that changes nothing, which is exactly the wrong-fix bug the
+   * `BlockerFix` union was introduced to stop.
+   */
+  OUTSIDE_OPENING_HOURS: {
+    title: 'Outside your opening hours',
+    detail:
+      'Your switch is on, but the clock is outside the hours posted for this shop. It reopens on its own at the next opening time. The Settings tab is where those hours are set, if they are wrong.',
+    fix: { kind: 'SCREEN', tab: 'Settings', path: 'settings' },
+    hidesTheShop: false,
+  },
 };
 
 /** One service key the store is attached to, as the gates see it. */
@@ -162,6 +176,14 @@ export interface StorefrontServiceFacts {
 export interface StorefrontFacts {
   isVisible: boolean;
   isOpen: boolean;
+  /**
+   * Whether the posted hours say the shop is trading at this instant.
+   *
+   * Passed in rather than computed here, because this module is pure and the
+   * clock is not. `withinOpeningHours` in `./opening-hours.ts` is what the
+   * caller uses to work it out.
+   */
+  withinOpeningHours: boolean;
   /** Named, because every sentence about a city gate has to say which city. */
   cityName: string;
   services: readonly StorefrontServiceFacts[];
@@ -226,6 +248,7 @@ const REPORT_ORDER: readonly StorefrontBlocker[] = [
   'NO_DELIVERY_PRICING',
   'NOTHING_ON_THE_MENU',
   'CLOSED_BY_THE_SHOP',
+  'OUTSIDE_OPENING_HOURS',
 ];
 
 function serviceStanding(
@@ -260,13 +283,21 @@ export function storefrontState(facts: StorefrontFacts): StorefrontState {
   }
   if (facts.sellableMenuItems === 0) found.add('NOTHING_ON_THE_MENU');
   if (!facts.isOpen) found.add('CLOSED_BY_THE_SHOP');
+  // Only when the switch is ON. Reporting both at once would tell a shop that
+  // closed for the night two different things are wrong with it.
+  else if (!facts.withinOpeningHours) found.add('OUTSIDE_OPENING_HOURS');
 
   const blockers = REPORT_ORDER.filter((blocker) => found.has(blocker));
 
   return {
     cityName: facts.cityName,
     orderable: blockers.length === 0,
-    readyWhenOpen: blockers.every((blocker) => blocker === 'CLOSED_BY_THE_SHOP'),
+    // Both of these mean "nothing is WRONG, you are simply shut" — one by
+    // choice, one by the clock — so neither should turn the panel red.
+    readyWhenOpen: blockers.every(
+      (blocker) =>
+        blocker === 'CLOSED_BY_THE_SHOP' || blocker === 'OUTSIDE_OPENING_HOURS',
+    ),
     listed: !blockers.some((blocker) => STOREFRONT_BLOCKERS[blocker].hidesTheShop),
     blockers,
     services,

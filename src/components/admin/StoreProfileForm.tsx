@@ -5,8 +5,14 @@ import { useRouter } from 'next/navigation';
 import type { ServiceKey } from '@prisma/client';
 import type { AdminActionResult } from '@/lib/admin/access';
 import { updateStoreProfileAction } from '@/lib/actions/admin-actions';
+import { formatMinuteOfDay } from '@/lib/merchant/opening-hours';
 import { LocationPicker } from '@/components/geo/LocationPicker';
 import type { TileSource } from '@/lib/geo/tiles';
+
+/** A minute-of-day back into what an `<input type="time">` wants. */
+function timeValue(minute: number | null): string {
+  return minute === null ? '' : formatMinuteOfDay(minute);
+}
 
 const FIELD =
   'mt-1 w-full rounded-lg border border-black/10 bg-surface px-2.5 py-1.5 text-[13px]';
@@ -55,6 +61,10 @@ export function StoreProfileForm({
     serviceKeys: ServiceKey[];
     preparationMinutes: number;
     commissionBasisPoints: number;
+    opensAtMinute: number | null;
+    closesAtMinute: number | null;
+    breakStartMinute: number | null;
+    breakEndMinute: number | null;
   };
   cities: {
     id: string;
@@ -231,6 +241,70 @@ export function StoreProfileForm({
             never rewrites history.
           </span>
         </label>
+
+        {/*
+          * POSTED HOURS. Leave both blank and the shop is open whenever its
+          * own switch says so, which is how every store behaved before this
+          * existed and is still right for irregular hours.
+          *
+          * Nothing sweeps a column at five o'clock: openness is worked out
+          * from the clock every time it is read, so there is no job whose
+          * last run the answer depends on.
+          */}
+        <fieldset className="mt-4">
+          <legend className="text-[11px] font-semibold text-ink-muted">
+            Opening hours{' '}
+            <span className="font-normal text-ink-faint">
+              (blank = no schedule)
+            </span>
+          </legend>
+          <div className="mt-1.5 grid max-w-md gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className="text-[11px] text-ink-muted">Opens</span>
+              <input
+                name="opensAt"
+                type="time"
+                defaultValue={timeValue(store.opensAtMinute)}
+                className={`${FIELD} tabular-nums`}
+              />
+            </label>
+            <label className="block">
+              <span className="text-[11px] text-ink-muted">Closes</span>
+              <input
+                name="closesAt"
+                type="time"
+                defaultValue={timeValue(store.closesAtMinute)}
+                className={`${FIELD} tabular-nums`}
+              />
+            </label>
+            <label className="block">
+              <span className="text-[11px] text-ink-muted">
+                Break starts <span className="text-ink-faint">(optional)</span>
+              </span>
+              <input
+                name="breakStart"
+                type="time"
+                defaultValue={timeValue(store.breakStartMinute)}
+                className={`${FIELD} tabular-nums`}
+              />
+            </label>
+            <label className="block">
+              <span className="text-[11px] text-ink-muted">Break ends</span>
+              <input
+                name="breakEnd"
+                type="time"
+                defaultValue={timeValue(store.breakEndMinute)}
+                className={`${FIELD} tabular-nums`}
+              />
+            </label>
+          </div>
+          <p className="mt-1.5 max-w-md text-[11px] leading-relaxed text-ink-faint">
+            Manila time. The shop closes and reopens on these times by itself —
+            its own Bukas switch can still close it early, and that does not
+            change the hours posted here. A closing time earlier than the
+            opening time means it trades past midnight.
+          </p>
+        </fieldset>
       </Section>
 
       <Section

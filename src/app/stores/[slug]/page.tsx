@@ -17,6 +17,7 @@ import { OfferRail } from '@/components/stores/OfferRail';
 import { ForYouGrid } from '@/components/stores/ForYouGrid';
 import { MenuItemCard, MenuItemPrice, toCartGroups } from '@/components/stores/MenuItemCard';
 import { PromotionsRail } from '@/components/home/PromotionsRail';
+import { describeOpeningHours, isAcceptingOrders } from '@/lib/merchant/opening-hours';
 
 export const dynamic = 'force-dynamic';
 
@@ -91,11 +92,15 @@ export default async function StorePage({
     (service) => service.isActive && store.serviceKeys.includes(service.key),
   );
 
-  // No add buttons on a closed store or one whose services are not live here —
-  // a cart nobody can check out with is a worse experience than no cart.
-  const canOrder = store.isOpen && liveServices.length > 0;
-
   const now = new Date();
+  // The shop's own switch AND its posted hours. Checkout applies both, so a
+  // page that applied only the switch would show add buttons on a shop that
+  // refuses the order — a cart nobody can check out with.
+  const openNow = isAcceptingOrders(store, now);
+  const postedHours = describeOpeningHours(store);
+
+  // No add buttons on a closed store or one whose services are not live here.
+  const canOrder = openNow && liveServices.length > 0;
   const user = await optionalUser('home');
   const [feeRule, reviews, deals, activeServiceKeys, promotions] = await Promise.all([
     // The rule for this shop's first live vertical, so the card below quotes
@@ -179,7 +184,7 @@ export default async function StorePage({
             alt=""
             width={1200}
             height={600}
-            className={`block h-44 w-full object-cover lg:h-64 lg:rounded-3xl ${store.isOpen ? '' : 'opacity-70 grayscale'}`}
+            className={`block h-44 w-full object-cover lg:h-64 lg:rounded-3xl ${openNow ? '' : 'opacity-70 grayscale'}`}
           />
         ) : (
           <div className="h-36 w-full bg-gradient-to-br from-brand-500 to-brand-700" />
@@ -279,9 +284,12 @@ export default async function StorePage({
         </p>
       )}
 
-      {!store.isOpen ? (
+      {/* "Closed" with no time beside it is the message that makes somebody
+          shut the app. When the shop posts hours, say them. */}
+      {!openNow ? (
         <p className="mx-4 mt-3 rounded-xl bg-brand-50 px-3 py-2 text-[13px] font-bold text-brand-800">
           Sarado right now — you can look, but not order.
+          {store.isOpen && postedHours ? ` Bukas ${postedHours}.` : ''}
         </p>
       ) : null}
 

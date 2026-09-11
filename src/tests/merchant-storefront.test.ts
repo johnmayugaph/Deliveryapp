@@ -37,6 +37,7 @@ function facts(overrides: Partial<StorefrontFacts> = {}): StorefrontFacts {
   return {
     isVisible: true,
     isOpen: true,
+    withinOpeningHours: true,
     cityName: 'Baguio',
     services: [LIVE_FOOD],
     sellableMenuItems: 12,
@@ -71,7 +72,12 @@ describe('the blocker map', () => {
         expect(copy.detail, blocker).not.toMatch(/^Tap /);
       } else {
         // Names a control or a tab the shop actually has, rather than a fix.
-        expect(copy.detail, blocker).toMatch(/Tap|Menu tab/);
+        // Names a control or a TAB THAT EXISTS. The alternation grew when
+        // opening hours arrived: Settings is a real merchant tab, and the
+        // list was only ever an enumeration of the tabs in play at the time.
+        // Widening it for a tab that does not exist would be the failure this
+        // guards against; widening it for one that does is the point.
+        expect(copy.detail, blocker).toMatch(/Tap|Menu tab|Settings tab/);
         expect(copy.detail, blocker).not.toMatch(/support/i);
       }
     }
@@ -281,6 +287,44 @@ describe('an empty menu', () => {
   });
 });
 
+describe('outside the posted opening hours', () => {
+  it('is not a fault — the panel stays calm and the shop stays listed', () => {
+    const state = storefrontState(facts({ withinOpeningHours: false }));
+    expect(state.blockers).toEqual(['OUTSIDE_OPENING_HOURS']);
+    expect(state.orderable).toBe(false);
+    // Same reading as "closed by the shop": nothing is WRONG, it is shut.
+    expect(state.readyWhenOpen).toBe(true);
+    expect(state.listed).toBe(true);
+  });
+
+  /*
+   * The wrong-fix bug in miniature. A shop outside its hours has its switch
+   * already ON, so "tap Bukas" is advice that changes nothing — and telling
+   * it both that it is closed AND that it is outside its hours is two faults
+   * where there is one fact.
+   */
+  it('is not reported alongside the shop’s own switch', () => {
+    const shut = storefrontState(facts({ isOpen: false, withinOpeningHours: false }));
+    expect(shut.blockers).toEqual(['CLOSED_BY_THE_SHOP']);
+    expect(shut.blockers).not.toContain('OUTSIDE_OPENING_HOURS');
+  });
+
+  it('points at the hours, not at the switch', () => {
+    const state = storefrontState(facts({ withinOpeningHours: false }));
+    expect(blockersTheShopCanClear(state)).toEqual(['OUTSIDE_OPENING_HOURS']);
+    expect(screenToOpen(state)).toEqual({ tab: 'Settings', path: 'settings' });
+  });
+
+  it('still reports the real faults that outrank it', () => {
+    // Being shut does not make an empty menu or a hidden shop go away.
+    const state = storefrontState(
+      facts({ withinOpeningHours: false, sellableMenuItems: 0 }),
+    );
+    expect(state.blockers).toEqual(['NOTHING_ON_THE_MENU', 'OUTSIDE_OPENING_HOURS']);
+    expect(state.readyWhenOpen).toBe(false);
+  });
+});
+
 describe('every blocker is reachable, and reported in one order', () => {
   it('can be produced by some real combination of facts', () => {
     // A reason that no facts can produce is dead copy, and dead copy is what
@@ -293,6 +337,9 @@ describe('every blocker is reachable, and reported in one order', () => {
       facts({ services: [{ ...LIVE_FOOD, hasDeliveryPricing: false }] }),
       facts({ sellableMenuItems: 0 }),
       facts({ isOpen: false }),
+      // Switch ON, clock outside the posted hours — the only combination that
+      // produces it, since the two are deliberately not reported together.
+      facts({ isOpen: true, withinOpeningHours: false }),
     ];
     for (const input of cases) {
       for (const blocker of storefrontState(input).blockers) seen.add(blocker);
