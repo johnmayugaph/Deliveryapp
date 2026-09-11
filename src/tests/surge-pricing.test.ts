@@ -670,6 +670,16 @@ describe('the console shows the market and the charge separately', () => {
   });
 
   it('is reachable from the console nav', () => {
-    expect(source('src/app/admin/layout.tsx')).toMatch(/href="\/admin\/surge"/);
+    // Searched, not pointed at one file. This asserted against
+    // `admin/layout.tsx` and broke the day the nav moved into its own
+    // component — a reachability check should follow the links, not a path
+    // somebody typed once.
+    const nav = [
+      'src/components/admin/AdminSidebar.tsx',
+      'src/app/admin/layout.tsx',
+    ]
+      .map((file) => source(file))
+      .join('\n');
+    expect(nav).toMatch(/['"]\/admin\/surge['"]/);
   });
 });

@@ -4,12 +4,17 @@ import { requireAdmin } from '@/lib/admin/access';
 import { deliveryHealth, platformSummary, serviceHealth } from '@/lib/admin/queries';
 import { supportSummary } from '@/lib/support/queries';
 import { countPendingApplications } from '@/lib/admin/fleet';
+import { errorSummary } from '@/lib/monitoring/queries';
 import { adminReviewFeed, ratingSummary } from '@/lib/ratings/reviews';
 import { displayNameFor } from '@/lib/auth/session';
 import { describeWait } from '@/lib/support/policy';
+import { formatDayIn } from '@/lib/time/manila';
 import { listOrders, attachStores } from '@/lib/admin/queries';
+import { changePercent, customerMix, dashboardSeries, topStores } from '@/lib/admin/series';
+import { AreaChart, Sparkline } from '@/components/admin/Charts';
 import {
   Empty,
+  KpiCard,
   Panel,
   PersonLink,
   Pill,
@@ -23,12 +28,22 @@ import {
 
 export const dynamic = 'force-dynamic';
 
+/** The reporting window for everything on this screen that has a history. */
+const WINDOW_DAYS = 30;
+
 /**
  * The overview.
  *
  * Answers one question: is anything wrong right now. So the things on it are
  * the things that go wrong — orders stuck waiting, deliveries that failed, a
  * credit float that moved — rather than the numbers that look good in a deck.
+ *
+ * THE LAYOUT IS THE ONE EVERY OPERATIONS CONSOLE USES, and each band answers a
+ * different question. The headline row is what the business did, with a line
+ * showing whether it is going up. The row under it is what needs a person, and
+ * every one of those is rendered even at zero — a figure that only appears
+ * when it is bad is a figure nobody learns to read. Then the panels: where the
+ * money came from, who is buying, and what is broken.
  *
  * The service table includes the four unlaunched verticals on purpose. A
  * dashboard that shows only what is running makes "we said we would launch
@@ -47,6 +62,10 @@ export default async function AdminOverviewPage() {
     ratings,
     lowReviews,
     ridersWaiting,
+    errors,
+    series,
+    stores,
+    mix,
   ] = await Promise.all([
     platformSummary(),
     serviceHealth(),
@@ -56,34 +75,83 @@ export default async function AdminOverviewPage() {
     ratingSummary(),
     adminReviewFeed(8),
     countPendingApplications(),
+    errorSummary(),
+    dashboardSeries(WINDOW_DAYS),
+    topStores(WINDOW_DAYS),
+    customerMix(WINDOW_DAYS),
   ]);
 
   const failedTotal = health.byChannel.reduce((sum, row) => sum + row.failed, 0);
   const pendingTotal = health.byChannel.reduce((sum, row) => sum + row.pending, 0);
+  const inFlight = services.reduce((sum, row) => sum + row.liveOrders, 0);
+
+  /** Landed out of placed, over the window. Null before anything was placed. */
+  const landedRate =
+    series.totals.orders === 0
+      ? null
+      : Math.round((series.totals.completed / series.totals.orders) * 100);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <div>
         <h1 className="text-lg font-bold">Overview</h1>
         <p className="mt-0.5 text-xs text-ink-muted">
-          Everything happening right now, across every service.
+          Everything happening right now, across every service. Figures with a
+          line cover the last {WINDOW_DAYS} days, in Manila time.
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
-        <Stat
-          label="Orders in flight"
-          value={String(services.reduce((sum, row) => sum + row.liveOrders, 0))}
-          note="somebody is waiting"
+      {/* WHAT THE BUSINESS DID. Five, because a row of five is still readable
+          at a glance and the sixth is always the one that gets skipped. */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+        <KpiCard
+          label="Gross"
+          value={formatCentavos(series.totals.grossCentavos)}
+          change={
+            series.yesterday
+              ? changePercent(series.today.grossCentavos, series.yesterday.grossCentavos)
+              : null
+          }
+          note={`${formatCentavos(series.today.grossCentavos)} today · delivered orders only`}
+          chart={<Sparkline values={series.days.map((day) => day.grossCentavos)} />}
         />
-        <Stat
+        <KpiCard
+          label="Orders"
+          value={String(series.totals.orders)}
+          change={
+            series.yesterday ? changePercent(series.today.orders, series.yesterday.orders) : null
+          }
+          note={`${series.today.orders} placed today`}
+          chart={<Sparkline values={series.days.map((day) => day.orders)} />}
+        />
+        <KpiCard
+          label="Delivered"
+          value={landedRate === null ? '—' : `${landedRate}%`}
+          note={
+            landedRate === null
+              ? 'nothing ordered in the window'
+              : `${series.totals.completed} of ${series.totals.orders} landed`
+          }
+          /* No sparkline here on purpose. The figure is a RATE and the only
+             daily line available is a count — a card whose number says one
+             thing while the line beside it draws another is worse than a card
+             with no line, because the reader trusts the picture. A daily rate
+             is also undefined on every day nothing was ordered. */
+        />
+        <KpiCard
+          label="In flight"
+          value={String(inFlight)}
+          note={inFlight === 0 ? 'nobody is waiting' : 'somebody is waiting'}
+        />
+        <KpiCard
           label="Credits outstanding"
           value={formatCentavos(summary.creditFloatCentavos)}
           note={`${formatCentavos(summary.creditsGrantedTodayCentavos)} granted today`}
         />
-        {/* The waiting count is always in the note, including as a zero — a
-            number that only appears when it is bad is one nobody learns to
-            read, and an unapproved rider cannot earn. */}
+      </div>
+
+      {/* WHAT NEEDS A PERSON. Every one rendered at zero as well, on purpose. */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         <Stat
           label="Fleet online"
           value={`${summary.fleetOnline} / ${summary.fleetApproved}`}
@@ -104,17 +172,6 @@ export default async function AdminOverviewPage() {
           note={pendingTotal > 0 ? `${pendingTotal} still queued` : 'nothing queued'}
         />
         <Stat
-          label="Ratings this week"
-          value={String(ratings.reviewsThisWeek)}
-          note={
-            ratings.reviews === 0
-              ? 'nobody has rated anything yet'
-              : `${ratings.lowRatings} at two stars or less, all time`
-          }
-        />
-        {/* Always shown, including as a zero. A number that only appears when
-            it is bad is one nobody learns to read. */}
-        <Stat
           label="Waiting on support"
           value={String(support.waiting)}
           note={
@@ -125,6 +182,170 @@ export default async function AdminOverviewPage() {
                 : 'nobody is waiting'
           }
         />
+        <Stat
+          label="Open faults"
+          value={String(errors.open)}
+          note={errors.newToday > 0 ? `${errors.newToday} new today` : 'none new today'}
+        />
+        <Stat
+          label="Ratings this week"
+          value={String(ratings.reviewsThisWeek)}
+          note={
+            ratings.reviews === 0
+              ? 'nobody has rated anything yet'
+              : `${ratings.lowRatings} at two stars or less, all time`
+          }
+        />
+      </div>
+
+      <div className="grid gap-3 xl:grid-cols-3">
+        <div className="xl:col-span-2">
+          <Panel
+            title="Gross, by day"
+            description={`Delivered orders over the last ${WINDOW_DAYS} days. An order counts on the day it was placed.`}
+          >
+            <AreaChart
+              points={series.days.map((day) => ({
+                label: formatDayIn(day.day),
+                value: day.grossCentavos,
+              }))}
+              formatValue={formatCentavos}
+            />
+            <div className="grid grid-cols-2 gap-3 border-t border-black/5 p-4 sm:grid-cols-4">
+              <Stat label="Gross" value={formatCentavos(series.totals.grossCentavos)} />
+              <Stat
+                label="Average order"
+                value={
+                  series.totals.completed === 0
+                    ? '—'
+                    : formatCentavos(
+                        Math.round(series.totals.grossCentavos / series.totals.completed),
+                      )
+                }
+              />
+              <Stat label="Delivered" value={String(series.totals.completed)} />
+              <Stat label="Placed" value={String(series.totals.orders)} />
+            </div>
+          </Panel>
+        </div>
+
+        <Panel
+          title="Busiest stores"
+          description={`By delivered orders, last ${WINDOW_DAYS} days.`}
+          action={
+            <Link href="/admin/stores" className="text-[12px] font-semibold text-brand-700">
+              All stores →
+            </Link>
+          }
+        >
+          {stores.length === 0 ? (
+            <Empty>Nothing has been delivered yet.</Empty>
+          ) : (
+            <ul className="divide-y divide-black/5">
+              {stores.map((store, index) => (
+                <li key={store.id} className="flex items-center gap-3 px-4 py-3">
+                  <span className="w-4 shrink-0 text-[12px] font-bold tabular-nums text-ink-faint">
+                    {index + 1}
+                  </span>
+                  {store.logoUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={store.logoUrl}
+                      alt=""
+                      width={64}
+                      height={64}
+                      className="h-8 w-8 shrink-0 rounded-lg object-cover ring-1 ring-black/5"
+                    />
+                  ) : (
+                    <span
+                      aria-hidden
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-[13px] font-bold text-brand-700"
+                    >
+                      {store.name.slice(0, 1).toUpperCase()}
+                    </span>
+                  )}
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13px] font-semibold">
+                      {store.name}
+                    </span>
+                    <span className="block text-[11px] text-ink-faint">
+                      {store.orders} delivered
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-[13px] font-bold tabular-nums">
+                    {formatCentavos(store.grossCentavos)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Panel>
+      </div>
+
+      <div className="grid gap-3 xl:grid-cols-3">
+        <Panel
+          title="Customers"
+          description="Somebody counts as returning once they have had two orders delivered, ever."
+        >
+          <div className="grid grid-cols-2 gap-3 p-4">
+            <Stat
+              label="New"
+              value={String(mix.newCustomers)}
+              note={`first delivery in ${WINDOW_DAYS} days`}
+            />
+            <Stat label="Returning" value={String(mix.returning)} note="two or more delivered" />
+            <Stat
+              label="Orders each"
+              value={mix.ordersPerCustomer === null ? '—' : mix.ordersPerCustomer.toFixed(1)}
+              note="among people who have ordered"
+            />
+            <Stat
+              label="Registered"
+              value={String(mix.registered)}
+              note={`${summary.onboarded} onboarded`}
+            />
+          </div>
+        </Panel>
+
+        <Panel
+          title="Platform health"
+          description="Green is not a claim that nothing is wrong — it is a claim that these four checks passed."
+        >
+          <ul className="divide-y divide-black/5">
+            <HealthRow
+              label="Notifications"
+              ok={failedTotal === 0}
+              value={failedTotal === 0 ? 'Delivering' : `${failedTotal} failed`}
+            />
+            <HealthRow
+              label="Queued notifications"
+              ok={pendingTotal === 0}
+              value={pendingTotal === 0 ? 'Empty' : `${pendingTotal} waiting`}
+            />
+            <HealthRow
+              label="Open faults"
+              ok={errors.open === 0}
+              value={errors.open === 0 ? 'None' : String(errors.open)}
+            />
+            <HealthRow
+              label="Support queue"
+              ok={support.waiting === 0}
+              value={support.waiting === 0 ? 'Empty' : `${support.waiting} waiting`}
+            />
+          </ul>
+        </Panel>
+
+        <Panel
+          title="Push devices"
+          description="Browsers we can still reach."
+        >
+          <div className="grid grid-cols-2 gap-3 p-4">
+            <Stat label="Reachable" value={String(summary.pushDevices)} />
+            <Stat label="Gone" value={String(health.expiredPushDevices)} />
+            <Stat label="Accounts" value={String(summary.people)} />
+            <Stat label="Blocked" value={String(summary.blocked)} />
+          </div>
+        </Panel>
       </div>
 
       {/* The most actionable thing in the application: a low score with a
@@ -288,18 +509,22 @@ export default async function AdminOverviewPage() {
           </TableScroll>
         )}
       </Panel>
-
-      <Panel
-        title="People and devices"
-        description="Push devices are browsers that can still be reached."
-      >
-        <div className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-4">
-          <Stat label="Accounts" value={String(summary.people)} note={`${summary.onboarded} onboarded`} />
-          <Stat label="Blocked" value={String(summary.blocked)} />
-          <Stat label="Push devices" value={String(summary.pushDevices)} note={`${health.expiredPushDevices} gone`} />
-          <Stat label="Fleet approved" value={String(summary.fleetApproved)} note="for at least one service" />
-        </div>
-      </Panel>
     </div>
+  );
+}
+
+/** One check, with a state nobody has to interpret a colour to read. */
+function HealthRow({ label, ok, value }: { label: string; ok: boolean; value: string }) {
+  return (
+    <li className="flex items-center justify-between gap-3 px-4 py-2.5">
+      <span className="text-[13px] font-semibold">{label}</span>
+      <span
+        className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold ${
+          ok ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-100 text-amber-900'
+        }`}
+      >
+        {value}
+      </span>
+    </li>
   );
 }

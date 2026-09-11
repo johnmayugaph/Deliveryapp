@@ -206,3 +206,56 @@ export function PersonLink({
 export function manilaTime(at: Date): string {
   return formatDateTimeIn(at);
 }
+
+/**
+ * A headline figure with its trend beside it.
+ *
+ * The `change` is against the same figure yesterday, and it is NULL rather
+ * than a percentage when yesterday was zero — "+100%" on a first order is a
+ * number that means nothing and reads like growth.
+ *
+ * `note` is always rendered, including when it says nothing is wrong. A
+ * caption that only appears when there is a problem is one nobody learns to
+ * read, which is the same rule the support and fleet figures already follow.
+ */
+export function KpiCard({
+  label,
+  value,
+  note,
+  change,
+  chart,
+}: {
+  label: string;
+  value: string;
+  note: string;
+  /** Percentage change on yesterday, or null when there is nothing to compare. */
+  change?: number | null;
+  /** A sparkline, where the figure has a history worth a line. */
+  chart?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col rounded-xl bg-surface p-4 shadow-sm ring-1 ring-black/5">
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-[11px] font-bold uppercase tracking-wide text-ink-muted">
+          {label}
+        </p>
+        {change !== undefined && change !== null ? (
+          <span
+            className={`shrink-0 rounded-full px-2 py-0.5 text-[10.5px] font-bold ${
+              change >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-brand-50 text-brand-700'
+            }`}
+          >
+            {change >= 0 ? '+' : ''}
+            {change}% <span className="font-medium">vs yest.</span>
+          </span>
+        ) : null}
+      </div>
+
+      <p className="mt-1.5 text-[26px] font-bold leading-none tabular-nums">{value}</p>
+
+      {chart ? <div className="mt-3 text-brand-500">{chart}</div> : null}
+
+      <p className="mt-auto pt-2 text-[11px] text-ink-faint">{note}</p>
+    </div>
+  );
+}

@@ -11,7 +11,7 @@ import {
 import { prisma } from '@/lib/prisma';
 import { demoDataIsUsable } from '@/lib/demo/policy';
 import { getAllServices } from '@/lib/services/registry';
-import { ALL_IN_PROGRESS_STATUSES } from '@/lib/orders/transitions';
+import { ALL_IN_PROGRESS_STATUSES, LANDED_STATUSES } from '@/lib/orders/transitions';
 import { storeIdFromDetails } from '@/lib/merchant/access';
 
 /**
@@ -81,7 +81,7 @@ export async function serviceHealth(now = new Date()): Promise<ServiceHealthRow[
     }),
     prisma.order.groupBy({
       by: ['serviceType'],
-      where: { createdAt: { gte: since }, status: OrderStatus.DELIVERED },
+      where: { createdAt: { gte: since }, status: { in: [...LANDED_STATUSES] } },
       _count: { _all: true },
     }),
     prisma.order.groupBy({
@@ -94,7 +94,7 @@ export async function serviceHealth(now = new Date()): Promise<ServiceHealthRow[
     }),
     prisma.order.groupBy({
       by: ['serviceType'],
-      where: { createdAt: { gte: since }, status: OrderStatus.DELIVERED },
+      where: { createdAt: { gte: since }, status: { in: [...LANDED_STATUSES] } },
       _sum: { totalCentavos: true },
     }),
   ]);

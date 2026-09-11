@@ -164,6 +164,65 @@ migrations by hand, run `npm run prisma:guards` after.
 
 ---
 
+## Updating a deployment that is already running
+
+A schema change shipped to a live box is two things, and the order matters:
+
+```
+docker compose build ops                                   # FIRST, and not optional
+docker compose run --rm --user root ops npx prisma migrate deploy
+docker compose build web && docker compose up -d web
+```
+
+**`build ops` first, every time, even though nothing about `ops` looks like it
+changed.** `ops` sits behind the `tools` profile, and a profiled service is
+skipped by `docker compose up --build` and by `build web`. Its image therefore
+still carries the `prisma/migrations/` folder from whenever it was last built.
+Run `migrate deploy` in that stale image and Prisma reads the migrations it can
+see, finds none it has not applied, prints
+
+```
+No pending migrations to apply.
+```
+
+and **exits 0**. Chain it as `migrate deploy && build web` and the chain
+happily continues: the new code ships against a database missing its column,
+and every page that touches the new field answers 500 while the rest of the
+site looks perfectly healthy.
+
+That is not hypothetical. It is how `MenuItem.compareAtPriceCentavos` reached
+production without its column, and the symptom was one route failing —
+
+```
+The column `MenuItem.compareAtPriceCentavos` does not exist in the current
+database.
+```
+
+— while the home screen and the shop list were fine, because they do not select
+that column.
+
+**The check that would have caught it** costs one command and reads nothing:
+
+```
+docker compose run --rm ops sh -c 'ls prisma/migrations | tail -3'
+```
+
+If the newest migration in the repository is not in that list, the image is
+stale and `migrate deploy` is about to lie to you.
+
+**Take a dump before the migration, not after.** A migration that half-applies
+leaves a schema no rollback in this repository can describe:
+
+```
+docker compose exec -T db pg_dump -U tara tara | gzip > ~/tara-before-<name>-$(date +%F-%H%M).sql.gz
+```
+
+And if the migration was applied by hand rather than through the ops image, run
+`npm run prisma:guards` after it — see the note above on why migrations alone
+are not the whole schema.
+
+---
+
 ## Before anybody can reach it
 
 `db:seed` writes demo data, and the seed says so itself. It uses real

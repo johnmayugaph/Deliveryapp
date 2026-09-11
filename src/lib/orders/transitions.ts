@@ -511,6 +511,25 @@ export const ALL_IN_PROGRESS_STATUSES: readonly OrderStatus[] = Array.from(
 );
 
 /**
+ * The statuses that mean THE ORDER LANDED — the food arrived, the money is
+ * earned, and it counts toward a day's figures.
+ *
+ * Both, and that is the point. `DELIVERED` is what the rider sets; a sweep
+ * later promotes the same order to `COMPLETED` (see `completeOrder`). Counting
+ * only `DELIVERED`, as the console's service table did, means an order is in
+ * today's delivered count and today's gross until the sweep runs and then
+ * silently is not — so both numbers SHRINK over the course of a day, on a
+ * screen whose whole job is telling an operator what happened today.
+ *
+ * One list, used by every count that means "landed", so the console cannot
+ * hold two answers to the same question.
+ */
+export const LANDED_STATUSES: readonly OrderStatus[] = [
+  OrderStatus.DELIVERED,
+  OrderStatus.COMPLETED,
+];
+
+/**
  * Every timeout across every vertical, flattened for the sweeper. Derived from
  * the map, so registering a lifecycle registers its timeouts too.
  */
