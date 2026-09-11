@@ -147,171 +147,179 @@ export default async function AdminStoreDetailPage({
       </Panel>
 
       {/*
-        * THE IMAGES. Two columns that existed from the first migration and
-        * that nothing in the console could write — a shop onboarded here got
-        * no logo and no banner, and the only fix was a psql prompt. That is
-        * also why the storefront grew a tinted-initial fallback for both.
+        * SIDE BY SIDE FROM `lg`.
         *
-        * UPLOAD FIRST, address second, and that order is the whole point of
-        * this panel's second draft. The first one took a web address only,
-        * which assumed the picture was already hosted somewhere; an operator
-        * holding a JPEG the shop sent them had nowhere to put it, and
-        * reported exactly that. The address form is kept below because it is
-        * still the only way to point at a picture that lives elsewhere, and
-        * the only way to restore one of the seed's `data:` images.
+        * Both of these are short — two image slots, and a list that is usually
+        * one owner — and stacked they added a screen of scrolling to a page
+        * whose whole point is having everything in view. `items-start` so the
+        * shorter one does not stretch to match the taller.
         */}
-      <Panel
-        title="Logo and banner"
-        description="What customers see on the shop list and at the top of the shop's page. Pick a file — it is resized in your browser before it is sent."
-      >
-        <div className="space-y-4 px-4 py-4">
-          <StoreBrandingControls
-            storeId={store.id}
-            storeName={store.name}
-            logoUrl={store.logoUrl}
-            coverUrl={store.coverUrl}
-          />
+      <div className="grid gap-5 lg:grid-cols-2 lg:items-start">
+        {/*
+          * THE IMAGES. Two columns that existed from the first migration and
+          * that nothing in the console could write — a shop onboarded here got
+          * no logo and no banner, and the only fix was a psql prompt. That is
+          * also why the storefront grew a tinted-initial fallback for both.
+          *
+          * UPLOAD FIRST, address second, and that order is the whole point of
+          * this panel's second draft. The first one took a web address only,
+          * which assumed the picture was already hosted somewhere; an operator
+          * holding a JPEG the shop sent them had nowhere to put it, and
+          * reported exactly that. The address form is kept below because it is
+          * still the only way to point at a picture that lives elsewhere, and
+          * the only way to restore one of the seed's `data:` images.
+          */}
+        <Panel
+          title="Logo and banner"
+          description="What customers see on the shop list and at the top of the shop's page. Pick a file — it is resized in your browser before it is sent."
+        >
+          <div className="space-y-4 px-4 py-4">
+            <StoreBrandingControls
+              storeId={store.id}
+              storeName={store.name}
+              logoUrl={store.logoUrl}
+              coverUrl={store.coverUrl}
+            />
 
-          <p className="text-[11px] leading-relaxed text-ink-muted">
-            A square logo and a wide banner read best — the storefront crops
-            both to fit. JPEG or PNG, at least 120 pixels on each side.
-          </p>
+            <p className="text-[11px] leading-relaxed text-ink-muted">
+              A square logo and a wide banner read best — the storefront crops
+              both to fit. JPEG or PNG, at least 120 pixels on each side.
+            </p>
 
-          {/* Demoted, not deleted. Collapsed because the case it serves —
-              a picture already hosted somewhere — is the rare one. */}
-          <details className="rounded-xl bg-surface-sunken p-3 ring-1 ring-black/5">
-            <summary className="cursor-pointer text-[12px] font-bold text-ink-muted">
-              Use a web address instead
-            </summary>
-            <div className="mt-3">
+            {/* Demoted, not deleted. Collapsed because the case it serves —
+                a picture already hosted somewhere — is the rare one. */}
+            <details className="rounded-xl bg-surface-sunken p-3 ring-1 ring-black/5">
+              <summary className="cursor-pointer text-[12px] font-bold text-ink-muted">
+                Use a web address instead
+              </summary>
+              <div className="mt-3">
+                <ReasonForm
+                  action={setStoreBrandingAction}
+                  hidden={{ storeId: store.id }}
+                  submitLabel="Save addresses"
+                  extraFields={
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="block">
+                        <span className="text-[11px] font-bold text-ink-muted">Logo address</span>
+                        <input
+                          name="logoUrl"
+                          type="text"
+                          defaultValue={store.logoUrl ?? ''}
+                          placeholder="https://…"
+                          className="mt-0.5 w-full rounded-lg bg-white px-3 py-2 font-mono text-[12px] ring-1 ring-black/5 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="text-[11px] font-bold text-ink-muted">Banner address</span>
+                        <input
+                          name="coverUrl"
+                          type="text"
+                          defaultValue={store.coverUrl ?? ''}
+                          placeholder="https://…"
+                          className="mt-0.5 w-full rounded-lg bg-white px-3 py-2 font-mono text-[12px] ring-1 ring-black/5 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        />
+                      </label>
+                    </div>
+                  }
+                >
+                  Both boxes are saved together, so an empty one REMOVES that
+                  image. A box showing /store-images/… is a file uploaded above;
+                  overwriting it deletes the uploaded copy.
+                </ReasonForm>
+              </div>
+            </details>
+          </div>
+        </Panel>
+        <Panel
+          title="Who has the keys"
+          description="The shop manages its own staff. Use this to name the first owner, or to fix access when nobody at the shop can."
+        >
+          {store.members.length === 0 ? (
+            <Empty>
+              Nobody can run this shop. Name an owner below or it can never open.
+            </Empty>
+          ) : (
+            <ul className="divide-y divide-black/5">
+              {store.members.map((member) => (
+                <li key={member.id} className="px-4 py-3">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <span>
+                      <PersonLink user={member.user} />
+                      <span className="block text-[11px] text-ink-faint">
+                        {STORE_ROLE_LABELS[member.role]} · since{' '}
+                        {manilaTime(member.createdAt)}
+                      </span>
+                    </span>
+                    <div className="min-w-[16rem]">
+                      <ReasonForm
+                        action={revokeStoreAccessAction}
+                        hidden={{ storeId: store.id, memberId: member.id }}
+                        submitLabel="Remove"
+                        tone="danger"
+                        placeholder="Left the business, ticket number, who asked"
+                      >
+                        {member.role === StoreRole.OWNER && owners.length === 1
+                          ? 'The only owner. Name another owner first — a shop cannot be left with nobody in charge.'
+                          : `Removes ${displayNameFor(member.user)}'s access. They are told.`}
+                      </ReasonForm>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <div className="border-t border-black/5 px-4 py-3">
+            <h3 className="text-[12px] font-bold">Give somebody access</h3>
+            <div className="mt-2 max-w-md">
               <ReasonForm
-                action={setStoreBrandingAction}
+                action={grantStoreAccessAction}
                 hidden={{ storeId: store.id }}
-                submitLabel="Save addresses"
+                submitLabel="Give access"
+                placeholder="Signed partner agreement, onboarding call 7 Sep"
                 extraFields={
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <label className="block">
-                      <span className="text-[11px] font-bold text-ink-muted">Logo address</span>
+                  <div className="flex flex-wrap items-end gap-2">
+                    <label className="min-w-[9rem] flex-1">
+                      <span className="block text-[11px] font-semibold text-ink-muted">
+                        Mobile number
+                      </span>
                       <input
-                        name="logoUrl"
-                        type="text"
-                        defaultValue={store.logoUrl ?? ''}
-                        placeholder="https://…"
-                        className="mt-0.5 w-full rounded-lg bg-white px-3 py-2 font-mono text-[12px] ring-1 ring-black/5 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        name="phone"
+                        required
+                        type="tel"
+                        inputMode="numeric"
+                        placeholder="09XX XXX XXXX"
+                        className="mt-1 w-full rounded-lg border border-black/10 bg-surface px-2.5 py-1.5 text-[13px] tabular-nums"
                       />
                     </label>
-                    <label className="block">
-                      <span className="text-[11px] font-bold text-ink-muted">Banner address</span>
-                      <input
-                        name="coverUrl"
-                        type="text"
-                        defaultValue={store.coverUrl ?? ''}
-                        placeholder="https://…"
-                        className="mt-0.5 w-full rounded-lg bg-white px-3 py-2 font-mono text-[12px] ring-1 ring-black/5 focus:outline-none focus:ring-2 focus:ring-brand-500"
-                      />
+                    <label>
+                      <span className="block text-[11px] font-semibold text-ink-muted">
+                        Role
+                      </span>
+                      <select
+                        name="role"
+                        defaultValue={StoreRole.OWNER}
+                        className="mt-1 rounded-lg border border-black/10 bg-surface px-2 py-1.5 text-[13px] font-semibold"
+                      >
+                        {Object.values(StoreRole).map((role) => (
+                          <option key={role} value={role}>
+                            {STORE_ROLE_LABELS[role]}
+                          </option>
+                        ))}
+                      </select>
                     </label>
                   </div>
                 }
               >
-                Both boxes are saved together, so an empty one REMOVES that
-                image. A box showing /store-images/… is a file uploaded above;
-                overwriting it deletes the uploaded copy.
+                If that number has no TARA account yet, the invitation waits for
+                their first sign-in. Nothing is texted to them — an invite form
+                that could message any number would be a way to spend our SMS
+                credit on strangers.
               </ReasonForm>
             </div>
-          </details>
-        </div>
-      </Panel>
-
-      <Panel
-        title="Who has the keys"
-        description="The shop manages its own staff. Use this to name the first owner, or to fix access when nobody at the shop can."
-      >
-        {store.members.length === 0 ? (
-          <Empty>
-            Nobody can run this shop. Name an owner below or it can never open.
-          </Empty>
-        ) : (
-          <ul className="divide-y divide-black/5">
-            {store.members.map((member) => (
-              <li key={member.id} className="px-4 py-3">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <span>
-                    <PersonLink user={member.user} />
-                    <span className="block text-[11px] text-ink-faint">
-                      {STORE_ROLE_LABELS[member.role]} · since{' '}
-                      {manilaTime(member.createdAt)}
-                    </span>
-                  </span>
-                  <div className="min-w-[16rem]">
-                    <ReasonForm
-                      action={revokeStoreAccessAction}
-                      hidden={{ storeId: store.id, memberId: member.id }}
-                      submitLabel="Remove"
-                      tone="danger"
-                      placeholder="Left the business, ticket number, who asked"
-                    >
-                      {member.role === StoreRole.OWNER && owners.length === 1
-                        ? 'The only owner. Name another owner first — a shop cannot be left with nobody in charge.'
-                        : `Removes ${displayNameFor(member.user)}'s access. They are told.`}
-                    </ReasonForm>
-                  </div>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-
-        <div className="border-t border-black/5 px-4 py-3">
-          <h3 className="text-[12px] font-bold">Give somebody access</h3>
-          <div className="mt-2 max-w-md">
-            <ReasonForm
-              action={grantStoreAccessAction}
-              hidden={{ storeId: store.id }}
-              submitLabel="Give access"
-              placeholder="Signed partner agreement, onboarding call 7 Sep"
-              extraFields={
-                <div className="flex flex-wrap items-end gap-2">
-                  <label className="min-w-[9rem] flex-1">
-                    <span className="block text-[11px] font-semibold text-ink-muted">
-                      Mobile number
-                    </span>
-                    <input
-                      name="phone"
-                      required
-                      type="tel"
-                      inputMode="numeric"
-                      placeholder="09XX XXX XXXX"
-                      className="mt-1 w-full rounded-lg border border-black/10 bg-surface px-2.5 py-1.5 text-[13px] tabular-nums"
-                    />
-                  </label>
-                  <label>
-                    <span className="block text-[11px] font-semibold text-ink-muted">
-                      Role
-                    </span>
-                    <select
-                      name="role"
-                      defaultValue={StoreRole.OWNER}
-                      className="mt-1 rounded-lg border border-black/10 bg-surface px-2 py-1.5 text-[13px] font-semibold"
-                    >
-                      {Object.values(StoreRole).map((role) => (
-                        <option key={role} value={role}>
-                          {STORE_ROLE_LABELS[role]}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-              }
-            >
-              If that number has no TARA account yet, the invitation waits for
-              their first sign-in. Nothing is texted to them — an invite form
-              that could message any number would be a way to spend our SMS
-              credit on strangers.
-            </ReasonForm>
           </div>
-        </div>
-      </Panel>
-
+        </Panel>
+      </div>
 
       <Panel
         title="Who introduced this shop"

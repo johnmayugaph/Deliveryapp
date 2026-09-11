@@ -99,8 +99,23 @@ export function StoreProfileForm({
   return (
     <form action={submit}>
       <input type="hidden" name="storeId" value={store.id} />
-      <div className="space-y-5">
-        <Section
+
+      {/*
+        * TWO COLUMNS FROM `lg`, and the split is not arbitrary.
+        *
+        * The map is by far the tallest thing on the page — on its own it was
+        * most of a screen, which pushed the commission field below the fold
+        * and made the whole shop feel like a long scroll rather than a form.
+        * Putting the location in its own column beside the three short
+        * sections roughly halves the height and lets somebody see the fields
+        * they came to change and the pin at the same time.
+        *
+        * Still ONE form and ONE button underneath both columns. The columns
+        * are a reading layout, not a division of the save.
+        */}
+      <div className="grid gap-x-8 gap-y-5 lg:grid-cols-2">
+        <div className="space-y-5">
+          <Section
         title="Shop"
         note="Name, description and the number to ring. What customers see at the top of the shop's page."
       >
@@ -168,51 +183,6 @@ export function StoreProfileForm({
         </div>
       </Section>
 
-      <Section
-        title="Where it is"
-        note="The pin is what every delivery fee from this shop is measured from."
-      >
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="block">
-            <span className="text-[11px] font-semibold text-ink-muted">City</span>
-            <select
-              name="cityId"
-              required
-              value={cityId}
-              onChange={(event) => setCityId(event.target.value)}
-              className={FIELD}
-            >
-              {cities.map((city) => (
-                <option key={city.id} value={city.id}>
-                  {city.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="block">
-            <span className="text-[11px] font-semibold text-ink-muted">Address</span>
-            <input
-              name="addressLine"
-              defaultValue={store.addressLine}
-              required
-              minLength={4}
-              maxLength={300}
-              className={FIELD}
-            />
-          </label>
-        </div>
-
-        <div className="mt-3">
-          <LocationPicker
-            tiles={tiles}
-            searchAvailable={searchAvailable}
-            initial={{ latitude: store.latitude, longitude: store.longitude }}
-            {...(centre === undefined ? {} : { centre })}
-            centreKey={cityId}
-          />
-        </div>
-      </Section>
 
       <Section
         title="Services and timing"
@@ -297,6 +267,59 @@ export function StoreProfileForm({
             and reviewing the whole estate's rates are different jobs. Same
             column, so the two cannot drift apart. */}
       </Section>
+        </div>
+
+        {/* The location, in its own column. It is one section rather than
+            three because the map, the paste box and the two number fields are
+            one decision: where the pin goes. */}
+        <div>
+        <Section
+          title="Where it is"
+          note="The pin is what every delivery fee from this shop is measured from."
+        >
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className="text-[11px] font-semibold text-ink-muted">City</span>
+              <select
+                name="cityId"
+                required
+                value={cityId}
+                onChange={(event) => setCityId(event.target.value)}
+                className={FIELD}
+              >
+                {cities.map((city) => (
+                  <option key={city.id} value={city.id}>
+                    {city.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="block">
+              <span className="text-[11px] font-semibold text-ink-muted">Address</span>
+              <input
+                name="addressLine"
+                defaultValue={store.addressLine}
+                required
+                minLength={4}
+                maxLength={300}
+                className={FIELD}
+              />
+            </label>
+          </div>
+
+          <div className="mt-3">
+            <LocationPicker
+              tiles={tiles}
+              searchAvailable={searchAvailable}
+              initial={{ latitude: store.latitude, longitude: store.longitude }}
+              {...(centre === undefined ? {} : { centre })}
+              centreKey={cityId}
+            />
+          </div>
+        </Section>
+        </div>
+      </div>
 
       {/* NO REASON BOX. Editing a shop's details is routine — a partner rings,
           you fix the address — and a mandatory sentence before every save is
@@ -322,7 +345,6 @@ export function StoreProfileForm({
               {result.message}
             </p>
           ) : null}
-        </div>
         </div>
       </div>
     </form>
