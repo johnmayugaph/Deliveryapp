@@ -33,9 +33,35 @@ h3 {
   font-variant-numeric: tabular-nums;
 }
 
-/* Bottom navigation is fixed; keep the last section clear of it. */
+/* Bottom navigation is fixed; keep the last section clear of it. Only while
+   that navigation exists — from `lg` up it is a top bar, and the gutter would
+   be five and a half rems of nothing above the footer. */
 .app-shell {
   padding-bottom: 5.5rem;
+}
+
+@media (min-width: 1024px) {
+  .app-shell {
+    padding-bottom: 0;
+  }
+
+  /*
+   * The wide layout, opted into by a page putting `wide` on its root.
+   *
+   * `:has()` rather than a prop threaded through the layout, because the
+   * layout is a server component with no access to the current route and
+   * turning it into a client one to read a pathname would put the whole
+   * application inside a client boundary to change a max-width.
+   *
+   * Where `:has()` is not supported the page stays the phone column it is
+   * today, which is a smaller failure than any of the alternatives.
+   */
+  .app-shell:has(.wide) {
+    max-width: 72rem;
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+    background: transparent;
+  }
 }
 
 /**

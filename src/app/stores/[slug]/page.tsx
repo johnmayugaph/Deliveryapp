@@ -164,7 +164,7 @@ export default async function StorePage({
   ].filter((term): term is string => term !== null);
 
   return (
-    <main className="pb-4">
+    <main className="wide pb-4">
       {/*
         * THE HERO. The cover where the shop has uploaded one; its own colour
         * block where it has not. Never a grey rectangle: on a new deployment
@@ -179,7 +179,7 @@ export default async function StorePage({
             alt=""
             width={1200}
             height={600}
-            className={`block h-44 w-full object-cover ${store.isOpen ? '' : 'opacity-70 grayscale'}`}
+            className={`block h-44 w-full object-cover lg:h-64 lg:rounded-3xl ${store.isOpen ? '' : 'opacity-70 grayscale'}`}
           />
         ) : (
           <div className="h-36 w-full bg-gradient-to-br from-brand-500 to-brand-700" />
@@ -385,7 +385,7 @@ export default async function StorePage({
                * the control ON the photo is what lets two columns of dishes
                * fit a phone without the button stealing a line from the name.
                */
-              <ul className="mt-3 grid grid-cols-2 gap-x-3 gap-y-4 px-4">
+              <ul className="mt-3 grid grid-cols-2 gap-x-3 gap-y-4 px-4 lg:grid-cols-4 lg:gap-5 lg:px-0">
                 {group.items.map((item) => (
                   <li key={item.id} id={`item-${item.id}`}>
                     <MenuItemCard

@@ -35,6 +35,18 @@ export function RecentStores({
     return null;
   }
 
+  /*
+   * ONE SHAPE FOR THE WHOLE RAIL, not one per shop.
+   *
+   * The original rule — photo card where there is a cover, compact row where
+   * there is not — was written for a single column, where a tall card
+   * followed by a short one is just a list. In the desktop grid it leaves a
+   * hole the height of a photograph beside two short rows, which reads as a
+   * card that failed to render. So the whole rail goes photo-led only when
+   * every shop in it can.
+   */
+  const everyStoreHasCover = stores.every((store) => store.coverUrl !== null);
+
   return (
     <section aria-labelledby="recent-heading" className="px-4 py-4">
       {/* Sentence case, and big. A delivery app's home screen is a stack of
@@ -43,14 +55,16 @@ export function RecentStores({
       <h2 id="recent-heading" className="text-[19px] font-extrabold tracking-tight">
         {hasOrderHistory ? 'Order again' : 'Popular near you'}
       </h2>
-      <ul className="mt-3 space-y-3.5">
+      {/* One column on a phone, three from `lg`. The card itself does not
+          change — only how many of them fit on a line. */}
+      <ul className="mt-3 space-y-3.5 lg:grid lg:grid-cols-3 lg:gap-4 lg:space-y-0">
         {stores.map((store) => (
           <li key={store.id}>
             <Link
               href={`/stores/${store.slug}`}
               className="card-warm press block overflow-hidden"
             >
-              {store.coverUrl ? (
+              {everyStoreHasCover && store.coverUrl ? (
                 <span className="relative block">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
@@ -77,7 +91,7 @@ export function RecentStores({
                     logo where it has one, and its initial where it does not —
                     an initial is at least the shop's, which a shop-front emoji
                     never was. */}
-                {!store.coverUrl ? (
+                {!everyStoreHasCover || !store.coverUrl ? (
                   store.logoUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
@@ -119,7 +133,7 @@ export function RecentStores({
                       />
                     </span>
                   </span>
-                  <span className="mt-1 flex items-center gap-1.5 text-[12.5px] text-ink-muted">
+                  <span className="mt-1 flex flex-wrap items-center gap-x-1.5 text-[12.5px] text-ink-muted">
                     <span>From {store.preparationMinutes} min</span>
                     <span aria-hidden>·</span>
                     {/* The shop's own line about itself where it has one, and

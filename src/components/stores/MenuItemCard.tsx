@@ -42,7 +42,7 @@ export function MenuItemPrice({
 }) {
   const saving = savingCentavos(item);
   return (
-    <p className={`tabular-nums ${className}`}>
+    <p className={`flex flex-wrap items-baseline gap-x-1.5 tabular-nums ${className}`}>
       {/* `whitespace-nowrap` on the price itself: "from" and the figure are
           one fact, and in a narrow card the browser was happy to leave "from"
           alone on a line above it. The was-price may wrap to its own line — it
@@ -52,7 +52,7 @@ export function MenuItemPrice({
         {formatCentavos(item.priceCentavos)}
       </span>
       {saving !== null ? (
-        <span className="ml-1.5 font-normal text-ink-faint line-through">
+        <span className="font-normal text-ink-faint line-through">
           {formatCentavos(item.compareAtPriceCentavos!)}
         </span>
       ) : null}

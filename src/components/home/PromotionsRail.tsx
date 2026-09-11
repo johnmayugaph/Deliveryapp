@@ -35,7 +35,13 @@ export function PromotionsRail({ promotions }: { promotions: Promotion[] }) {
   function onScroll() {
     const node = rail.current;
     if (!node) return;
-    const width = node.clientWidth;
+    /*
+     * Measured from a CARD, not from the rail. At `lg` two cards share the
+     * width, so dividing by the rail's own width counted every second swipe
+     * and left the dots a page behind what was on screen.
+     */
+    const card = node.firstElementChild;
+    const width = card ? card.getBoundingClientRect().width + 12 : node.clientWidth;
     if (width === 0) return;
     setActive(Math.round(node.scrollLeft / width));
   }
@@ -55,7 +61,7 @@ export function PromotionsRail({ promotions }: { promotions: Promotion[] }) {
           /* Full-width cards, so one promotion fills the rail and the next is
              a swipe rather than a peek. The dots carry the "there is more"
              signal that a peeking card would otherwise have to. */
-          <li key={promotion.id} className="w-full shrink-0 snap-center">
+          <li key={promotion.id} className="w-full shrink-0 snap-center lg:w-[calc(50%-0.375rem)]">
             <Link
               href={promotion.ctaHref ?? '#'}
               className="press relative flex h-[7.5rem] flex-col justify-end overflow-hidden rounded-2xl shadow-tile ring-1 ring-ink/[0.06]"

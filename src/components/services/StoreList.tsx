@@ -30,9 +30,16 @@ export function StoreList({
   freeDeliveryAboveCentavos: number | null;
 }) {
   return (
-    <ul className="divide-y divide-ink/[0.06]">
+    /*
+     * A divided column on a phone, a card grid from `lg`.
+     *
+     * The dividers go with the single column deliberately: a full-width rule
+     * between two rows separates them, but the same rule drawn under two cards
+     * sitting side by side reads as a line through the middle of the page.
+     */
+    <ul className="divide-y divide-ink/[0.06] lg:grid lg:grid-cols-2 lg:gap-4 lg:divide-y-0 lg:px-0 xl:grid-cols-3">
       {rows.map(({ store, deals }) => (
-        <li key={store.id} className="bg-surface">
+        <li key={store.id} className="bg-surface lg:rounded-2xl lg:shadow-tile lg:ring-1 lg:ring-ink/[0.06]">
           <Link href={`/stores/${store.slug}`} className="press block px-4 py-3.5">
             <span className="flex items-start gap-3">
               {store.logoUrl ? (

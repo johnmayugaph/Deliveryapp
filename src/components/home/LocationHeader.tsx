@@ -52,7 +52,9 @@ export function LocationHeader({
         <span className="sr-only">Change delivery location</span>
       </Link>
       {bell}
-      <Wordmark size="sm" tone="light" className="shrink-0" />
+      {/* Hidden from `lg`: the top bar already carries the wordmark, and two
+          of them on one screen reads as a template nobody finished. */}
+      <Wordmark size="sm" tone="light" className="shrink-0 lg:hidden" />
     </header>
   );
 }

@@ -53,15 +53,18 @@ export function ServiceTileGrid({
   return (
     <section
       aria-labelledby="services-heading"
-      className="animate-rise-in relative -mt-5 rounded-t-3xl bg-surface pb-5 pt-5 shadow-tile"
+      className="animate-rise-in relative -mt-5 rounded-t-3xl bg-surface pb-5 pt-5 shadow-tile lg:rounded-3xl"
     >
       <h2 id="services-heading" className="sr-only">
         What can we bring you?
       </h2>
       {/* Padding rather than margin on the sides, so the first tile lines up
           with the page gutter and the last can scroll clear of the edge. */}
+      {/* A scrolling row on a phone because five tiles do not fit; from `lg`
+          there is room for all of them, so they centre and the scroll goes
+          away. A rail that never moves is a rail that looks broken. */}
       <ul
-        className="flex snap-x snap-mandatory items-start gap-4 overflow-x-auto px-4"
+        className="flex snap-x snap-mandatory items-start gap-4 overflow-x-auto px-4 lg:justify-center lg:gap-10 lg:overflow-visible"
         style={{ scrollbarWidth: 'none' }}
       >
         {services.map((service) => (

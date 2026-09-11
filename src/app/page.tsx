@@ -46,7 +46,7 @@ export default async function HomePage() {
     .map((service) => service.displayName);
 
   return (
-    <main>
+    <main className="wide">
       {/*
         * THE HEADER BLOCK: brand blue, holding the address and the search
         * field, with the service panel overlapping its bottom edge. Not
@@ -54,7 +54,7 @@ export default async function HomePage() {
         * follows you down a shop list is a lot of chrome for two lines of
         * text, and the search it contains has its own screen.
         */}
-      <div className="bg-brand-600 pb-2">
+      <div className="bg-brand-600 pb-2 lg:mt-6 lg:rounded-3xl">
         <LocationHeader
           addressLabel={data.currentAddressLabel}
           cityName={data.currentCityName}

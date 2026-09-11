@@ -42,7 +42,10 @@ export function BottomNav() {
        * instead of ending at a hard line, which is what made the old bar read
        * as a page footer.
        */
-      className="fixed inset-x-0 bottom-0 z-40 px-3 pb-3"
+      /* `lg:hidden`: from `lg` up the top bar navigates instead. A bottom bar
+         exists because a thumb reaches the bottom of a handset — on a laptop
+         it is a strip of buttons floating in the middle of the screen. */
+      className="fixed inset-x-0 bottom-0 z-40 px-3 pb-3 lg:hidden"
       /* The home-bar inset, so the labels are not sitting under it on an
          iPhone. `env()` resolves to 0 everywhere else, which is why it can be
          unconditional. */

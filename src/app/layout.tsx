@@ -2,6 +2,8 @@ import type { Metadata, Viewport } from 'next';
 import { Urbanist } from 'next/font/google';
 import './globals.css';
 import { BottomNav } from '@/components/nav/BottomNav';
+import { DesktopNav } from '@/components/nav/DesktopNav';
+import { SiteFooter } from '@/components/nav/SiteFooter';
 import { CartProvider } from '@/components/cart/CartProvider';
 import { CartBar } from '@/components/cart/CartBar';
 
@@ -50,9 +52,30 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en-PH" className={display.variable}>
       <body>
         <CartProvider>
+          {/*
+            * TWO SHAPES, ONE TREE.
+            *
+            * Below `lg` this is a phone column everywhere: one screen wide,
+            * navigated from a bottom pill. From `lg` up the top bar and the
+            * footer appear, and the shell widens — but ONLY for a page that
+            * asks, by putting `wide` on its root element (see `.app-shell` in
+            * globals.css).
+            *
+            * Opt-in rather than automatic, because widening the shell for
+            * every route stretched the sign-in form to eleven hundred pixels:
+            * a phone screen blown up, which is worse than a phone screen. A
+            * route widens when somebody has designed it wide.
+            *
+            * It never becomes full-bleed either. A shop list stretched across
+            * a 27-inch monitor puts a dish name and its price at opposite
+            * ends of a line nobody can read across, which is the real failure
+            * mode of "use the whole screen".
+            */}
+          <DesktopNav />
           <div className="app-shell mx-auto min-h-dvh max-w-lg bg-surface-sunken">
             {children}
           </div>
+          <SiteFooter />
           <CartBar />
           <BottomNav />
         </CartProvider>

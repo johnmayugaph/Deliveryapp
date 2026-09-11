@@ -107,13 +107,18 @@ export function OfferRail({
                           {item.description}
                         </p>
                       ) : null}
-                      {/* `whitespace-nowrap`: the "from" prefix and the two
-                          figures are one fact, and a card narrow enough to
-                          break them apart put "from" on a line of its own. */}
-                      <p className="mt-1 whitespace-nowrap text-[14px] font-extrabold tabular-nums text-brand-700">
-                        {item.optionGroups.length > 0 ? 'from ' : ''}
-                        {formatCentavos(item.priceCentavos)}
-                        <span className="ml-1.5 font-normal text-ink-faint line-through">
+                      {/* Two facts on one line where they fit, two lines
+                          where they do not. `whitespace-nowrap` on the whole
+                          paragraph kept them together by running the
+                          was-price off the edge of the card and under the add
+                          button; the prefix and its figure are the only part
+                          that must not break. */}
+                      <p className="mt-1 flex flex-wrap items-baseline gap-x-1.5 text-[14px] font-extrabold tabular-nums text-brand-700">
+                        <span className="whitespace-nowrap">
+                          {item.optionGroups.length > 0 ? 'from ' : ''}
+                          {formatCentavos(item.priceCentavos)}
+                        </span>
+                        <span className="font-normal text-ink-faint line-through">
                           {formatCentavos(item.compareAtPriceCentavos!)}
                         </span>
                       </p>

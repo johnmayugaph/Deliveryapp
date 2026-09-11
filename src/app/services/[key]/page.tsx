@@ -143,14 +143,17 @@ export default async function ServicePage({
     filters.openNow || filters.fast || filters.deals || filters.category !== null;
 
   return (
-    <main>
+    <main className="wide">
       {/*
         * THE MASTHEAD. The same brand block as the home screen, so moving
         * between them does not feel like two applications — with a back
         * control and this vertical's name, which is the one thing this screen
         * has that home does not.
         */}
-      <div className="bg-brand-600 pb-2">
+      {/* The masthead keeps its colour at every width but stops being the
+          full bleed it is on a phone: rounded and inset from `lg`, so it reads
+          as this page's hero rather than as the browser chrome. */}
+      <div className="bg-brand-600 pb-2 lg:mt-6 lg:rounded-3xl">
         <header className="flex items-center gap-3 px-4 pb-3 pt-5">
           <Link
             href="/"

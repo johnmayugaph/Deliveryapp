@@ -47,7 +47,7 @@ export function ForYouGrid({
         * failing to load.
         */}
       {items.every((item) => item.image !== null) ? (
-        <ul className="mt-3 grid grid-cols-2 gap-x-3 gap-y-4 px-4">
+        <ul className="mt-3 grid grid-cols-2 gap-x-3 gap-y-4 px-4 lg:grid-cols-4 lg:gap-5 lg:px-0">
           {items.map((item) => (
             <li key={item.id}>
               <MenuItemCard

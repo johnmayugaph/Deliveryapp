@@ -36,8 +36,10 @@ export function CartBar() {
     /* Sits above the bottom navigation. The offset is 4.75rem because the
        navigation grew when its current tab became a pill — the old 4.1rem
        left this bar's bottom edge tucked behind it, which read as a clipped
-       button rather than a floating one. */
-    <div className="fixed inset-x-0 bottom-[5.5rem] z-40 px-4">
+       button rather than a floating one.
+       On desktop it goes to the bottom edge instead: the pill is not
+       rendered there, and the gap would be a bar hovering in mid-air. */
+    <div className="fixed inset-x-0 bottom-[5.5rem] z-40 px-4 lg:bottom-4">
       <div className="mx-auto max-w-lg">
         {/*
           * Ink ground with a mango chip, rather than a solid brand-coloured
