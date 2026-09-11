@@ -1003,6 +1003,18 @@ const MAX_PREP_MINUTES = 180;
  * ONE AUDIT ROW, listing only what actually changed. A row saying "the store
  * was edited" is no use six months later; a row saying the commission went
  * from 0 to 250 and the address moved is the whole point of keeping it.
+ *
+ * **NO TYPED REASON.** The form had one and it was removed on request: fixing
+ * an address a partner just corrected over the phone is routine, and a
+ * mandatory sentence in front of every save is friction on the common case.
+ * What is kept is the row itself — who, when, and every field with both
+ * sides — because `commissionBasisPoints` is on this form, and that is the
+ * number a shop is paid by. When a partner disputes a payout, that row is the
+ * only thing that answers "who agreed this rate, and when".
+ *
+ * So the reason is composed from the diff instead of being asked for. It
+ * still goes through `normaliseReason`, because the column's rules do not
+ * change just because the source did.
  */
 export async function updateStoreProfileAction(
   _previous: AdminActionResult | null,
@@ -1010,7 +1022,6 @@ export async function updateStoreProfileAction(
 ): Promise<AdminActionResult> {
   return guarded(async () => {
     const admin = await requireAdmin();
-    const reason = normaliseReason(formData.get('reason'));
     const storeId = String(formData.get('storeId') ?? '').trim();
 
     const text = (field: string): string => String(formData.get(field) ?? '').trim();
@@ -1127,6 +1138,11 @@ export async function updateStoreProfileAction(
     if (Object.keys(changed).length === 0) {
       return { ok: false, message: 'Nothing on that form is different yet.' };
     }
+
+    // Written from what changed, not typed. See the note on this action.
+    const reason = normaliseReason(
+      `Store details edited from the console: ${Object.keys(changed).join(', ')}.`,
+    );
 
     await prisma.$transaction(async (tx) => {
       await tx.store.update({ where: { id: store.id }, data: next });

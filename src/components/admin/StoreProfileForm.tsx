@@ -4,7 +4,6 @@ import { useActionState, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { ServiceKey } from '@prisma/client';
 import type { AdminActionResult } from '@/lib/admin/access';
-import { MIN_AUDIT_REASON_LENGTH } from '@/lib/admin/audit-reason';
 import { updateStoreProfileAction } from '@/lib/actions/admin-actions';
 import { LocationPicker } from '@/components/geo/LocationPicker';
 import type { TileSource } from '@/lib/geo/tiles';
@@ -299,22 +298,12 @@ export function StoreProfileForm({
             column, so the two cannot drift apart. */}
       </Section>
 
+      {/* NO REASON BOX. Editing a shop's details is routine — a partner rings,
+          you fix the address — and a mandatory sentence before every save is
+          friction on the common case. The audit row is still written, from
+          what actually changed; only the typed justification is gone. */}
       <div className="rounded-xl bg-surface-sunken p-3 ring-1 ring-black/5">
-        <label className="block">
-          <span className="text-[11px] font-semibold text-ink-muted">
-            Why (recorded against your name)
-          </span>
-          <input
-            name="reason"
-            required
-            minLength={MIN_AUDIT_REASON_LENGTH}
-            maxLength={500}
-            placeholder="Shop called — moved to the corner unit"
-            className={FIELD}
-          />
-        </label>
-
-        <div className="mt-3 flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <button
             type="submit"
             disabled={pending || !hydrated}

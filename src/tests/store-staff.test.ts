@@ -442,41 +442,56 @@ describe('creating a partner store', () => {
   });
 
   /*
-   * THE ONE EXCEPTION, written down so it stays one.
+   * THE EXCEPTIONS, written down so they stay a closed list.
    *
-   * `setStoreVisibilityAction` is a switch in the console header, not a form,
-   * and a switch cannot stop to ask why. Its reason is written by the system.
-   * Everything else about it is unchanged: it still requires an admin and
-   * still writes an audit row naming who flipped it and in which direction,
-   * which is what is actually needed when a shop goes dark and nobody
-   * remembers touching it.
+   * Two console controls compose their own audit reason instead of asking for
+   * one, and both were deliberate product calls rather than oversights:
    *
-   * This test exists so the exception cannot spread by imitation — a second
-   * action written the same way fails the test above, and whoever adds it has
-   * to come here and argue for it.
+   *  - `setStoreVisibilityAction` is a SWITCH in the page header. A switch
+   *    cannot stop to ask why.
+   *  - `updateStoreProfileAction` is the store edit form, where the reason box
+   *    was removed on request: correcting an address a partner just gave you
+   *    over the phone is routine, and a mandatory sentence before every save
+   *    is friction on the common case.
+   *
+   * Both still require an admin and both still write a row naming who acted,
+   * when, and what moved — which is what is actually needed when a shop goes
+   * dark, or when a partner disputes the commission they were paid at.
+   *
+   * This test is the fence around that list. An earlier version of it checked
+   * only action names beginning `set` or `grant`, which meant the store form
+   * slipped past without anybody deciding it should: a guard that cannot fail
+   * is worse than no guard, because it reports a safety it does not provide.
+   * It now checks EVERY exported action.
    */
-  it('is the only action whose reason the system writes for it', () => {
+  const SYSTEM_WRITTEN_REASONS = [
+    'setStoreVisibilityAction',
+    'updateStoreProfileAction',
+  ];
+
+  it('composes its own reason in exactly the two places that are allowed to', () => {
     const actions = source('src/lib/actions/admin-actions.ts');
-    const start = actions.indexOf('export async function setStoreVisibilityAction');
-    const body = actions.slice(start, actions.indexOf('export async function', start + 10));
+    const chunks = actions.split('export async function ').slice(1);
 
-    // A literal, not a form field: proof the reason is ours and not a typed
-    // one being quietly accepted as blank.
-    expect(body).toMatch(/normaliseReason\(\s*\n?\s*visible/);
-    expect(body).not.toMatch(/normaliseReason\(formData/);
+    const composed: string[] = [];
+    for (const chunk of chunks) {
+      const name = chunk.slice(0, chunk.indexOf('('));
+      if (!chunk.includes('normaliseReason')) continue;
+      if (!chunk.includes('normaliseReason(formData')) composed.push(name);
+    }
 
-    // Every OTHER action still reads its reason off the form.
-    const others = actions
+    // Sorted so the failure message reads as a list rather than as an order.
+    expect([...composed].sort()).toEqual([...SYSTEM_WRITTEN_REASONS].sort());
+  });
+
+  it('still finds enough actions for that check to mean anything', () => {
+    // Without this, deleting every action would make the test above pass.
+    const actions = source('src/lib/actions/admin-actions.ts');
+    const askers = actions
       .split('export async function ')
       .slice(1)
-      .filter((chunk) => chunk.startsWith('set') || chunk.startsWith('grant'))
-      .filter((chunk) => !chunk.startsWith('setStoreVisibilityAction'))
-      .filter((chunk) => chunk.includes('normaliseReason'));
-    expect(others.length).toBeGreaterThan(0);
-    for (const chunk of others) {
-      const name = chunk.slice(0, chunk.indexOf('('));
-      expect(chunk, `${name} writes its own reason`).toMatch(/normaliseReason\(formData/);
-    }
+      .filter((chunk) => chunk.includes('normaliseReason(formData'));
+    expect(askers.length).toBeGreaterThan(10);
   });
 
   it('masks the phone number it writes into the audit detail', () => {
