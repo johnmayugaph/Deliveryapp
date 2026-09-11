@@ -163,6 +163,7 @@ export default async function AdminStoreDetailPage({
           category: item.category,
           description: item.description,
           priceCentavos: item.priceCentavos,
+          compareAtPriceCentavos: item.compareAtPriceCentavos,
           isAvailable: item.isAvailable,
           imageHref: item.image ? menuImageHref(item.image.id) : null,
         }))}

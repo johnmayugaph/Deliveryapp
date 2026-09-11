@@ -121,12 +121,15 @@ import {
   LastOwnerError,
 } from '@/lib/merchant/staff-policy';
 import { parseMinuteOfDay } from '@/lib/merchant/opening-hours';
-import { addMenuItem } from '@/lib/merchant/menu';
+import { addMenuItem, setItemStock } from '@/lib/merchant/menu';
+import { MenuItemNotInStoreError, putMenuItemImage } from '@/lib/media/menu-images';
 import {
+  ComparePriceNotHigherError,
   DEFAULT_CATEGORY,
   DuplicateItemNameError,
   ItemNameRequiredError,
   MenuFullError,
+  parseComparePrice,
   parsePrice,
   PriceNotUnderstoodError,
   PriceOutOfRangeError,
@@ -1266,6 +1269,10 @@ export async function addStoreMenuItemAction(
     const category = String(formData.get('category') ?? '').trim();
     const description = String(formData.get('description') ?? '').trim();
     const priceRaw = String(formData.get('price') ?? '').trim();
+    const compareRaw = String(formData.get('comparePrice') ?? '').trim();
+    // Unticked means the dish goes on the menu out of stock — which is the
+    // right default for a shop entering a menu before it opens.
+    const available = String(formData.get('isAvailable') ?? '') === '1';
 
     const store = await prisma.store.findUnique({
       where: { id: storeId },
@@ -1282,19 +1289,38 @@ export async function addStoreMenuItemAction(
       // Through the shop's own parser, so "120", "120.50" and "₱120" are read
       // here exactly as they are read on the merchant screen.
       const priceCentavos = parsePrice(priceRaw, centavosFromPesoInput);
+      // Throws if it is not ABOVE the real price: a "was" price at or below
+      // what is being charged is not a discount, it is a lie on a price tag.
+      const compareAtPriceCentavos = parseComparePrice(
+        compareRaw,
+        priceCentavos,
+        centavosFromPesoInput,
+      );
 
       created = await addMenuItem({
         storeId: store.id,
         name,
         category: category === '' ? DEFAULT_CATEGORY : category,
         priceCentavos,
+        compareAtPriceCentavos,
         description: description === '' ? null : description,
       });
+
+      // `addMenuItem` creates in stock, which is what the shop's own screen
+      // wants. A console entering tomorrow's menu today may not.
+      if (!available) {
+        await setItemStock({
+          storeId: store.id,
+          menuItemId: created.id,
+          isAvailable: false,
+        });
+      }
     } catch (error) {
       if (
         error instanceof ItemNameRequiredError ||
         error instanceof PriceNotUnderstoodError ||
         error instanceof PriceOutOfRangeError ||
+        error instanceof ComparePriceNotHigherError ||
         error instanceof DuplicateItemNameError ||
         error instanceof MenuFullError
       ) {
@@ -1317,6 +1343,8 @@ export async function addStoreMenuItemAction(
         name: created.name,
         category: created.category,
         priceCentavos: created.priceCentavos,
+        compareAtPriceCentavos: created.compareAtPriceCentavos,
+        isAvailable: available,
       },
     });
 
@@ -1330,6 +1358,94 @@ export async function addStoreMenuItemAction(
       message: `${created.name} added under ${created.category}, at ${formatCentavos(
         created.priceCentavos,
       )}.`,
+    };
+  });
+}
+
+/**
+ * A photograph on a dish, from the console.
+ *
+ * The other half of the empty-menu problem. A menu the console entered has no
+ * pictures, and a shop list of grey squares is the thing customers scroll
+ * past — so an operator who can add the dish should be able to add its photo
+ * rather than leaving the shop a job it did not ask for.
+ *
+ * Through `putMenuItemImage`, the same function the shop's own screen uses:
+ * the type comes from the magic bytes rather than from what the upload
+ * claimed, one photo per dish, replaced rather than versioned. The browser
+ * has already resized it — a camera photo is megabytes and a server action's
+ * body limit is one — and the bytes are re-checked here regardless, because
+ * the thing that resized them runs on a machine somebody else controls.
+ */
+export async function uploadStoreMenuItemImageAction(
+  _previous: AdminActionResult | null,
+  formData: FormData,
+): Promise<AdminActionResult> {
+  return guarded(async () => {
+    const admin = await requireAdmin();
+
+    const storeId = String(formData.get('storeId') ?? '').trim();
+    const itemId = String(formData.get('itemId') ?? '').trim();
+
+    const file = formData.get('photo');
+    if (!(file instanceof File) || file.size === 0) {
+      return { ok: false, message: 'Pick a photo first.' };
+    }
+    // Checked before the whole thing is read into memory.
+    if (file.size > MAX_IMAGE_BYTES * 2) {
+      return { ok: false, message: 'That photo is too big to send. Try taking it again.' };
+    }
+
+    const store = await prisma.store.findUnique({
+      where: { id: storeId },
+      select: { id: true, name: true, slug: true },
+    });
+    if (!store) return { ok: false, message: 'No such store.' };
+
+    let stored;
+    try {
+      stored = await putMenuItemImage({
+        storeId: store.id,
+        menuItemId: itemId,
+        bytes: new Uint8Array(await file.arrayBuffer()),
+        uploadedByUserId: admin.id,
+      });
+    } catch (error) {
+      if (
+        error instanceof NotAnImageError ||
+        error instanceof ImageTooLargeError ||
+        error instanceof ImageWrongShapeError ||
+        error instanceof MenuItemNotInStoreError
+      ) {
+        return { ok: false, message: error.message };
+      }
+      throw error;
+    }
+
+    await recordAdminAction({
+      actorId: admin.id,
+      action: AdminAction.STORE_MENU_ITEM_ADDED,
+      subjectType: 'Store',
+      subjectId: store.id,
+      subjectLabel: store.name,
+      reason: normaliseReason('Menu photo uploaded from the console.'),
+      detail: {
+        itemId,
+        width: stored.width,
+        height: stored.height,
+        byteSize: stored.byteSize,
+      },
+    });
+
+    revalidatePath(`/admin/stores/${store.id}`);
+    revalidatePath(`/stores/${store.slug}`);
+    revalidatePath(`/merchant/${store.id}/menu`);
+
+    return {
+      ok: true,
+      message: `Photo saved — ${stored.width}×${stored.height}, ${Math.round(
+        stored.byteSize / 1024,
+      )} KB.`,
     };
   });
 }

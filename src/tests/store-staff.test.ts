@@ -471,6 +471,9 @@ describe('creating a partner store', () => {
     'updateStoreProfileAction',
     // Adding a dish: the reason is the dish, and it is already in the row.
     'addStoreMenuItemAction',
+    // A photo on a dish. Same case as the dish itself — a file picker has
+    // nothing to justify beyond the file.
+    'uploadStoreMenuItemImageAction',
   ];
 
   it('composes its own reason in exactly the places that are allowed to', () => {
