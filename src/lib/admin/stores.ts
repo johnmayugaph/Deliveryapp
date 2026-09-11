@@ -1,6 +1,7 @@
 import { StoreRole, type ServiceKey, type Store, type User } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { inviteIsLive } from '@/lib/merchant/staff-policy';
+import { STORE_IMAGE_PATH } from '@/lib/media/image-bytes';
 
 /**
  * The console's view of partner stores.
@@ -282,6 +283,12 @@ export class ImageUrlTooLongError extends Error {
  * `javascript:` in an `<img src>`. It is a typo guard, for a field whose
  * failure mode is a broken image on a customer's screen that nobody in the
  * office ever sees.
+ *
+ * AND `/store-images/<id>`, which is what an upload writes. Without that case
+ * this form refused the value it had just shown you: once a shop had an
+ * uploaded logo, opening the address panel to fix the BANNER failed on the
+ * logo box, with a message about https:// that made no sense next to a path
+ * this application had put there itself. Found in the browser, not by a test.
  */
 export function parseImageUrl(raw: string): string | null {
   const value = raw.trim();
@@ -289,6 +296,7 @@ export function parseImageUrl(raw: string): string | null {
   if (value.length > MAX_IMAGE_URL_LENGTH) throw new ImageUrlTooLongError(value.length);
 
   if (value.startsWith('data:image/')) return value;
+  if (STORE_IMAGE_PATH.test(value)) return value;
 
   let parsed: URL;
   try {

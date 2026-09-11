@@ -3,6 +3,7 @@
 import { useActionState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import type { AdminActionResult } from '@/lib/admin/access';
+import { MIN_AUDIT_REASON_LENGTH } from '@/lib/admin/audit-reason';
 
 /**
  * The shape every privileged control takes: a reason, then the button.
@@ -76,7 +77,7 @@ export function ReasonForm({
       <input
         name="reason"
         required
-        minLength={8}
+        minLength={MIN_AUDIT_REASON_LENGTH}
         maxLength={500}
         placeholder={placeholder}
         aria-label="Reason"

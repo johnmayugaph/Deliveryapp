@@ -176,3 +176,26 @@ export function menuImageHref(imageId: string): string {
  *  reused: a replaced photo is a new row with a new id, and the old URL stops
  *  being referenced by any page. */
 export const IMAGE_CACHE_CONTROL = 'public, max-age=31536000, immutable';
+
+/** Where a shop's stored logo or banner is served from. Same shape and same
+ *  reasoning as `menuImageHref` — one place, so the route and every `<img>`
+ *  cannot disagree about it. */
+export function storeImageHref(imageId: string): string {
+  return `/store-images/${imageId}`;
+}
+
+/** Whether a `Store.logoUrl` / `Store.coverUrl` value points at a row we own.
+ *  Those columns still accept a hosted `https://` link, so "is this ours"
+ *  decides whether removing the image also means deleting bytes. */
+export function isStoreImageHref(value: string | null): boolean {
+  return value !== null && STORE_IMAGE_PATH.test(value);
+}
+
+/**
+ * The exact shape this application serves a shop picture at.
+ *
+ * Strict — one path segment of cuid characters — because it is also what the
+ * address form is allowed to accept, and "starts with /store-images/" would
+ * let `/store-images/../../anything` through that box.
+ */
+export const STORE_IMAGE_PATH = /^\/store-images\/[A-Za-z0-9_-]{1,64}$/;

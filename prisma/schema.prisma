@@ -507,6 +507,7 @@ model User {
   reviewsWritten          OrderReview[]
   fleetDecisions          FleetPartnerServiceVerification[] @relation("FleetVerificationDecider")
   menuImagesUploaded      MenuItemImage[]                   @relation("MenuImageUploader")
+  storeImagesUploaded     StoreImage[]                      @relation("StoreImageUploader")
   grantedSubscriptions    UserSubscription[]                @relation("SubscriptionGrants")
   notifications           Notification[]
   notificationPreferences NotificationPreference[]
@@ -760,6 +761,7 @@ model Store {
   updatedAt DateTime @updatedAt
 
   menuItems         MenuItem[]
+  images            StoreImage[]
   reviews           OrderReview[]
   members           StoreMember[]
   invites           StoreInvite[]
@@ -923,6 +925,54 @@ model MenuItemImage {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+/// Which of a shop's two pictures this is.
+enum StoreImageKind {
+  /// Square-ish. The shop list, the order card, the top of the store page.
+  LOGO
+  /// Wide. The photograph behind the shop's name on its own page.
+  BANNER
+}
+
+/// A shop's logo or banner, as bytes.
+///
+/// `Store.logoUrl` and `Store.coverUrl` are still the only thing any page
+/// reads — an upload writes `/store-images/<id>` into one of them, so the
+/// storefront needed no change at all when this arrived, and a shop whose
+/// logo is hosted somewhere else keeps working.
+///
+/// This exists because those two columns took an ADDRESS, which quietly
+/// assumed the picture was already on the internet. An operator holding a
+/// JPEG the shop sent them over Viber had nowhere to put it, so in practice
+/// no shop onboarded through the console ever got a logo.
+///
+/// Same bargain as `MenuItemImage`, for the same reasons: bytes in Postgres,
+/// no bucket to create and no credentials to rotate, served with a year-long
+/// immutable cache. Two pictures per shop at 400 KB is a rounding error next
+/// to the menu.
+model StoreImage {
+  id      String         @id @default(cuid())
+  storeId String
+  store   Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  kind    StoreImageKind
+
+  /// Validated from the bytes themselves, never from what the client claimed.
+  contentType String
+  bytes       Bytes
+  byteSize    Int
+  width       Int
+  height      Int
+
+  /// Who uploaded it. Kept when they leave: the picture is the shop's.
+  uploadedByUserId String?
+  uploadedBy       User?   @relation("StoreImageUploader", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// One of each per shop, replaced rather than versioned.
+  @@unique([storeId, kind])
 }
 
 // -----------------------------------------------------------------------------

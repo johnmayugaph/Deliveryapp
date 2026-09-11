@@ -36,6 +36,31 @@ describe('the image address a shop may be given', () => {
     );
   });
 
+  /*
+   * The case the browser found. An upload writes `/store-images/<id>` into
+   * the very column this form shows; refusing it meant that once a shop had
+   * an uploaded logo, the address form could not be used AT ALL — opening it
+   * to change the banner failed on the logo box, with a message about
+   * https:// next to a path this application had put there itself.
+   */
+  it('takes the path an upload writes, which this form displays', () => {
+    expect(parseImageUrl('/store-images/cmtx1ox2v000t7defg6r8kpsa')).toBe(
+      '/store-images/cmtx1ox2v000t7defg6r8kpsa',
+    );
+  });
+
+  it('takes only that exact shape, not any path starting with it', () => {
+    for (const value of [
+      '/store-images/',
+      '/store-images/../../etc/passwd',
+      '/store-images/a/b',
+      '/store-imagesx/abc',
+      '/menu-images/abc',
+    ]) {
+      expect(() => parseImageUrl(value), value).toThrow(ImageUrlNotUnderstoodError);
+    }
+  });
+
   it('refuses anything that is not a link at all', () => {
     for (const value of ['logo.png', 'cdn.example.com/logo.png', 'not a url']) {
       expect(() => parseImageUrl(value), value).toThrow(ImageUrlNotUnderstoodError);

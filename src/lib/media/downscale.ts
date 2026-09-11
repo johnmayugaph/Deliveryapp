@@ -34,6 +34,17 @@ const TARGET_EDGE = 800;
 /** If the first pass is still too big, the picture is unusually detailed;
  *  fewer pixels helps more than less quality at that point. */
 const FALLBACK_EDGE = 600;
+
+/**
+ * A shop's banner, which is the one picture this reasoning does not fit.
+ *
+ * A dish photo renders 72 pixels wide in a menu row. A banner is the full
+ * width of the screen, and on the desktop layout that is 1152 CSS pixels —
+ * an 800px source is visibly soft there, which is the one place a shop's own
+ * picture is the largest thing on the page. It is one image per shop rather
+ * than one per dish, so the extra weight is paid once.
+ */
+export const BANNER_EDGES = { target: 1600, fallback: 1200 } as const;
 /** Tried in order until one fits. 0.72 is where JPEG artefacts stop being
  *  visible on food photography. */
 const QUALITY_LADDER = [0.72, 0.6, 0.5] as const;
@@ -113,10 +124,16 @@ function toBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob | null
 }
 
 /** A JPEG under the size limit, or a refusal that says which way it failed. */
-export async function downscalePhoto(file: Blob): Promise<File> {
+export async function downscalePhoto(
+  file: Blob,
+  edges: { target: number; fallback: number } = {
+    target: TARGET_EDGE,
+    fallback: FALLBACK_EDGE,
+  },
+): Promise<File> {
   const decoded = await decode(file);
   try {
-    for (const edge of [TARGET_EDGE, FALLBACK_EDGE]) {
+    for (const edge of [edges.target, edges.fallback]) {
       const { w, h } = scaleTo(edge, decoded.width, decoded.height);
       const canvas = document.createElement('canvas');
       canvas.width = w;

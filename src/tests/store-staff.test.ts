@@ -441,6 +441,44 @@ describe('creating a partner store', () => {
     }
   });
 
+  /*
+   * THE ONE EXCEPTION, written down so it stays one.
+   *
+   * `setStoreVisibilityAction` is a switch in the console header, not a form,
+   * and a switch cannot stop to ask why. Its reason is written by the system.
+   * Everything else about it is unchanged: it still requires an admin and
+   * still writes an audit row naming who flipped it and in which direction,
+   * which is what is actually needed when a shop goes dark and nobody
+   * remembers touching it.
+   *
+   * This test exists so the exception cannot spread by imitation — a second
+   * action written the same way fails the test above, and whoever adds it has
+   * to come here and argue for it.
+   */
+  it('is the only action whose reason the system writes for it', () => {
+    const actions = source('src/lib/actions/admin-actions.ts');
+    const start = actions.indexOf('export async function setStoreVisibilityAction');
+    const body = actions.slice(start, actions.indexOf('export async function', start + 10));
+
+    // A literal, not a form field: proof the reason is ours and not a typed
+    // one being quietly accepted as blank.
+    expect(body).toMatch(/normaliseReason\(\s*\n?\s*visible/);
+    expect(body).not.toMatch(/normaliseReason\(formData/);
+
+    // Every OTHER action still reads its reason off the form.
+    const others = actions
+      .split('export async function ')
+      .slice(1)
+      .filter((chunk) => chunk.startsWith('set') || chunk.startsWith('grant'))
+      .filter((chunk) => !chunk.startsWith('setStoreVisibilityAction'))
+      .filter((chunk) => chunk.includes('normaliseReason'));
+    expect(others.length).toBeGreaterThan(0);
+    for (const chunk of others) {
+      const name = chunk.slice(0, chunk.indexOf('('));
+      expect(chunk, `${name} writes its own reason`).toMatch(/normaliseReason\(formData/);
+    }
+  });
+
   it('masks the phone number it writes into the audit detail', () => {
     // The audit log is read by more people than the account record is.
     const actions = codeOnly(source('src/lib/actions/admin-actions.ts'));

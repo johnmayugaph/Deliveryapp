@@ -2,6 +2,7 @@ import { cache } from 'react';
 import { AdminAction, UserRole, type Prisma, type User } from '@prisma/client';
 import { prisma, type PrismaTransactionClient } from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth/session';
+import { MIN_AUDIT_REASON_LENGTH } from '@/lib/admin/audit-reason';
 
 /**
  * Who may use the console, and the record of what they did with it.
@@ -40,8 +41,7 @@ export class AuditReasonRequiredError extends Error {
   }
 }
 
-/** The shortest reason that could mean something: "tkt 4821". */
-export const MIN_AUDIT_REASON_LENGTH = 8;
+export { MIN_AUDIT_REASON_LENGTH } from '@/lib/admin/audit-reason';
 
 /**
  * The ceiling on a single credits correction.

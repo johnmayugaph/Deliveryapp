@@ -14,10 +14,11 @@ import {
   grantStoreAccessAction,
   revokeStoreAccessAction,
   setStoreBrandingAction,
-  setStoreVisibilityAction,
 } from '@/lib/actions/admin-actions';
 import { ReferralStatus } from '@prisma/client';
 import { formatCentavos } from '@/lib/money';
+import { StoreBrandingControls } from '@/components/admin/StoreBrandingControls';
+import { StoreActiveToggle } from '@/components/admin/StoreActiveToggle';
 import { ReasonForm } from '@/components/admin/ReasonForm';
 import { Empty, Panel, PersonLink, Pill, Stat, manilaTime } from '@/components/admin/primitives';
 import { displayNameFor } from '@/lib/auth/session';
@@ -61,13 +62,20 @@ export default async function AdminStoreDetailPage({
           <span>{store.city.name}</span>
           <span>·</span>
           <span>{store.addressLine}</span>
-          <Pill tone={store.isVisible ? 'good' : 'warn'}>
-            {store.isVisible ? 'Visible' : 'Hidden'}
-          </Pill>
+          {/* `isOpen` stays a read-only pill: it is the SHOP'S to set from
+              their own back office, and the console should not be able to
+              open a closed kitchen. */}
           <Pill tone={store.isOpen ? 'good' : 'neutral'}>
             {store.isOpen ? 'Open' : 'Closed'}
           </Pill>
         </p>
+        {/* Its own row rather than inline with the address, because it can
+            grow a refusal underneath it — "that shop has no menu yet" — and
+            in the header line that message shoved the address and the Open
+            pill apart and read as a broken layout. */}
+        <div className="mt-2">
+          <StoreActiveToggle storeId={store.id} active={store.isVisible} />
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -81,115 +89,79 @@ export default async function AdminStoreDetailPage({
         <Stat label="Invitations waiting" value={String(liveInvites.length)} />
       </div>
 
-      <Panel
-        title="Visible to customers"
-        description="A shop with no menu that customers can find is worse than one they cannot: they open it, see nothing, and conclude the app is broken."
-      >
-        <div className="px-4 py-3">
-          <ReasonForm
-            action={setStoreVisibilityAction}
-            hidden={{ storeId: store.id, visible: store.isVisible ? '0' : '1' }}
-            submitLabel={store.isVisible ? 'Hide from customers' : 'Make visible'}
-            tone={store.isVisible ? 'danger' : 'default'}
-          >
-            {store.isVisible
-              ? 'Customers can find this shop and order from it now.'
-              : store._count.menuItems === 0
-                ? 'This shop has no menu yet, so it cannot be made visible. The owner adds items from the store back office.'
-                : 'Customers cannot find this shop yet.'}
-          </ReasonForm>
-        </div>
-      </Panel>
-
       {/*
-        * THE IMAGES. These two columns existed from the first migration and
-        * nothing in the console could write them — a shop onboarded here got
+        * THE IMAGES. Two columns that existed from the first migration and
+        * that nothing in the console could write — a shop onboarded here got
         * no logo and no banner, and the only fix was a psql prompt. That is
         * also why the storefront grew a tinted-initial fallback for both.
         *
-        * Shown as well as edited: an operator should be able to see what is
-        * live on a customer's screen without opening the storefront, because
-        * the case that matters is a WRONG image, and you cannot fix what you
-        * cannot see.
+        * UPLOAD FIRST, address second, and that order is the whole point of
+        * this panel's second draft. The first one took a web address only,
+        * which assumed the picture was already hosted somewhere; an operator
+        * holding a JPEG the shop sent them had nowhere to put it, and
+        * reported exactly that. The address form is kept below because it is
+        * still the only way to point at a picture that lives elsewhere, and
+        * the only way to restore one of the seed's `data:` images.
         */}
       <Panel
         title="Logo and banner"
-        description="What customers see on the shop list and at the top of its page. Paste an https:// link, or leave a box empty to remove that image."
+        description="What customers see on the shop list and at the top of the shop's page. Pick a file — it is resized in your browser before it is sent."
       >
         <div className="space-y-4 px-4 py-4">
-          <div className="flex flex-wrap items-start gap-5">
-            <div>
-              <p className="text-[11px] font-bold uppercase tracking-wide text-ink-muted">
-                Logo
-              </p>
-              {store.logoUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={store.logoUrl}
-                  alt=""
-                  width={128}
-                  height={128}
-                  className="mt-1 h-16 w-16 rounded-xl object-cover ring-1 ring-black/5"
-                />
-              ) : (
-                <p className="mt-1 flex h-16 w-16 items-center justify-center rounded-xl bg-surface-sunken text-[11px] text-ink-faint ring-1 ring-black/5">
-                  None
-                </p>
-              )}
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-[11px] font-bold uppercase tracking-wide text-ink-muted">
-                Banner
-              </p>
-              {store.coverUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={store.coverUrl}
-                  alt=""
-                  width={640}
-                  height={240}
-                  className="mt-1 h-16 w-full max-w-sm rounded-xl object-cover ring-1 ring-black/5"
-                />
-              ) : (
-                <p className="mt-1 flex h-16 w-full max-w-sm items-center justify-center rounded-xl bg-surface-sunken text-[11px] text-ink-faint ring-1 ring-black/5">
-                  None
-                </p>
-              )}
-            </div>
-          </div>
+          <StoreBrandingControls
+            storeId={store.id}
+            storeName={store.name}
+            logoUrl={store.logoUrl}
+            coverUrl={store.coverUrl}
+          />
 
-          <ReasonForm
-            action={setStoreBrandingAction}
-            hidden={{ storeId: store.id }}
-            submitLabel="Save images"
-            extraFields={
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className="block">
-                  <span className="text-[11px] font-bold text-ink-muted">Logo address</span>
-                  <input
-                    name="logoUrl"
-                    type="text"
-                    defaultValue={store.logoUrl ?? ''}
-                    placeholder="https://…"
-                    className="mt-0.5 w-full rounded-lg bg-surface-sunken px-3 py-2 font-mono text-[12px] ring-1 ring-black/5 focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                </label>
-                <label className="block">
-                  <span className="text-[11px] font-bold text-ink-muted">Banner address</span>
-                  <input
-                    name="coverUrl"
-                    type="text"
-                    defaultValue={store.coverUrl ?? ''}
-                    placeholder="https://…"
-                    className="mt-0.5 w-full rounded-lg bg-surface-sunken px-3 py-2 font-mono text-[12px] ring-1 ring-black/5 focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                </label>
-              </div>
-            }
-          >
+          <p className="text-[11px] leading-relaxed text-ink-muted">
             A square logo and a wide banner read best — the storefront crops
-            both to fit. An empty box removes that image.
-          </ReasonForm>
+            both to fit. JPEG or PNG, at least 120 pixels on each side.
+          </p>
+
+          {/* Demoted, not deleted. Collapsed because the case it serves —
+              a picture already hosted somewhere — is the rare one. */}
+          <details className="rounded-xl bg-surface-sunken p-3 ring-1 ring-black/5">
+            <summary className="cursor-pointer text-[12px] font-bold text-ink-muted">
+              Use a web address instead
+            </summary>
+            <div className="mt-3">
+              <ReasonForm
+                action={setStoreBrandingAction}
+                hidden={{ storeId: store.id }}
+                submitLabel="Save addresses"
+                extraFields={
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block">
+                      <span className="text-[11px] font-bold text-ink-muted">Logo address</span>
+                      <input
+                        name="logoUrl"
+                        type="text"
+                        defaultValue={store.logoUrl ?? ''}
+                        placeholder="https://…"
+                        className="mt-0.5 w-full rounded-lg bg-white px-3 py-2 font-mono text-[12px] ring-1 ring-black/5 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="text-[11px] font-bold text-ink-muted">Banner address</span>
+                      <input
+                        name="coverUrl"
+                        type="text"
+                        defaultValue={store.coverUrl ?? ''}
+                        placeholder="https://…"
+                        className="mt-0.5 w-full rounded-lg bg-white px-3 py-2 font-mono text-[12px] ring-1 ring-black/5 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      />
+                    </label>
+                  </div>
+                }
+              >
+                Both boxes are saved together, so an empty one REMOVES that
+                image. A box showing /store-images/… is a file uploaded above;
+                overwriting it deletes the uploaded copy.
+              </ReasonForm>
+            </div>
+          </details>
         </div>
       </Panel>
 

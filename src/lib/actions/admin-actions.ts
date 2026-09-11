@@ -127,6 +127,21 @@ import {
   uniqueStoreSlug,
 } from '@/lib/admin/stores';
 import {
+  ImageTooLargeError,
+  ImageWrongShapeError,
+  MAX_IMAGE_BYTES,
+  NotAnImageError,
+} from '@/lib/media/image-bytes';
+import {
+  parseStoreImageKind,
+  pruneOrphanStoreImages,
+  putStoreImage,
+  removeStoreImage,
+  StoreImageKindUnknownError,
+  StoreNotFoundError,
+  STORE_IMAGE_LABEL,
+} from '@/lib/media/store-images';
+import {
   AlreadyInThatStateError,
   DecisionNeedsReasonError,
   NotAnApplicationError,
@@ -935,7 +950,24 @@ export async function createStoreAction(
   }
 }
 
+/**
+ * Active or inactive — whether customers can find this shop.
+ *
+ * A SWITCH, not a form. It replaced a panel with a reason box and a red
+ * button, which was three interactions for a two-state fact and read like a
+ * dangerous operation rather than the everyday one it is.
+ *
+ * THE REASON IS WRITTEN BY THE SYSTEM HERE, and this is the only console
+ * action where that is true. A switch cannot stop to ask why, and the choice
+ * was between a switch with an automatic reason and a form with a typed one.
+ * What is kept is the part that matters most when a shop goes dark and nobody
+ * remembers touching it: the audit row still names WHO flipped it, WHEN, and
+ * in which direction. What is given up is the ticket number. Two guard tests
+ * in `store-staff.test.ts` and `admin-access.test.ts` record that this action
+ * is the exception, so the next one cannot join it quietly.
+ */
 export async function setStoreVisibilityAction(
+  _previous: AdminActionResult | null,
   formData: FormData,
 ): Promise<AdminActionResult> {
   let admin;
@@ -949,15 +981,13 @@ export async function setStoreVisibilityAction(
   const storeId = String(formData.get('storeId') ?? '').trim();
   const visible = String(formData.get('visible') ?? '') === '1';
 
-  let reason: string;
-  try {
-    reason = normaliseReason(formData.get('reason'));
-  } catch (error) {
-    if (error instanceof AuditReasonRequiredError) {
-      return { ok: false, message: error.message };
-    }
-    throw error;
-  }
+  // Still through `normaliseReason`, so the column gets the same treatment
+  // every other reason does — it is the SOURCE that differs, not the shape.
+  const reason = normaliseReason(
+    visible
+      ? 'Set Active from the store console.'
+      : 'Set Inactive from the store console.',
+  );
 
   const store = await prisma.store.findUnique({
     where: { id: storeId },
@@ -1069,6 +1099,10 @@ export async function setStoreBrandingAction(
       where: { id: store.id },
       data: { logoUrl, coverUrl },
     });
+    // The other door onto the same two columns. This form can overwrite a
+    // `/store-images/<id>` that an upload put there, and those bytes would
+    // then be reachable from no page at all.
+    await pruneOrphanStoreImages(store.id, { logoUrl, coverUrl }, tx);
     await recordAdminAction(
       {
         actorId: admin.id,
@@ -1092,6 +1126,198 @@ export async function setStoreBrandingAction(
   revalidatePath(`/admin/stores/${store.id}`);
   revalidatePath(`/stores/${store.slug}`);
   return { ok: true, message: `Updated the images on ${store.name}.` };
+}
+
+/**
+ * Uploading a shop's logo or banner.
+ *
+ * THE FIX FOR THE REAL PROBLEM. The address form next to this one assumed the
+ * picture was already on the internet somewhere — which it is not. What an
+ * operator has is a JPEG the shop sent them, and until this existed there was
+ * nowhere to put it, so shops onboarded through the console had no logo.
+ *
+ * The bytes are resized in the browser first (a phone photo is several
+ * megabytes and a server action's body limit is one), and then validated here
+ * from the bytes themselves, because the thing that resized them runs on a
+ * computer somebody else controls.
+ */
+export async function uploadStoreImageAction(
+  _previous: AdminActionResult | null,
+  formData: FormData,
+): Promise<AdminActionResult> {
+  let admin;
+  try {
+    admin = await requireAdmin();
+  } catch (error) {
+    if (error instanceof AdminAccessRequiredError) return DENIED;
+    throw error;
+  }
+
+  const storeId = String(formData.get('storeId') ?? '').trim();
+
+  let kind;
+  try {
+    kind = parseStoreImageKind(formData.get('kind'));
+  } catch (error) {
+    if (error instanceof StoreImageKindUnknownError) {
+      return { ok: false, message: error.message };
+    }
+    throw error;
+  }
+  const label = STORE_IMAGE_LABEL[kind];
+
+  // Typed, like every other console action. It was tempting to write this one
+  // from the upload itself — the reason is nearly always "the shop sent us
+  // their logo" — but an action that records its own justification is not an
+  // audit trail, and the rule that every one of these is explained by a person
+  // is worth more than a saved keystroke. The control asks for it BEFORE it
+  // opens the file picker, so nobody loses a file to this.
+  let reason: string;
+  try {
+    reason = normaliseReason(formData.get('reason'));
+  } catch (error) {
+    if (error instanceof AuditReasonRequiredError) return { ok: false, message: error.message };
+    throw error;
+  }
+
+  const file = formData.get('image');
+  if (!(file instanceof File) || file.size === 0) {
+    return { ok: false, message: `Pick a ${label} first.` };
+  }
+  // Checked before the whole thing is read into memory. The real limit is
+  // enforced on the bytes; this is the cheap one.
+  if (file.size > MAX_IMAGE_BYTES * 2) {
+    return { ok: false, message: 'That image is too big to send. Try a smaller one.' };
+  }
+
+  const store = await prisma.store.findUnique({
+    where: { id: storeId },
+    select: { id: true, name: true, slug: true, logoUrl: true, coverUrl: true },
+  });
+  if (!store) return { ok: false, message: 'No such store.' };
+  const replacing = (kind === 'LOGO' ? store.logoUrl : store.coverUrl) !== null;
+
+  let stored;
+  try {
+    stored = await putStoreImage({
+      storeId: store.id,
+      kind,
+      bytes: new Uint8Array(await file.arrayBuffer()),
+      uploadedByUserId: admin.id,
+    });
+  } catch (error) {
+    if (
+      error instanceof NotAnImageError ||
+      error instanceof ImageTooLargeError ||
+      error instanceof ImageWrongShapeError ||
+      error instanceof StoreNotFoundError
+    ) {
+      return { ok: false, message: error.message };
+    }
+    throw error;
+  }
+
+  const size = `${stored.width}×${stored.height}, ${Math.round(stored.byteSize / 1024)} KB`;
+  await recordAdminAction({
+    actorId: admin.id,
+    action: AdminAction.STORE_BRANDING_CHANGED,
+    subjectType: 'Store',
+    subjectId: store.id,
+    subjectLabel: store.name,
+    reason,
+    // The facts, never the bytes and never the address — an audit row is read
+    // in a list, and an image does not belong in one.
+    detail: {
+      kind,
+      change: replacing ? 'replaced' : 'set',
+      size,
+      width: stored.width,
+      height: stored.height,
+      byteSize: stored.byteSize,
+    },
+  });
+
+  revalidatePath('/admin/stores');
+  revalidatePath(`/admin/stores/${store.id}`);
+  revalidatePath(`/stores/${store.slug}`);
+  return {
+    ok: true,
+    message: `Saved the ${label} — ${size}.`,
+  };
+}
+
+/**
+ * Taking a shop's logo or banner off.
+ *
+ * Clears the column whatever it held, so this also removes a hosted link that
+ * somebody pasted, and deletes our bytes when that is what it pointed at.
+ * The urgent case is a WRONG image, which is on a customer's screen right now.
+ */
+export async function removeStoreImageAction(
+  _previous: AdminActionResult | null,
+  formData: FormData,
+): Promise<AdminActionResult> {
+  let admin;
+  try {
+    admin = await requireAdmin();
+  } catch (error) {
+    if (error instanceof AdminAccessRequiredError) return DENIED;
+    throw error;
+  }
+
+  const storeId = String(formData.get('storeId') ?? '').trim();
+
+  let kind;
+  try {
+    kind = parseStoreImageKind(formData.get('kind'));
+  } catch (error) {
+    if (error instanceof StoreImageKindUnknownError) {
+      return { ok: false, message: error.message };
+    }
+    throw error;
+  }
+  const label = STORE_IMAGE_LABEL[kind];
+
+  let reason: string;
+  try {
+    reason = normaliseReason(formData.get('reason'));
+  } catch (error) {
+    if (error instanceof AuditReasonRequiredError) return { ok: false, message: error.message };
+    throw error;
+  }
+
+  const store = await prisma.store.findUnique({
+    where: { id: storeId },
+    select: { id: true, name: true, slug: true },
+  });
+  if (!store) return { ok: false, message: 'No such store.' };
+
+  let outcome;
+  try {
+    outcome = await removeStoreImage({ storeId: store.id, kind });
+  } catch (error) {
+    if (error instanceof StoreNotFoundError) return { ok: false, message: error.message };
+    throw error;
+  }
+
+  if (!outcome.removed) {
+    return { ok: true, message: `${store.name} had no ${label}.` };
+  }
+
+  await recordAdminAction({
+    actorId: admin.id,
+    action: AdminAction.STORE_BRANDING_CHANGED,
+    subjectType: 'Store',
+    subjectId: store.id,
+    subjectLabel: store.name,
+    reason,
+    detail: { kind, change: 'removed' },
+  });
+
+  revalidatePath('/admin/stores');
+  revalidatePath(`/admin/stores/${store.id}`);
+  revalidatePath(`/stores/${store.slug}`);
+  return { ok: true, message: `Removed the ${label}.` };
 }
 
 export async function grantStoreAccessAction(
