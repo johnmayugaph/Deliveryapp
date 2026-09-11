@@ -112,9 +112,6 @@ export function RecentStores({
                       {store.name}
                     </span>
                     <span className="shrink-0 text-[13px] font-bold text-ink">
-                      <span aria-hidden className="text-sun-500">
-                        ★
-                      </span>{' '}
                       <RatingBadge
                         ratingAvg={store.ratingAvg}
                         ratingCount={store.ratingCount}

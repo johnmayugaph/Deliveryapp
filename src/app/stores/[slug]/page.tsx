@@ -150,9 +150,6 @@ export default async function StorePage({
       <header className="bg-surface px-4 pb-4 pt-11 text-center">
         <h1 className="text-[21px] font-extrabold tracking-tight">{store.name}</h1>
         <p className="mt-1 text-[13px] font-bold text-ink">
-          <span aria-hidden className="text-sun-500">
-            ★
-          </span>{' '}
           <RatingBadge
             ratingAvg={store.ratingAvg}
             ratingCount={store.ratingCount}

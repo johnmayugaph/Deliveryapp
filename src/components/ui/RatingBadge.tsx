@@ -40,7 +40,16 @@ export function RatingBadge({
 
   return (
     <span>
-      <span aria-hidden>★</span> {rating.label}
+      {/* The star lives HERE and nowhere else. Three call sites had each
+          added their own gold star beside this component, which read as
+          "★ ★ 4.8" the moment a shop had enough reviews to show a number —
+          invisible until then, because a new shop renders "New" with no star
+          at all. Colouring it here is what stops the fourth call site from
+          doing it again. */}
+      <span aria-hidden className="text-sun-500">
+        ★
+      </span>{' '}
+      {rating.label}
       <span className="sr-only"> out of 5</span>
       {withCount ? ` (${rating.count})` : ''}
     </span>

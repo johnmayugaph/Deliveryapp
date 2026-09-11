@@ -1,4 +1,5 @@
-import type { PromoKind, ServiceKey } from '@prisma/client';
+import type { PromoCode, PromoKind, ServiceKey } from '@prisma/client';
+import { formatCentavos } from '@/lib/money';
 
 /**
  * Promo codes: the rules, with no database and no clock.
@@ -428,4 +429,36 @@ export function exposureFor(
     // because even the per-order figure depends on the distance.
     unbounded: bounds.length === 0,
   };
+}
+
+// --- How a campaign reads on a shop list -------------------------------------
+
+/**
+ * The short line a code wears as a chip: "10% off", "₱50.00 off", "Free
+ * delivery".
+ *
+ * Pure and here rather than in the component, because it is the one place the
+ * three kinds turn into three different sentences — and a fourth kind added to
+ * `PromoKind` should fail this switch's exhaustiveness check rather than
+ * render blank somewhere on a list of shops.
+ *
+ * It describes what the code OFFERS, not what any particular order would get.
+ * A chip on a shop list is read before there is a basket to price, so it can
+ * only ever be the headline; `minimumOrderCentavos` carries the condition
+ * underneath it.
+ */
+export function promoOfferLabel(
+  code: Pick<PromoCode, 'kind' | 'percentBasisPoints' | 'amountCentavos'>,
+): string {
+  switch (code.kind) {
+    case 'PERCENTAGE': {
+      const basisPoints = code.percentBasisPoints ?? 0;
+      const percent = basisPoints / 100;
+      return `${Number.isInteger(percent) ? percent : percent.toFixed(1)}% off`;
+    }
+    case 'FIXED_AMOUNT':
+      return `${formatCentavos(code.amountCentavos ?? 0)} off`;
+    case 'FREE_DELIVERY':
+      return 'Free delivery';
+  }
 }

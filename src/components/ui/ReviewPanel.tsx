@@ -44,7 +44,7 @@ export function ReviewPanel({
         </h2>
         {summary.ratingCount > 0 ? (
           <span className="text-sm font-bold tabular-nums">
-            <span aria-hidden className="text-amber-500">
+            <span aria-hidden className="text-sun-500">
               ★
             </span>{' '}
             {summary.ratingAvg.toFixed(1)}
@@ -104,7 +104,7 @@ export function ReviewPanel({
                   <li key={review.id}>
                     <p className="text-xs leading-relaxed">{review.comment}</p>
                     <p className="mt-0.5 text-[11px] text-ink-faint">
-                      <span aria-hidden className="text-amber-500">
+                      <span aria-hidden className="text-sun-500">
                         {'★'.repeat(review.stars)}
                       </span>
                       <span className="sr-only">

@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { OrderStatus } from '@prisma/client';
@@ -38,6 +38,47 @@ import { countByStar } from '@/lib/ratings/reviews';
 
 function source(relativePath: string): string {
   return readFileSync(path.resolve(__dirname, '..', '..', relativePath), 'utf8');
+}
+
+/**
+ * Customer-facing components and pages that mention a column, by search.
+ *
+ * `src/app/admin`, `/merchant` and `/fleet` are staff screens: an operator
+ * looking at a shop's raw average is reading an internal number, which is a
+ * different job from telling a customer how good a shop is. The badge itself
+ * is excluded for the obvious reason.
+ */
+function customerFacingFilesMentioning(needle: string): string[] {
+  const root = path.resolve(__dirname, '..', '..', 'src');
+  const skip = [
+    path.join('src', 'app', 'admin'),
+    path.join('src', 'app', 'merchant'),
+    path.join('src', 'app', 'fleet'),
+    path.join('src', 'app', 'api'),
+    path.join('src', 'components', 'ui', 'RatingBadge.tsx'),
+    // Somebody's own numbers, in the merchant back office and the rider
+    // profile. It shows the average from the FIRST review on purpose — the
+    // threshold exists to stop one review being shown to a stranger as a
+    // verdict, not to hide a shop's own data from the shop — and it prints
+    // the line that says customers cannot see it yet.
+    path.join('src', 'components', 'ui', 'ReviewPanel.tsx'),
+  ];
+
+  const found: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      const relative = path.relative(path.resolve(__dirname, '..', '..'), full);
+      if (skip.some((prefix) => relative.startsWith(prefix))) continue;
+      if (entry.isDirectory()) {
+        walk(full);
+      } else if (entry.name.endsWith('.tsx')) {
+        if (readFileSync(full, 'utf8').includes(needle)) found.push(relative);
+      }
+    }
+  };
+  walk(root);
+  return found.sort();
 }
 
 function codeOnly(text: string): string {
@@ -225,11 +266,16 @@ describe('showing a rating to a stranger', () => {
   it('is what every customer-facing site uses', () => {
     // Before ratings could be written these rendered "★ 0.0" everywhere, which
     // was worse than either answer.
-    for (const file of [
-      'src/components/home/RecentStores.tsx',
-      'src/app/stores/[slug]/page.tsx',
-      'src/app/services/[key]/page.tsx',
-    ]) {
+    //
+    // FOUND BY SEARCH rather than listed by hand. The hand-written list was
+    // three paths, and the first time a list moved into its own component the
+    // guard failed on a file that had done nothing wrong while the component
+    // that now renders the rating was not checked at all. Anything customer
+    // facing that touches `ratingAvg` has to answer for it.
+    const files = customerFacingFilesMentioning('ratingAvg');
+    expect(files.length, 'no customer-facing file reads ratingAvg').toBeGreaterThan(2);
+
+    for (const file of files) {
       const code = codeOnly(source(file));
       expect(code, `${file} does not use the badge`).toMatch(/<RatingBadge/);
       expect(code, `${file} still formats the average itself`).not.toMatch(
