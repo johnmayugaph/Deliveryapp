@@ -37,7 +37,7 @@ export function CartBar() {
        navigation grew when its current tab became a pill — the old 4.1rem
        left this bar's bottom edge tucked behind it, which read as a clipped
        button rather than a floating one. */
-    <div className="fixed inset-x-0 bottom-[4.75rem] z-40 px-4">
+    <div className="fixed inset-x-0 bottom-[5.5rem] z-40 px-4">
       <div className="mx-auto max-w-lg">
         {/*
           * Ink ground with a mango chip, rather than a solid brand-coloured

@@ -37,7 +37,10 @@ export function RecentStores({
 
   return (
     <section aria-labelledby="recent-heading" className="px-4 py-4">
-      <h2 id="recent-heading" className="eyebrow">
+      {/* Sentence case, and big. A delivery app's home screen is a stack of
+          sections and the heading is the only thing separating them; a small
+          uppercase eyebrow reads as a label on a form. */}
+      <h2 id="recent-heading" className="text-[19px] font-extrabold tracking-tight">
         {hasOrderHistory ? 'Order again' : 'Popular near you'}
       </h2>
       <ul className="mt-3 space-y-3.5">
@@ -57,22 +60,10 @@ export function RecentStores({
                     height={400}
                     loading="lazy"
                     decoding="async"
-                    className={`block h-40 w-full object-cover ${
+                    className={`block h-44 w-full object-cover ${
                       store.isOpen ? '' : 'opacity-60 grayscale'
                     }`}
                   />
-                  {/*
-                    * The rating rides on the photograph, which is where the
-                    * eye already is. White pill rather than the green every
-                    * competitor uses: green is a status colour everywhere else
-                    * in this application, and a rating is not a status.
-                    */}
-                  <span className="absolute right-3 top-3 rounded-full bg-surface/95 px-2.5 py-1 text-[12px] font-bold text-ink shadow-tile">
-                    <RatingBadge
-                      ratingAvg={store.ratingAvg}
-                      ratingCount={store.ratingCount}
-                    />
-                  </span>
                   {!store.isOpen ? (
                     <span className="absolute left-3 top-3 rounded-full bg-ink/85 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-surface">
                       Sarado
@@ -109,35 +100,43 @@ export function RecentStores({
                 ) : null}
 
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[15px] font-bold leading-tight">
-                    {store.name}
+                  {/*
+                    * Name and rating on one line, the way every delivery app
+                    * sets a shop row: the name takes the space it needs and the
+                    * rating is pinned right, so a column of cards has its
+                    * ratings in a column too rather than wherever each name
+                    * happened to end.
+                    */}
+                  <span className="flex items-baseline gap-2">
+                    <span className="min-w-0 flex-1 truncate text-[15.5px] font-extrabold leading-tight">
+                      {store.name}
+                    </span>
+                    <span className="shrink-0 text-[13px] font-bold text-ink">
+                      <span aria-hidden className="text-sun-500">
+                        ★
+                      </span>{' '}
+                      <RatingBadge
+                        ratingAvg={store.ratingAvg}
+                        ratingCount={store.ratingCount}
+                        withCount
+                      />
+                    </span>
                   </span>
-                  <span className="mt-1 flex items-center gap-1.5 text-[12px] text-ink-muted">
-                    {/* On a photo card the rating is already on the image, so
-                        the meta line does not repeat it. */}
-                    {store.coverUrl ? null : (
+                  <span className="mt-1 flex items-center gap-1.5 text-[12.5px] text-ink-muted">
+                    <span>From {store.preparationMinutes} min</span>
+                    <span aria-hidden>·</span>
+                    {/* The shop's own line about itself where it has one, and
+                        its street where it does not. Never the city id, which
+                        is what a first pass at this reached for — every row
+                        would have said the same word, in lower case. */}
+                    <span className="truncate">{store.description ?? store.addressLine}</span>
+                    {store.isOpen ? null : (
                       <>
-                        <span className="font-semibold text-ink">
-                          <RatingBadge
-                            ratingAvg={store.ratingAvg}
-                            ratingCount={store.ratingCount}
-                          />
-                        </span>
                         <span aria-hidden>·</span>
+                        <span className="font-bold text-brand-700">Sarado</span>
                       </>
                     )}
-                    <span>{store.preparationMinutes} min prep</span>
-                    {store.isOpen || store.coverUrl ? null : (
-                      <>
-                        <span aria-hidden>·</span>
-                        <span className="font-semibold text-ink">Sarado</span>
-                      </>
-                    )}
                   </span>
-                </span>
-
-                <span aria-hidden className="text-sm font-bold text-brand-700">
-                  →
                 </span>
               </span>
             </Link>

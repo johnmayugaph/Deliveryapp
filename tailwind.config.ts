@@ -27,12 +27,15 @@ const config: Config = {
       },
       colors: {
         /*
-         * ROYAL BLUE, WITH THE YELLOW MOVED TO ITS OWN TOKEN.
+         * MAGENTA, WITH THE YELLOW KEPT ON ITS OWN TOKEN.
          *
-         * The blue is the chrome: the header block, the primary buttons, the
-         * links. It carries white text from 500 down (500 is 7.0:1, 700 is
-         * 9.6:1), which is why the fifty-five `bg-brand-600 text-white`
-         * controls in this application needed no edits when the hue changed.
+         * The magenta is the chrome: the header block, the primary buttons,
+         * the links. White sits on 600 at 6.7:1 and on 700 at 8.6:1, which is
+         * why the fifty-five `bg-brand-600 text-white` controls in this
+         * application needed no edits for this hue either — the ramp was built
+         * so the dark end carries white whatever the colour is. 500 is 4.6:1,
+         * fine for large type and headers, not for a button label; controls
+         * take 600 or darker.
          *
          * The mango did not survive as the brand colour but it survives as
          * `sun`, because a promotion is the one thing on a blue screen that
@@ -43,16 +46,16 @@ const config: Config = {
          * ink label.
          */
         brand: {
-          50: '#eef3ff',
-          100: '#dbe5ff',
-          200: '#b9cbff',
-          300: '#8ea9fb',
-          400: '#5c80f3',
-          500: '#2f5be0',
-          600: '#1e46c8',
-          700: '#1837a1',
-          800: '#142c80',
-          900: '#101f5c',
+          50: '#fff1f6',
+          100: '#ffe0ec',
+          200: '#ffc2d9',
+          300: '#ff8fb8',
+          400: '#f95d94',
+          500: '#e11d6f',
+          600: '#c41259',
+          700: '#a10f4a',
+          800: '#7f0c3a',
+          900: '#5e0a2b',
         },
         /*
          * Cool neutrals again, now that the chrome is blue: warm ink over a

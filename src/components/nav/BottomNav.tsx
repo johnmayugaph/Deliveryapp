@@ -35,13 +35,20 @@ export function BottomNav() {
   return (
     <nav
       aria-label="Main"
-      className="fixed inset-x-0 bottom-0 z-40 border-t border-ink/[0.06] bg-surface/95 shadow-nav backdrop-blur-md"
+      /*
+       * A floating pill rather than a bar welded to the bottom edge. It is
+       * what the current generation of these apps does, and the gap underneath
+       * is not decoration: it lets the page scroll visibly past the navigation
+       * instead of ending at a hard line, which is what made the old bar read
+       * as a page footer.
+       */
+      className="fixed inset-x-0 bottom-0 z-40 px-3 pb-3"
       /* The home-bar inset, so the labels are not sitting under it on an
          iPhone. `env()` resolves to 0 everywhere else, which is why it can be
          unconditional. */
       style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
-      <ul className="mx-auto flex max-w-lg items-stretch px-2 py-1.5">
+      <ul className="mx-auto flex max-w-lg items-stretch gap-1 rounded-full bg-surface/95 px-2 py-1.5 shadow-lifted ring-1 ring-ink/[0.06] backdrop-blur-md">
         {ITEMS.map((item) => {
           const isCurrent =
             item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);
@@ -56,9 +63,9 @@ export function BottomNav() {
                  * distinction people squint at; a shape is legible at a
                  * glance and survives being looked at in sunlight.
                  */
-                className={`flex flex-col items-center gap-0.5 rounded-2xl py-2 text-[11px] font-bold transition-colors ${
+                className={`flex flex-col items-center gap-0.5 rounded-full py-2 text-[11px] font-bold transition-colors ${
                   isCurrent
-                    ? 'bg-brand-100 text-brand-800'
+                    ? 'bg-brand-50 text-brand-700'
                     : 'text-ink-faint hover:bg-ink/[0.04] hover:text-ink-muted'
                 }`}
               >

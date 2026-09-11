@@ -41,7 +41,7 @@ export function PromotionsRail({ promotions }: { promotions: Promotion[] }) {
   }
 
   return (
-    <section aria-labelledby="promotions-heading" className="pt-5">
+    <section aria-labelledby="promotions-heading" className="pb-3">
       <h2 id="promotions-heading" className="sr-only">
         Promos
       </h2>
@@ -90,10 +90,11 @@ export function PromotionsRail({ promotions }: { promotions: Promotion[] }) {
                   </span>
                 </>
               ) : (
-                /* Yellow, with an ink label. The chrome is blue; a promotion
-                   in another blue would disappear into it, and yellow is the
-                   one colour on this screen allowed to shout. White on this
-                   ground is 1.7:1, so the label is always ink. */
+                /* Yellow, with an ink label. The card sits ON the magenta
+                   header block, so a promotion in any pink would vanish into
+                   it; yellow is the one colour here that can carry weight
+                   against that ground. White on it is 1.7:1, so the label is
+                   always ink. */
                 <span className="relative flex h-full flex-col justify-end bg-sun p-4 text-ink">
                   <span className="block text-[15px] font-extrabold leading-snug">
                     {promotion.title}
@@ -116,7 +117,7 @@ export function PromotionsRail({ promotions }: { promotions: Promotion[] }) {
             <span
               key={promotion.id}
               className={`h-1.5 rounded-full transition-all duration-200 ${
-                index === active ? 'w-5 bg-brand-600' : 'w-1.5 bg-ink/20'
+                index === active ? 'w-5 bg-white' : 'w-1.5 bg-white/40'
               }`}
             />
           ))}

@@ -164,7 +164,11 @@ export function AskForService({
                   ? signedIn
                     ? 'We will tell you'
                     : 'Sign in to be told'
-                  : 'Want this? Tap'}
+                  : /* Two words in a chip-width column, so the row's height
+                       does not depend on how long this sentence is. */
+                    compact
+                    ? 'Want it?'
+                    : 'Want this? Tap'}
         </span>
       </button>
     </form>

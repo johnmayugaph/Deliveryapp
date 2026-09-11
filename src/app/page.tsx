@@ -54,7 +54,7 @@ export default async function HomePage() {
         * follows you down a shop list is a lot of chrome for two lines of
         * text, and the search it contains has its own screen.
         */}
-      <div className="rounded-b-3xl bg-brand-600">
+      <div className="bg-brand-600 pb-2">
         <LocationHeader
           addressLabel={data.currentAddressLabel}
           cityName={data.currentCityName}
@@ -75,6 +75,10 @@ export default async function HomePage() {
           }
         />
         <GlobalSearch activeServiceNames={activeServiceNames} />
+        {/* The banner lives in the coloured block, not under it: it is the
+            one piece of merchandising that gets the top of the screen, and on
+            the page below it would compete with the shops. */}
+        <PromotionsRail promotions={data.promotions} />
       </div>
 
       <ServiceTileGrid
@@ -85,8 +89,6 @@ export default async function HomePage() {
       />
 
       <ActiveOrderStrip orders={data.activeOrders} />
-
-      <PromotionsRail promotions={data.promotions} />
 
       <RecentStores
         stores={data.recentStores}
