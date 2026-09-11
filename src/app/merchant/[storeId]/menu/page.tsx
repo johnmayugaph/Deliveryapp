@@ -96,6 +96,7 @@ export default async function MerchantMenuPage({
                 description: item.description,
                 category: item.category,
                 priceCentavos: item.priceCentavos,
+                compareAtPriceCentavos: item.compareAtPriceCentavos,
                 isAvailable: item.isAvailable,
                 isFirstInSection: position === 0,
                 isLastInSection: position === group.items.length - 1,

@@ -1,16 +1,22 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { prisma } from '@/lib/prisma';
-import { getAllServices } from '@/lib/services/registry';
+import { getActiveServiceKeys, getAllServices } from '@/lib/services/registry';
 import { groupByCategory } from '@/lib/merchant/menu-policy';
 import { menuImageHref } from '@/lib/media/image-bytes';
 import { formatCentavos } from '@/lib/money';
 import { findDeliveryFeeRule } from '@/lib/pricing/delivery-fee';
 import { publicStoreReviews } from '@/lib/ratings/reviews';
+import { optionalUser } from '@/lib/auth/access';
+import { loadStoreMerchandising } from '@/lib/stores/store-page-data';
 import { AddToCartControls } from '@/components/cart/AddToCartControls';
 import { RatingBadge } from '@/components/ui/RatingBadge';
 import { DealRail } from '@/components/stores/DealRail';
 import { ReviewRail } from '@/components/stores/ReviewRail';
+import { OfferRail } from '@/components/stores/OfferRail';
+import { ForYouGrid } from '@/components/stores/ForYouGrid';
+import { MenuItemCard, MenuItemPrice, toCartGroups } from '@/components/stores/MenuItemCard';
+import { PromotionsRail } from '@/components/home/PromotionsRail';
 
 export const dynamic = 'force-dynamic';
 
@@ -90,7 +96,8 @@ export default async function StorePage({
   const canOrder = store.isOpen && liveServices.length > 0;
 
   const now = new Date();
-  const [feeRule, reviews, deals] = await Promise.all([
+  const user = await optionalUser('home');
+  const [feeRule, reviews, deals, activeServiceKeys, promotions] = await Promise.all([
     // The rule for this shop's first live vertical, so the card below quotes
     // what checkout will charge. Null when nothing is live here, which is the
     // same condition that hides the add buttons.
@@ -109,7 +116,39 @@ export default async function StorePage({
       orderBy: { minimumOrderCentavos: 'asc' },
       take: 6,
     }),
+    getActiveServiceKeys(),
+    // The house banner, filtered to this shop's city. A shop cannot own a
+    // Promotion row — they are city and service scoped — so this is the same
+    // merchandising the home and service screens carry, shown where somebody
+    // is closest to actually spending.
+    prisma.promotion.findMany({
+      where: {
+        isActive: true,
+        AND: [
+          { OR: [{ startsAt: null }, { startsAt: { lte: now } }] },
+          { OR: [{ endsAt: null }, { endsAt: { gte: now } }] },
+          { OR: [{ cityIds: { isEmpty: true } }, { cityIds: { has: store.cityId } }] },
+        ],
+      },
+      orderBy: { sortOrder: 'asc' },
+      take: 6,
+    }),
   ]);
+
+  const merchandising = await loadStoreMerchandising({
+    storeId: store.id,
+    userId: user?.id ?? null,
+    items: store.menuItems,
+  });
+
+  // Promotions naming only verticals that are not live here are dropped, the
+  // same rule the home screen applies: advertising a service somebody cannot
+  // use is how a screen loses trust.
+  const liveBanners = promotions.filter(
+    (promotion) =>
+      promotion.serviceKeys.length === 0 ||
+      promotion.serviceKeys.some((key) => activeServiceKeys.includes(key)),
+  );
 
   // Grouped by the same rule the merchant screen uses, so what a shop arranges
   // is what a customer sees.
@@ -246,6 +285,30 @@ export default async function StorePage({
         </p>
       ) : null}
 
+      <OfferRail
+        offers={merchandising.offers}
+        codes={deals}
+        store={{ id: store.id, name: store.name, slug: store.slug }}
+        canOrder={canOrder}
+      />
+
+      <ForYouGrid
+        items={merchandising.forYou}
+        isPersonal={merchandising.forYouIsPersonal}
+        mostOrderedIds={merchandising.mostOrderedIds}
+        store={{ id: store.id, name: store.name, slug: store.slug }}
+        canOrder={canOrder}
+      />
+
+      {/* The banner, between the merchandising and the menu. Above the offer
+          rail it would be the first thing on a shop's page that is not about
+          that shop; below the menu nobody would reach it. */}
+      {liveBanners.length > 0 ? (
+        <div className="mt-5 bg-brand-600 py-3">
+          <PromotionsRail promotions={liveBanners} />
+        </div>
+      ) : null}
+
       <div className="mt-4">
         <ReviewRail reviews={reviews} />
       </div>
@@ -325,48 +388,14 @@ export default async function StorePage({
               <ul className="mt-3 grid grid-cols-2 gap-x-3 gap-y-4 px-4">
                 {group.items.map((item) => (
                   <li key={item.id} id={`item-${item.id}`}>
-                    <div className="relative">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={menuImageHref(item.image!.id)}
-                        alt={item.name}
-                        width={400}
-                        height={400}
-                        loading="lazy"
-                        decoding="async"
-                        className="block aspect-square w-full rounded-2xl object-cover ring-1 ring-ink/[0.06]"
-                      />
-                      {canOrder ? (
-                        <div className="absolute bottom-2 right-2">
-                          <AddToCartControls
-                            variant="round"
-                            store={{ id: store.id, name: store.name, slug: store.slug }}
-                            menuItemId={item.id}
-                            itemName={item.name}
-                            basePriceCentavos={item.priceCentavos}
-                            groups={item.optionGroups.map((optionGroup) => ({
-                              id: optionGroup.id,
-                              name: optionGroup.name,
-                              minChoices: optionGroup.minChoices,
-                              maxChoices: optionGroup.maxChoices,
-                              options: optionGroup.options.map((option) => ({
-                                id: option.id,
-                                name: option.name,
-                                priceDeltaCentavos: option.priceDeltaCentavos,
-                                isAvailable: option.isAvailable,
-                              })),
-                            }))}
-                          />
-                        </div>
-                      ) : null}
-                    </div>
-                    <p className="mt-2 text-[13.5px] font-bold leading-tight">
-                      {item.name}
-                    </p>
-                    <p className="mt-0.5 text-[13.5px] font-extrabold tabular-nums">
-                      {item.optionGroups.length > 0 ? 'from ' : ''}
-                      {formatCentavos(item.priceCentavos)}
-                    </p>
+                    <MenuItemCard
+                      item={item}
+                      store={{ id: store.id, name: store.name, slug: store.slug }}
+                      canOrder={canOrder}
+                      badge={
+                        merchandising.mostOrderedIds.has(item.id) ? 'Most ordered' : null
+                      }
+                    />
                   </li>
                 ))}
               </ul>
@@ -412,10 +441,10 @@ export default async function StorePage({
                             {item.description}
                           </p>
                         ) : null}
-                        <p className="mt-1 text-[14px] font-extrabold tabular-nums">
-                          {item.optionGroups.length > 0 ? 'from ' : ''}
-                          {formatCentavos(item.priceCentavos)}
-                        </p>
+                        <MenuItemPrice
+                          item={item}
+                          className="mt-1 text-[14px] font-extrabold"
+                        />
                       </div>
 
                       {canOrder ? (
@@ -426,18 +455,7 @@ export default async function StorePage({
                             menuItemId={item.id}
                             itemName={item.name}
                             basePriceCentavos={item.priceCentavos}
-                            groups={item.optionGroups.map((optionGroup) => ({
-                              id: optionGroup.id,
-                              name: optionGroup.name,
-                              minChoices: optionGroup.minChoices,
-                              maxChoices: optionGroup.maxChoices,
-                              options: optionGroup.options.map((option) => ({
-                                id: option.id,
-                                name: option.name,
-                                priceDeltaCentavos: option.priceDeltaCentavos,
-                                isAvailable: option.isAvailable,
-                              })),
-                            }))}
+                            groups={toCartGroups(item)}
                           />
                         </div>
                       ) : null}

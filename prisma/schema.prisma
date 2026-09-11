@@ -785,6 +785,18 @@ model MenuItem {
   description   String?
   category      String  @default("Main")
   priceCentavos Int
+
+  /// What this normally costs, when it is on sale. Null means it is not.
+  ///
+  /// DISPLAY ONLY, and that is the whole safety argument: checkout prices
+  /// every line from `priceCentavos`, so a wrong number here can make a dish
+  /// look like a better deal than it is but can never charge anybody more.
+  ///
+  /// A database CHECK requires it to be strictly greater than the real price.
+  /// A "was" price at or below what is being charged is not a discount, and a
+  /// sale price is exactly the sort of field an import script writes badly.
+  compareAtPriceCentavos Int?
+
   isAvailable   Boolean @default(true)
   sortOrder     Int     @default(0)
 

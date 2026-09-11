@@ -25,6 +25,8 @@ export interface MenuRowItem {
   description: string | null;
   category: string;
   priceCentavos: number;
+  /** The "was" price, when this dish is on sale. */
+  compareAtPriceCentavos: number | null;
   isAvailable: boolean;
   isFirstInSection: boolean;
   isLastInSection: boolean;
@@ -77,6 +79,11 @@ export function MenuRow({
   const [name, setName] = useState(item.name);
   const [category, setCategory] = useState(item.category);
   const [price, setPrice] = useState((item.priceCentavos / 100).toFixed(2));
+  const [comparePrice, setComparePrice] = useState(
+    item.compareAtPriceCentavos === null
+      ? ''
+      : (item.compareAtPriceCentavos / 100).toFixed(2),
+  );
   const [description, setDescription] = useState(item.description ?? '');
 
   function run(
@@ -108,6 +115,11 @@ export function MenuRow({
     setName(item.name);
     setCategory(item.category);
     setPrice((item.priceCentavos / 100).toFixed(2));
+    setComparePrice(
+      item.compareAtPriceCentavos === null
+        ? ''
+        : (item.compareAtPriceCentavos / 100).toFixed(2),
+    );
     setDescription(item.description ?? '');
   }
 
@@ -188,6 +200,11 @@ export function MenuRow({
 
         <span className="flex shrink-0 items-center gap-2">
           <span className="text-sm font-semibold tabular-nums">
+            {item.compareAtPriceCentavos !== null ? (
+              <span className="mr-1.5 font-normal text-ink-faint line-through">
+                {formatCentavos(item.compareAtPriceCentavos)}
+              </span>
+            ) : null}
             {formatCentavos(item.priceCentavos)}
           </span>
 
@@ -334,6 +351,19 @@ export function MenuRow({
                 />
               </span>
             </label>
+            <label className="w-28 shrink-0">
+              <span className="text-[11px] font-semibold text-ink-muted">Was</span>
+              <span className="mt-0.5 flex items-center gap-1 rounded-lg bg-surface px-2.5 py-1.5 ring-1 ring-black/5 focus-within:ring-2 focus-within:ring-brand-500">
+                <span className="text-[13px] text-ink-faint">₱</span>
+                <input
+                  value={comparePrice}
+                  inputMode="decimal"
+                  placeholder="—"
+                  onChange={(event) => setComparePrice(event.target.value)}
+                  className="w-full bg-transparent text-right text-[13px] tabular-nums focus:outline-none"
+                />
+              </span>
+            </label>
           </div>
 
           <label className="block">
@@ -354,7 +384,7 @@ export function MenuRow({
               type="button"
               disabled={pending}
               onClick={() =>
-                run(editMenuItemAction, { name, category, price, description }, () =>
+                run(editMenuItemAction, { name, category, price, comparePrice, description }, () =>
                   setMode('READ'),
                 )
               }

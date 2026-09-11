@@ -11,13 +11,27 @@ import {
   type GroupLike,
 } from '@/lib/merchant/option-policy';
 
+/*
+ * WHY EVERY BUTTON IN HERE IS `relative`.
+ *
+ * Each carries an `sr-only` label, and `sr-only` is `position: absolute`. With
+ * no positioned ancestor its containing block is the document, so dropped into
+ * a horizontally scrolling rail it anchors itself wherever the card has been
+ * scrolled to and drags the PAGE's scroll width out with it — the whole screen
+ * becomes swipeable sideways because of a one-pixel span nobody can see.
+ *
+ * It is fixed HERE rather than at each call site because this component is
+ * designed to be put anywhere, and a caller dropping it into a rail has no way
+ * to know it needs to be made a containing block first. It has already
+ * happened twice.
+ */
 /**
  * The round +. Nine millimetres of target at 36px, which is the smallest a
  * thumb should be asked to hit, and a shadow because in the grid it sits on a
  * photograph whose colours nobody here has seen.
  */
 const ROUND_BUTTON =
-  'flex h-9 w-9 items-center justify-center rounded-full bg-brand-600 text-xl font-bold leading-none text-white shadow-lifted transition-colors hover:bg-brand-700';
+  'relative flex h-9 w-9 items-center justify-center rounded-full bg-brand-600 text-xl font-bold leading-none text-white shadow-lifted transition-colors hover:bg-brand-700';
 
 /**
  * Adding one dish to the cart — with its choices, when it has any.
@@ -232,7 +246,7 @@ export function AddToCartControls({
               className={
                 variant === 'round'
                   ? ROUND_BUTTON
-                  : 'rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-brand-700'
+                  : 'relative rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-brand-700'
               }
             >
               {variant === 'round' ? <span aria-hidden>+</span> : 'Choose'}
@@ -272,7 +286,7 @@ export function AddToCartControls({
           className={
             variant === 'round'
               ? ROUND_BUTTON
-              : 'rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-brand-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500'
+              : 'relative rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-brand-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500'
           }
         >
           {variant === 'round' ? <span aria-hidden>+</span> : 'Add'}
@@ -301,7 +315,7 @@ export function AddToCartControls({
       <button
         type="button"
         onClick={() => setQuantity(plainLineId, quantity - 1)}
-        className="flex h-7 w-7 items-center justify-center rounded-full bg-surface-sunken text-sm font-semibold ring-1 ring-black/10 transition-colors hover:bg-brand-50"
+        className="relative flex h-7 w-7 items-center justify-center rounded-full bg-surface-sunken text-sm font-semibold ring-1 ring-black/10 transition-colors hover:bg-brand-50"
       >
         <span aria-hidden>−</span>
         <span className="sr-only">Remove one {itemName}</span>
@@ -312,7 +326,7 @@ export function AddToCartControls({
       <button
         type="button"
         onClick={() => setQuantity(plainLineId, quantity + 1)}
-        className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-600 text-sm font-semibold text-white transition-colors hover:bg-brand-700"
+        className="relative flex h-7 w-7 items-center justify-center rounded-full bg-brand-600 text-sm font-semibold text-white transition-colors hover:bg-brand-700"
       >
         <span aria-hidden>+</span>
         <span className="sr-only">Add one {itemName}</span>

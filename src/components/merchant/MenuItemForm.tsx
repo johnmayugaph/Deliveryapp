@@ -44,6 +44,7 @@ export function MenuItemForm({
   // and kept on a refusal so a mistyped price is not retyped from scratch.
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
+  const [comparePrice, setComparePrice] = useState('');
   const [category, setCategory] = useState(sections[0] ?? '');
   const [description, setDescription] = useState('');
   const [lastCleared, setLastCleared] = useState<string | null>(null);
@@ -52,6 +53,7 @@ export function MenuItemForm({
     if (result?.ok && result.message !== lastCleared) {
       setName('');
       setPrice('');
+      setComparePrice('');
       setDescription('');
       setLastCleared(result.message);
     }
@@ -115,6 +117,27 @@ export function MenuItemForm({
             </span>
           </label>
         </div>
+
+        {/* The sale price, beside the real one rather than hidden behind a
+            toggle. A shop putting something on sale is doing it in the same
+            minute it types the price, and an empty box is already "not on
+            sale" — a switch would only add a state to get wrong. */}
+        <label className="block">
+          <span className="text-[11px] font-semibold text-ink-muted">
+            Was <span className="font-normal text-ink-faint">(optional — leave blank if not on sale)</span>
+          </span>
+          <span className="mt-0.5 flex w-28 items-center gap-1 rounded-lg bg-surface-sunken px-3 py-2 ring-1 ring-black/5 focus-within:ring-2 focus-within:ring-brand-500">
+            <span className="text-[13px] text-ink-faint">₱</span>
+            <input
+              name="comparePrice"
+              value={comparePrice}
+              onChange={(event) => setComparePrice(event.target.value)}
+              inputMode="decimal"
+              placeholder="150"
+              className="w-full bg-transparent text-right text-[13px] tabular-nums focus:outline-none"
+            />
+          </span>
+        </label>
 
         <datalist id="existing-sections">
           {sections.map((section) => (

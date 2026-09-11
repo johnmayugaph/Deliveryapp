@@ -22,6 +22,8 @@ import {
   MenuFullError,
   MenuItemChangedError,
   MenuItemNotFoundError,
+  ComparePriceNotHigherError,
+  parseComparePrice,
   PriceNotUnderstoodError,
   PriceOutOfRangeError,
   normaliseItemName,
@@ -79,6 +81,7 @@ function explain(error: unknown): MenuActionResult {
     error instanceof ItemNameRequiredError ||
     error instanceof PriceNotUnderstoodError ||
     error instanceof PriceOutOfRangeError ||
+    error instanceof ComparePriceNotHigherError ||
     error instanceof DuplicateItemNameError ||
     error instanceof MenuFullError ||
     error instanceof MenuItemNotFoundError ||
@@ -130,6 +133,11 @@ export async function addMenuItemAction(
       category: field(formData, 'category'),
       description: field(formData, 'description'),
       priceCentavos,
+      compareAtPriceCentavos: parseComparePrice(
+        field(formData, 'comparePrice'),
+        priceCentavos,
+        centavosFromPesoInput,
+      ),
     });
     refresh(access.store.id, access.store.slug);
     return { ok: true, message: `${created.name} is on the menu.` };
@@ -152,6 +160,11 @@ export async function editMenuItemAction(
       category: field(formData, 'category'),
       description: field(formData, 'description'),
       priceCentavos,
+      compareAtPriceCentavos: parseComparePrice(
+        field(formData, 'comparePrice'),
+        priceCentavos,
+        centavosFromPesoInput,
+      ),
     });
     refresh(access.store.id, access.store.slug);
     return { ok: true, message: `Saved ${updated.name}.` };

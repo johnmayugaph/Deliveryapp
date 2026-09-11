@@ -81,6 +81,16 @@ export class PriceOutOfRangeError extends Error {
   }
 }
 
+export class ComparePriceNotHigherError extends Error {
+  constructor(readonly centavos: number, readonly priceCentavos: number) {
+    super(
+      'The "was" price has to be higher than what you are charging — otherwise ' +
+        'the crossed-out number tells customers your price went up.',
+    );
+    this.name = 'ComparePriceNotHigherError';
+  }
+}
+
 export class DuplicateItemNameError extends Error {
   // `itemName`, not `name`: `Error.name` is the error's own class name and is
   // what the monitoring fingerprint groups on.
@@ -179,6 +189,37 @@ export function parsePrice(raw: string, toCentavos: (input: string) => number | 
   if (centavos === null) throw new PriceNotUnderstoodError(raw);
   if (centavos < MIN_PRICE_CENTAVOS || centavos > MAX_PRICE_CENTAVOS) {
     throw new PriceOutOfRangeError(centavos);
+  }
+  return centavos;
+}
+
+/**
+ * The "was" price on a dish that is on sale, or null.
+ *
+ * Blank means not on sale, which is why this is separate from `parsePrice`
+ * rather than a flag on it: an empty price field is an error, an empty
+ * was-price field is the normal case.
+ *
+ * It must be STRICTLY ABOVE the price being charged. A was-price equal to the
+ * real one is a struck-through number that says nothing; one below it tells a
+ * customer the shop has put its prices up, in the middle of a section headed
+ * "Today's Offer". The database carries the same rule as a CHECK, because this
+ * is the sort of column an import script writes badly and the wrong value is
+ * one nobody would notice until a customer did.
+ */
+export function parseComparePrice(
+  raw: string,
+  priceCentavos: number,
+  toCentavos: (input: string) => number | null,
+): number | null {
+  if (raw.trim() === '') return null;
+  const centavos = toCentavos(raw);
+  if (centavos === null) throw new PriceNotUnderstoodError(raw);
+  if (centavos < MIN_PRICE_CENTAVOS || centavos > MAX_PRICE_CENTAVOS) {
+    throw new PriceOutOfRangeError(centavos);
+  }
+  if (centavos <= priceCentavos) {
+    throw new ComparePriceNotHigherError(centavos, priceCentavos);
   }
   return centavos;
 }

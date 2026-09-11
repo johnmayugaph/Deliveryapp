@@ -252,6 +252,8 @@ export interface MenuItemInput {
   category: string;
   priceCentavos: number;
   description?: string | null | undefined;
+  /** The "was" price when this dish is on sale. Null clears it. */
+  compareAtPriceCentavos?: number | null | undefined;
 }
 
 /**
@@ -281,6 +283,7 @@ export async function addMenuItem(input: MenuItemInput): Promise<MenuItem> {
         category,
         description,
         priceCentavos: input.priceCentavos,
+        compareAtPriceCentavos: input.compareAtPriceCentavos ?? null,
         // Beyond every existing row, so it lands at the end of its run once
         // the resequence below groups it with its category.
         sortOrder: rows.length,
@@ -324,7 +327,16 @@ export async function editMenuItem(input: MenuItemEdit): Promise<MenuItem> {
 
     const updated = await tx.menuItem.update({
       where: { id: existing.id },
-      data: { name, category, description, priceCentavos: input.priceCentavos },
+      // `?? null` rather than leaving it undefined: undefined means "do not
+      // change this column" to Prisma, and an empty was-price field has to be
+      // able to take a dish OFF sale.
+      data: {
+        name,
+        category,
+        description,
+        priceCentavos: input.priceCentavos,
+        compareAtPriceCentavos: input.compareAtPriceCentavos ?? null,
+      },
     });
 
     const moved = sameText(existing.category, category)
